@@ -1,0 +1,12 @@
+node_modules/
+node_modules
+.env
+.env.*
+!.env.example
+npm-debug.log*
+.DS_Store
+
+# Runtime-only state. Discord bot and Race Control keep their own compact
+# snapshots here; never commit tokens, admin settings, or telemetry remnants.
+data/*
+!data/.gitkeep

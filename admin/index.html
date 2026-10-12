@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0B">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="FreeF1 Race Control administration.">
+  <title>FreeF1 — Race Control</title>
+  <link rel="icon" href="/admin/favicon.svg" type="image/svg+xml">
+  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/Inter-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/Archivo-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/JetBrainsMono-latin.woff2" crossorigin>
+  <link rel="stylesheet" href="/admin/fonts.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    [hidden] { display: none !important; }
+    .admin-main { padding: 110px clamp(16px, 4vw, 44px) 48px; max-width: 1440px; margin: 0 auto; }
+    .admin-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin-bottom:22px; }
+    .admin-heading h1 { font:900 italic clamp(2rem, 5vw, 3.2rem)/.95 'Archivo',sans-serif; text-transform:uppercase; letter-spacing:-.05em; margin:4px 0 8px; }
+    .admin-heading p { color:var(--muted); max-width:680px; margin:0; font-size:.88rem; line-height:1.55; }
+    .admin-kicker { font:700 .62rem 'JetBrains Mono',monospace; color:var(--red); letter-spacing:.25em; text-transform:uppercase; }
+    .admin-meta { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+    .admin-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border:1px solid var(--line); border-radius:99px; background:rgba(255,255,255,.035); color:var(--muted); font:700 .61rem 'JetBrains Mono',monospace; letter-spacing:.05em; text-transform:uppercase; }
+    .admin-chip i { width:7px;height:7px;border-radius:50%;background:var(--dim); }
+    .admin-chip.ok i { background:var(--green);box-shadow:0 0 9px var(--green); }
+    .admin-chip.warn i { background:var(--amber); }
+    .admin-chip.bad i { background:var(--red); }
+    .admin-columns { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:18px; align-items:start; }
+    .admin-stack { display:flex; flex-direction:column; gap:18px; min-width:0; }
+    .admin-section { padding:18px 20px 20px; }
+    .admin-section .section-note { margin:0 0 15px; color:var(--muted); font-size:.76rem; line-height:1.55; }
+    .admin-section .form-group { margin-bottom:13px; }
+    .admin-section .form-group label { display:block; margin:0 0 7px; color:var(--muted); font:700 .6rem 'JetBrains Mono',monospace; letter-spacing:.14em; text-transform:uppercase; }
+    .admin-section input:not([type=checkbox]), .admin-section textarea, .admin-section select {
+      display:block; width:100%; padding:10px 12px; color:var(--text); background:rgba(0,0,0,.34);
+      border:1px solid var(--line); border-radius:var(--r-sm); font: .78rem 'Inter',sans-serif;
+    }
+    .admin-section textarea { min-height:94px; resize:vertical; line-height:1.5; }
+    .admin-section input:focus, .admin-section textarea:focus, .admin-section select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(225,6,0,.14); }
+    .field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .btn-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .control-status { display:flex; align-items:center; gap:11px; padding:12px 13px; border:1px solid var(--line); border-radius:var(--r-sm); background:rgba(255,255,255,.025); margin-bottom:15px; }
+    .control-status .led { width:9px;height:9px;flex:0 0 auto;border-radius:50%;background:var(--dim); }
+    .control-status.good .led { background:var(--green);box-shadow:0 0 10px var(--green); }
+    .control-status.alert .led { background:var(--red);box-shadow:0 0 10px var(--red); }
+    .control-status strong { display:block; font-size:.8rem; }
+    .control-status small { display:block; margin-top:3px; color:var(--muted); font-size:.68rem; line-height:1.4; }
+    .source-list { display:flex; flex-direction:column; gap:7px; }
+    .source-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r-sm); background:rgba(255,255,255,.025); }
+    .source-row.is-off { opacity:.62; }
+    .source-name { font-weight:700; font-size:.76rem; }
+    .source-id { color:var(--dim); font: .58rem 'JetBrains Mono',monospace; text-transform:uppercase; }
+    .source-state { color:var(--green); font:700 .57rem 'JetBrains Mono',monospace; text-transform:uppercase; }
+    .source-row.is-off .source-state { color:var(--amber); }
+    .source-switch { width:38px;height:20px;padding:2px;cursor:pointer;border:1px solid var(--line);border-radius:99px;background:var(--surface); }
+    .source-switch i { display:block;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform .18s,background .18s; }
+    .source-switch.on { border-color:rgba(0,213,126,.5);background:rgba(0,213,126,.18); }
+    .source-switch.on i { transform:translateX(17px);background:var(--green); }
+    .source-switch:focus-visible { outline:2px solid var(--green);outline-offset:2px; }
+    .news-list { display:flex;flex-direction:column;gap:9px; }
+    .news-card { border:1px solid var(--line);border-radius:var(--r-sm);background:rgba(255,255,255,.025);padding:12px; }
+    .news-card-head { display:flex;justify-content:space-between;gap:12px;align-items:flex-start; }
+    .news-card h3 { font-size:.83rem;margin:0 0 5px;line-height:1.35; }
+    .news-card p { margin:0;color:var(--muted);font-size:.71rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere; }
+    .news-card-meta { color:var(--dim);font: .57rem 'JetBrains Mono',monospace;text-transform:uppercase; }
+    .news-card-actions { display:flex;gap:6px;flex:0 0 auto; }
+    .news-card-actions button { padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--muted);font:700 .56rem 'JetBrains Mono',monospace;text-transform:uppercase;cursor:pointer; }
+    .news-card-actions button:hover { color:var(--text);border-color:var(--line-2); }
+    .news-card-actions .delete-news:hover { color:#ff6b62;border-color:rgba(225,6,0,.45); }
+    .inline-message { min-height:1.1em;margin:8px 0 0;color:var(--muted);font: .62rem 'JetBrains Mono',monospace; }
+    .inline-message.error { color:#ff8a84; }
+    .inline-message.success { color:var(--green); }
+    .storage-copy { color:var(--muted);font-size:.72rem;line-height:1.55; }
+    .storage-copy strong { color:var(--text); }
+    .brand-admin { font:700 .56rem 'JetBrains Mono',monospace;letter-spacing:.23em;color:var(--muted);margin-left:8px; }
+    .toast { position:fixed;z-index:9000;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:12px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:#14161b;color:var(--text);box-shadow:var(--shadow);font-size:.78rem;opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .2s,transform .2s; }
+    .toast.show { opacity:1;transform:none; }
+    .toast.error { border-color:rgba(225,6,0,.42); }
+    .toast.success { border-color:rgba(0,213,126,.38); }
+    .maintenance-banner { display:none; margin:0 0 16px;padding:10px 13px;border:1px solid rgba(225,6,0,.28);border-radius:var(--r-sm);background:rgba(225,6,0,.07);color:#ff8a84;font-size:.74rem;line-height:1.5; }
+    .maintenance-banner.active { display:block; }
+    .checkbox-row { display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.72rem; }
+    .checkbox-row input { accent-color:var(--red); }
+    @media(max-width:920px) { .admin-columns { grid-template-columns:1fr; } }
+    @media(max-width:580px) { .field-row { grid-template-columns:1fr;gap:0; } .admin-section { padding:15px; } .source-row { grid-template-columns:minmax(0,1fr) auto; } .source-id { grid-column:1; } .source-state { display:none; } }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="scanlines" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div><div class="grain" aria-hidden="true"></div>
+
+  <div id="authScreen">
+    <div class="auth-card">
+      <div class="auth-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 9.5c-2.33 0-4.31 1.46-5.11 3.5h10.22c-.8-2.04-2.78-3.5-5.11-3.5z"/></svg></div>
+      <h1>Admin Access</h1>
+      <p class="sub">FreeF1 Race Control · authenticated personnel only</p>
+      <div class="auth-error" id="authError" role="alert"></div>
+      <form id="loginForm" autocomplete="on">
+        <div class="form-group"><label for="username">Username</label><input type="text" id="username" name="username" autocomplete="username" required></div>
+        <div class="form-group"><label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password" required></div>
+        <button class="btn primary" id="loginBtn" type="submit">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="app">
+    <nav class="nav" id="adminNav">
+      <a class="brand" href="/admin/" aria-label="FreeF1 Race Control">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 17.5 7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg></span>
+        <span class="brand-text"><b>FreeF1</b><span class="brand-admin">RACE CONTROL</span></span>
+      </a>
+      <div class="nav-right">
+        <span class="admin-chip" id="serverStatus"><i></i><span>Checking service</span></span>
+        <button class="btn sm" id="logoutBtn" type="button">Logout</button>
+      </div>
+    </nav>
+
+    <main class="admin-main">
+      <div class="admin-heading">
+        <div><div class="admin-kicker">Race Control</div><h1>Control room</h1><p>Manage public site settings. The static site continues serving streams and cached data independently of this service.</p></div>
+        <div class="admin-meta"><span class="admin-chip" id="storageStatus"><i></i><span>Checking storage</span></span><a class="btn sm" href="https://freef1.netlify.app/" target="_blank" rel="noopener noreferrer">Open public site ↗</a></div>
+      </div>
+
+      <div class="maintenance-banner" id="maintenanceBanner" role="status">Maintenance mode is active. The public site will show its maintenance screen to visitors with a fresh Race Control configuration.</div>
+
+      <div class="admin-columns">
+        <div class="admin-stack">
+          <section class="panel" aria-labelledby="streamTitle">
+            <div class="panel-head"><div class="panel-title" id="streamTitle">Stream override</div><span class="panel-badge normal" id="streamBadge">Normal feed</span></div>
+            <div class="admin-section">
+              <div class="control-status good" id="overrideStatus"><span class="led"></span><div><strong>Normal site feed</strong><small id="overrideSub">No Race Control override is active.</small></div></div>
+              <div class="form-group"><label for="streamUrl">Override video URL</label><input id="streamUrl" inputmode="url" placeholder="https://www.youtube.com/watch?v=… or https://…/video.mp4"><small class="url-hint">HTTPS only · YouTube, MP4, WebM, or a public embed URL</small></div>
+              <div class="btn-row"><button class="btn sm primary" id="playOverride" type="button">▶ Play override</button><button class="btn sm" id="stopOverride" type="button">■ Stop</button><button class="btn sm" id="normalOverride" type="button">↩ Return to normal</button></div>
+              <p class="inline-message" id="overrideMessage" role="status"></p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="forceLiveTitle">
+            <div class="panel-head"><div class="panel-title" id="forceLiveTitle">Force Live</div><span class="panel-badge normal" id="forceLiveBadge">Schedule window</span></div>
+            <div class="admin-section">
+              <div class="control-status good" id="forceLiveStatus"><span class="led"></span><div><strong id="forceLiveStateLabel">Schedule window active</strong><small id="forceLiveStateText">Streams follow their scheduled availability windows.</small></div></div>
+              <div class="form-group"><label for="forceLiveReason">Reason (optional)</label><input id="forceLiveReason" maxlength="120" placeholder="e.g. Red flag delay or race overtime"></div>
+              <div class="btn-row"><button class="btn sm primary" id="enableForceLive" type="button">Force live on</button><button class="btn sm" id="disableForceLive" type="button" disabled>Restore schedule</button></div>
+              <p class="inline-message" id="forceLiveMessage" role="status"></p>
+              <p class="section-note">Forces the selected session to appear live outside its normal schedule window. Visitors receive the change on their next config refresh (up to five minutes); playback still goes directly from the browser to the stream host.</p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="sourceTitle">
+            <div class="panel-head"><div class="panel-title" id="sourceTitle">Stream source availability</div><span class="panel-badge normal">Site-local playback</span></div>
+            <div class="admin-section">
+              <p class="section-note">Disable a source to hide it from the public selector. Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
+              <div class="source-list" id="sourceList" aria-live="polite"></div>
+              <div class="btn-row" style="margin-top:14px"><button class="btn sm primary" id="saveSources" type="button">Save source settings</button></div>
+              <p class="inline-message" id="sourceMessage" role="status"></p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="newsTitle">
+            <div class="panel-head"><div class="panel-title" id="newsTitle">Public news</div><span class="panel-badge normal">Cached snapshot</span></div>
+            <div class="admin-section">
+              <p class="section-note">News is included in the public site configuration snapshot, cached by browsers and the CDN for five minutes.</p>
+              <form id="newsForm">
+                <div class="form-group"><label for="newsHeadline">Headline</label><input id="newsHeadline" maxlength="100" required></div>
+                <div class="field-row">
+                  <div class="form-group"><label for="newsTag">Tag</label><input id="newsTag" maxlength="32" value="Race Control"></div>
+                  <div class="form-group"><label>&nbsp;</label><label class="checkbox-row"><input type="checkbox" id="newsPublished" checked> Published on public site</label></div>
+                </div>
+                <div class="form-group"><label for="newsBody">Update</label><textarea id="newsBody" maxlength="600" required></textarea></div>
+                <div class="btn-row"><button class="btn sm primary" id="saveNews" type="submit">Publish update</button><button class="btn sm" id="cancelNewsEdit" type="button" hidden>Cancel edit</button></div>
+              </form>
+              <p class="inline-message" id="newsMessage" role="status"></p>
+              <div class="news-list" id="newsList"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="admin-stack">
+          <section class="panel" aria-labelledby="maintenanceTitle">
+            <div class="panel-head"><div class="panel-title" id="maintenanceTitle">Website maintenance</div><span class="panel-badge normal" id="maintenanceBadge">Public site live</span></div>
+            <div class="admin-section">
+              <div class="control-status good" id="maintenanceStatus"><span class="led"></span><div><strong id="maintenanceStateLabel">Public site is available</strong><small>Visitors only see maintenance mode when a fresh Race Control response enables it.</small></div></div>
+              <div class="form-group"><label for="maintenanceMessage">Maintenance message</label><input id="maintenanceMessage" maxlength="180" value="We'll be back before the race."></div>
+              <div class="form-group"><label for="maintenanceEta">Estimated return</label><input id="maintenanceEta" maxlength="60" value="Before lights out"></div>
+              <div class="btn-row"><button class="btn sm primary" id="saveMaintenance" type="button">Save message</button><button class="btn sm btn-maintenance" id="toggleMaintenance" type="button">Enable maintenance</button></div>
+              <p class="inline-message" id="maintenanceNote" role="status"></p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="storageTitle">
+            <div class="panel-head"><div class="panel-title" id="storageTitle">Service & storage</div><span class="panel-badge normal">Low traffic</span></div>
+            <div class="admin-section">
+              <p class="storage-copy" id="storageCopy">Race Control responds to a single cached config request and admin actions. There are no public visitor counters, heartbeats, analytics, polling loops, or stream relays.</p>
+              <p class="storage-copy" style="margin-top:12px"><strong>Backend:</strong> <span id="backendAddress">https://f1admin.onrender.com</span></p>
+              <p class="storage-copy" style="margin-top:8px"><strong>Storage:</strong> <span id="storageDetail">Checking state</span></p>
+              <p class="storage-copy" style="margin-top:8px"><strong>Site configuration:</strong> one request per browser cache window; last cached site settings remain usable during an outage.</p>
+              <p class="inline-message" id="configTime" role="status"></p>
+            </div>
+          </section>
+        </div>
+      </div>
+      <footer style="margin-top:32px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font: .59rem 'JetBrains Mono',monospace;letter-spacing:.08em">FREEF1 RACE CONTROL · PUBLIC SITE AND STREAM PLAYBACK ARE INDEPENDENT OF THIS SERVICE</footer>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/admin.js" defer></script>
+</body>
+</html>

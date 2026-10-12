@@ -1,0 +1,37 @@
+{
+  "name": "freef1-server",
+  "version": "3.0.0",
+  "description": "FreeF1 Race Control API and optional Discord bot",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "npm run check:syntax && npm run check:unit && npm run check:site && npm run check:admin && npm run check:security && npm run check:motion && npm run check:csp && npm run check:discord",
+    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check bot/discord-bot.js && node --check ../netlifyf1/app.js && node --check ../netlifyf1/maintenance.js",
+    "check:unit": "node scripts/smoke-test.js && node scripts/race-times-check.js",
+    "check:site": "node scripts/site-dom-check.js",
+    "check:admin": "node scripts/admin-dom-check.js",
+    "check:security": "node scripts/security-check.js",
+    "check:motion": "node scripts/motion-check.js",
+    "check:csp": "node scripts/csp-check.js",
+    "check:discord": "node scripts/discord-bot-check.js",
+    "smoke": "node scripts/smoke-test.js",
+    "dom": "node scripts/admin-dom-check.js",
+    "site": "node scripts/site-dom-check.js",
+    "security": "node scripts/security-check.js",
+    "csp": "node scripts/csp-check.js",
+    "motion": "node scripts/motion-check.js"
+  },
+  "engines": {
+    "node": ">=18.11"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "cookie-session": "^2.1.1",
+    "discord.js": "^14.27.0",
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
