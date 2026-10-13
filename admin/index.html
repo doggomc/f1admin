@@ -143,7 +143,7 @@
               <div class="form-group"><label for="forceLiveReason">Reason (optional)</label><input id="forceLiveReason" maxlength="120" placeholder="e.g. Red flag delay or race overtime"></div>
               <div class="btn-row"><button class="btn sm primary" id="enableForceLive" type="button">Force live on</button><button class="btn sm" id="disableForceLive" type="button" disabled>Restore schedule</button></div>
               <p class="inline-message" id="forceLiveMessage" role="status"></p>
-              <p class="section-note">Forces the selected session to appear live outside its normal schedule window. Visitors receive the change on their next config refresh (up to five minutes); playback still goes directly from the browser to the stream host.</p>
+              <p class="section-note">Forces the selected session to appear live outside its normal schedule window. Connected public tabs receive the change immediately; hidden tabs catch up when they return. Playback still goes directly from the browser to the stream host.</p>
             </div>
           </section>
 
@@ -160,7 +160,7 @@
           <section class="panel" aria-labelledby="newsTitle">
             <div class="panel-head"><div class="panel-title" id="newsTitle">Public news</div><span class="panel-badge normal">Cached snapshot</span></div>
             <div class="admin-section">
-              <p class="section-note">News is included in the public site configuration snapshot, cached by browsers and the CDN for five minutes.</p>
+              <p class="section-note">News is included in the compact public config stream and updates connected site tabs immediately.</p>
               <form id="newsForm">
                 <div class="form-group"><label for="newsHeadline">Headline</label><input id="newsHeadline" maxlength="100" required></div>
                 <div class="field-row">

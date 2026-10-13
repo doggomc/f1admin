@@ -2,8 +2,8 @@
 
 The public FreeF1 site is a static Netlify deployment. This Render service is a
 small **control plane** at `https://f1admin.onrender.com`: it serves the
-password-protected admin page, one cacheable public configuration snapshot,
-and (optionally) the existing Discord bot. It does not proxy streams, standings,
+password-protected admin page, a cacheable public config endpoint and a
+push-only config update stream, and (optionally) the existing Discord bot. It does not proxy streams, standings,
 OpenF1 data, or video, and it does not collect visitor analytics, heartbeats,
 page views, or presence.
 
@@ -16,9 +16,9 @@ page views, or presence.
   localStorage fallbacks (up to seven days for most API results, with longer
   season/session metadata); a Render outage does not affect these requests.
 - Race Control settings (news, disabled sources, stream override, maintenance)
-  are a small optional snapshot. The browser uses local defaults and a saved
-  snapshot if the service cannot be reached; stale maintenance state does not
-  lock the site behind a maintenance screen.
+  arrive over a small optional config channel. The browser uses local defaults
+  and a saved snapshot if the service cannot be reached; stale maintenance
+  state does not lock the site behind a maintenance screen.
 - The Discord bot remains a separate optional feature. It starts only when
   `DISCORD_BOT_TOKEN` is set and keeps its own `freef1:discordbot:v1` Redis key
   / `data/discord-bot.json` state.
@@ -90,18 +90,24 @@ preserved.
 
 ## Public configuration contract
 
-`GET /api/site/config` is the only endpoint used by public visitors. It returns
-maintenance text/state, up to eight published news items, disabled stream
-source IDs, an optional stream override, the Force Live schedule-window flag,
-and the experimental-view flag. Force Live bypasses only the public site's
-scheduled availability window for the selected session; stream playback still
-connects directly from the browser to its source. It has
-`Cache-Control: public, max-age=300`; the browser also stores a local
-snapshot for up to 30 days and checks Race Control no more than once per five
-minutes per browser. There is no SSE, long-polling, timer-driven refresh, or
-visitor beacon. After changing a setting, a visitor may see the old cached
-snapshot for up to five minutes; reloading after the cache expires fetches the
-new one.
+`GET /api/site/updates` is the public site's push-only configuration channel.
+It sends one compact snapshot when a tab connects and another whenever a
+Race Control setting changes. The stream is cross-origin-readable only by the
+configured public site and its Netlify deploy-preview hosts. Open tabs keep one
+push-only connection even when backgrounded, so maintenance changes reach them
+without polling; after a disconnect/reconnect the server sends a fresh snapshot. It sends no periodic heartbeat and collects no
+visitor identity or analytics. This makes maintenance, Force Live, source,
+stream-override, and news changes visible to connected public tabs immediately
+without a refresh. Stream playback and sports data still connect directly from
+the browser to their providers; Render does not proxy them.
+
+`GET /api/site/config` remains available as a cacheable compatibility endpoint
+(`Cache-Control: public, max-age=300`) and one-shot fallback for browsers without
+EventSource support. The browser also keeps the latest compact snapshot locally
+for offline startup (up to 30 days). Maintenance is only enforced using a live
+server snapshot, so stale cached state cannot lock users out when Render is
+offline. The maintenance page listens to the same update stream and returns to
+the public site automatically when Race Control disables maintenance.
 
 `GET /healthz` is a minimal deployment health check. The admin panel is at
 `/admin/`; all mutation endpoints require a same-origin authenticated session.

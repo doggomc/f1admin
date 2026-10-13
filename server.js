@@ -3,8 +3,9 @@
 /* FreeF1 Race Control API
  * The public site is a static Netlify app. This Render process serves only
  * the authenticated control panel, its small public configuration snapshot,
- * and the optional Discord bot. It does not proxy streams or sports data and
- * does not collect visitor presence, heartbeats, or analytics.
+ * a config-only live update stream, and the optional Discord bot. It does not
+ * proxy streams or sports data, and collects no visitor presence, heartbeats,
+ * or analytics.
  */
 const crypto = require('crypto');
 const compression = require('compression');
@@ -15,6 +16,10 @@ const path = require('path');
 
 const app = express();
 app.disable('x-powered-by');
+
+// One ephemeral response per visible public tab; no visitor identity or
+// periodic heartbeat is recorded or sent.
+const siteConfigStreams = new Set();
 
 const PORT = Number(process.env.PORT) || 3000;
 const PRODUCTION = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
@@ -406,6 +411,9 @@ async function loadSiteState() {
 let persistQueue = Promise.resolve();
 function persistState() {
   const snapshot = currentSnapshot();
+  // Publish the compact public snapshot immediately; storage durability work
+  // continues independently and does not delay already-open public tabs.
+  broadcastSiteConfig();
   const write = async () => {
     const localSaved = writeLocalJson(CONTROL_FILE, snapshot);
     let remoteSaved = false;
@@ -498,6 +506,26 @@ function publicConfig() {
     streamWindow: state.streamWindow,
     experimental: state.experimental
   };
+}
+
+function sendSiteConfigEvent(response, config = publicConfig()) {
+  if (response.destroyed || response.writableEnded) return false;
+  try {
+    response.write(`event: config\ndata: ${JSON.stringify(config)}\n\n`);
+    response.flush?.();
+    return true;
+  } catch (_) {
+    siteConfigStreams.delete(response);
+    return false;
+  }
+}
+
+function broadcastSiteConfig() {
+  if (!siteConfigStreams.size) return;
+  const config = publicConfig();
+  for (const response of siteConfigStreams) {
+    if (!sendSiteConfigEvent(response, config)) siteConfigStreams.delete(response);
+  }
 }
 
 function sanitizeIp(ip) {
@@ -596,6 +624,25 @@ app.get('/api/site/config', async (_req, res) => {
   await stateReady;
   res.setHeader('Cache-Control', `public, max-age=${SITE_CONFIG_MAX_AGE_SECONDS}`);
   res.json(publicConfig());
+});
+
+app.get('/api/site/updates', async (_req, res) => {
+  await stateReady;
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const removeStream = () => siteConfigStreams.delete(res);
+  res.once('close', removeStream);
+  res.once('error', removeStream);
+  siteConfigStreams.add(res);
+  // This is a one-time retry hint, not a periodic heartbeat. Every reconnect
+  // receives a fresh snapshot before listening for subsequent Race Control edits.
+  res.write(': config stream open\nretry: 30000\n\n');
+  res.flush?.();
+  sendSiteConfigEvent(res);
 });
 
 function adminSameOrigin(req, res, next) {

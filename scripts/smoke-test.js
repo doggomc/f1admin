@@ -2,8 +2,8 @@
 'use strict';
 
 /* End-to-end Race Control checks. The public visitor/analytics/stream-proxy
-   APIs must not exist; public config is cacheable and admin mutations are
-   authenticated, same-origin, and persisted as one small snapshot. */
+   APIs must not exist; public config updates use a small push-only event stream,
+   and admin mutations remain authenticated, same-origin, and persisted. */
 const assert = require('assert');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -66,9 +66,44 @@ function cookieFrom(response) {
   return raw.split(/,(?=\s*f1admin\.sid(?:\.sig)?=)/).map(part => part.split(';')[0].trim()).filter(Boolean).join('; ');
 }
 
+function nextConfigEvent(reader) {
+  let buffer = '';
+  const decoder = new TextDecoder();
+  return async function read(timeoutMs = 3000) {
+    const readUntilConfig = async () => {
+      while (true) {
+        const frameEnd = buffer.indexOf('\n\n');
+        if (frameEnd >= 0) {
+          const frame = buffer.slice(0, frameEnd);
+          buffer = buffer.slice(frameEnd + 2);
+          if (!/^event:\s*config\s*$/m.test(frame)) continue;
+          const dataLine = frame.split(/\r?\n/).find(line => line.startsWith('data:'));
+          if (dataLine) return JSON.parse(dataLine.slice(5).trim());
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error('Config event stream ended unexpectedly');
+        buffer += decoder.decode(value, { stream: true });
+      }
+    };
+    let timer;
+    try {
+      return await Promise.race([
+        readUntilConfig(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timed out waiting for config event')), timeoutMs); })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 (async () => {
   const checks = [];
   const check = (label, pass, detail = '') => checks.push({ label, pass: Boolean(pass), detail });
+  let updateController = null;
+  let updateReader = null;
+  let readNextConfigEvent = null;
   try {
     await waitForServer();
 
@@ -85,6 +120,18 @@ function cookieFrom(response) {
     check('CORS allows the public site origin', siteConfig.response.headers.get('access-control-allow-origin') === 'https://freef1.netlify.app');
     const deniedOrigin = await request('/api/site/config', { headers: { Origin: 'https://evil.example' } });
     check('untrusted browser origins are rejected', deniedOrigin.response.status === 403);
+
+    updateController = new AbortController();
+    const siteUpdates = await fetch(`${base}/api/site/updates`, {
+      headers: { Origin: 'https://freef1.netlify.app', Accept: 'text/event-stream' },
+      signal: updateController.signal
+    });
+    updateReader = siteUpdates.body.getReader();
+    readNextConfigEvent = nextConfigEvent(updateReader);
+    const initialPush = await readNextConfigEvent();
+    check('public update stream sends an initial compact config snapshot without caching',
+      siteUpdates.status === 200 && (siteUpdates.headers.get('content-type') || '').includes('text/event-stream') &&
+      /no-cache, no-transform/.test(siteUpdates.headers.get('cache-control') || '') && initialPush.maintenance?.active === false);
 
     const adminPage = await request('/admin/');
     check('admin panel is served from Render with no-store', adminPage.response.status === 200 && /Race Control/.test(adminPage.text) && adminPage.response.headers.get('cache-control') === 'no-store');
@@ -122,6 +169,9 @@ function cookieFrom(response) {
       body: JSON.stringify({ active: true, message: 'Pit stop', eta: 'Five minutes' })
     });
     check('maintenance changes persist without overwriting other settings', maintenance.response.status === 200 && maintenance.body.maintenance?.active === true);
+    const pushedMaintenance = await readNextConfigEvent();
+    check('maintenance activation is pushed to already-open clients immediately',
+      pushedMaintenance.maintenance?.active === true && pushedMaintenance.maintenance?.message === 'Pit stop');
     const snapshotFile = path.join(dataDir, 'race-control.json');
     const snapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
     check('saved state remains a combined config snapshot', Boolean(snapshot.maintenance && Array.isArray(snapshot.news) && snapshot.sources && snapshot.streamOverride && snapshot.streamWindow && snapshot.experimental));
@@ -130,18 +180,25 @@ function cookieFrom(response) {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ active: true, reason: 'Smoke test red flag' })
     });
     check('authenticated admin can enable Force Live', forceLive.response.status === 200 && forceLive.body.streamWindow?.active === true && forceLive.body.streamWindow?.reason === 'Smoke test red flag');
+    const pushedForceLive = await readNextConfigEvent();
+    check('Force Live changes are broadcast to connected public tabs',
+      pushedForceLive.streamWindow?.active === true && pushedForceLive.streamWindow?.reason === 'Smoke test red flag');
     const publicForceLive = await request('/api/site/config');
     check('Force Live is included in the public site config', publicForceLive.body.streamWindow?.active === true);
     const restoreSchedule = await request('/admin/api/stream/window', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ active: false })
     });
     check('Force Live can be disabled to restore schedule checks', restoreSchedule.response.status === 200 && restoreSchedule.body.streamWindow?.active === false);
+    const pushedRestoreSchedule = await readNextConfigEvent();
+    check('schedule restoration is broadcast to connected public tabs', pushedRestoreSchedule.streamWindow?.active === false);
 
     const news = await request('/admin/api/news', {
       method: 'POST', headers: authHeaders,
       body: JSON.stringify({ title: 'Smoke test update', body: 'Race Control is online.', tag: 'Test', published: true })
     });
     check('admin can publish a sanitized news item', news.response.status === 201 && news.body.news?.title === 'Smoke test update');
+    const pushedNews = await readNextConfigEvent();
+    check('published news is broadcast to connected public tabs', pushedNews.news?.[0]?.title === 'Smoke test update');
     const publicAfterNews = await request('/api/site/config');
     check('published news is included in the cacheable public snapshot', publicAfterNews.body.news?.[0]?.title === 'Smoke test update');
 
@@ -173,7 +230,7 @@ function cookieFrom(response) {
     ];
     const retiredStatuses = [];
     for (const pathname of retiredPaths) retiredStatuses.push((await request(pathname)).response.status);
-    check('retired visitor, analytics, SSE, proxy and duplicate news APIs are gone', retiredStatuses.every(status => status === 404), retiredStatuses.join(','));
+    check('retired visitor/event, analytics, proxy and duplicate news APIs are gone', retiredStatuses.every(status => status === 404), retiredStatuses.join(','));
 
     const leakedData = await request('/data/analytics.json');
     check('old tracking data is not exposed by the service', leakedData.response.status === 404);
@@ -185,6 +242,8 @@ function cookieFrom(response) {
   } catch (error) {
     check('integration scenario completed', false, error.stack || String(error));
   } finally {
+    if (updateController) updateController.abort();
+    try { await updateReader?.cancel(); } catch (_) {}
     if (child.exitCode === null) {
       const exited = new Promise(resolve => child.once('exit', resolve));
       child.kill('SIGTERM');

@@ -405,7 +405,9 @@ $('toggleMaintenance').addEventListener('click', async () => {
     });
     config.maintenance = result.maintenance;
     renderMaintenance();
-    setMessage('maintenanceNote', result.maintenance.active ? 'Maintenance mode enabled.' : 'Maintenance mode disabled.', 'success');
+    setMessage('maintenanceNote', result.maintenance.active
+      ? 'Maintenance enabled. Connected public tabs are moving to the pit lane now.'
+      : 'Maintenance disabled. Connected maintenance pages are returning to FreeF1.', 'success');
     acceptWrite(result, result.maintenance.active ? 'Maintenance enabled.' : 'Maintenance disabled.');
   } catch (error) {
     setMessage('maintenanceNote', error.message, 'error');
@@ -420,7 +422,7 @@ $('playOverride').addEventListener('click', async () => {
     const result = await api('/stream/override', { method: 'POST', body: { url: $('streamUrl').value.trim() } });
     config.streamOverride = result.override;
     renderOverride();
-    setMessage('overrideMessage', 'Override enabled on the next public config refresh.', 'success');
+    setMessage('overrideMessage', 'Override enabled on connected public tabs.', 'success');
     acceptWrite(result, 'Stream override enabled.');
   } catch (error) {
     setMessage('overrideMessage', error.message, 'error');
@@ -459,8 +461,8 @@ async function setForceLive(active) {
     config.streamWindow = result.streamWindow || { active, reason: active ? $('forceLiveReason').value.trim() : '', startedAt: active ? Date.now() : null };
     renderForceLive();
     setMessage('forceLiveMessage', active
-      ? 'Force Live enabled. Visitors receive it on their next config refresh.'
-      : 'Force Live disabled. The normal schedule window is restored.', 'success');
+      ? 'Force Live enabled. Connected public tabs update immediately.'
+      : 'Force Live disabled. Connected public tabs restore the schedule immediately.', 'success');
     acceptWrite(result, active ? 'Force Live enabled.' : 'Force Live disabled.');
   } catch (error) {
     setMessage('forceLiveMessage', error.message, 'error');

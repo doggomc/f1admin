@@ -73,6 +73,21 @@ async function json(response) {
     const denied = await fetch(server.base + '/api/site/config', { headers: { Origin: 'https://untrusted.example' } });
     check('foreign origins cannot read public config', denied.status === 403);
 
+    const updateController = new AbortController();
+    const updates = await fetch(server.base + '/api/site/updates', {
+      headers: { Origin: 'https://freef1.netlify.app', Accept: 'text/event-stream' },
+      signal: updateController.signal
+    });
+    check('public site origin can open the config-only live update stream',
+      updates.status === 200 && updates.headers.get('access-control-allow-origin') === 'https://freef1.netlify.app' &&
+      (updates.headers.get('content-type') || '').includes('text/event-stream') &&
+      /no-cache, no-transform/.test(updates.headers.get('cache-control') || ''));
+    updateController.abort();
+    const deniedUpdates = await fetch(server.base + '/api/site/updates', {
+      headers: { Origin: 'https://untrusted.example', Accept: 'text/event-stream' }
+    });
+    check('foreign origins cannot subscribe to public config changes', deniedUpdates.status === 403);
+
     const external = await fetch(server.base + '/admin/api/news');
     check('admin news is not public', external.status === 401);
     const sameOrigin = server.base;

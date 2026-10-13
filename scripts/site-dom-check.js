@@ -14,16 +14,21 @@ const indexPath = path.join(siteDir, 'index.html');
 if (!fs.existsSync(indexPath)) throw new Error(`Site not found: ${indexPath}`);
 const html = fs.readFileSync(indexPath, 'utf8');
 const appSource = fs.readFileSync(path.join(siteDir, 'app.js'), 'utf8');
+const maintenanceHtml = fs.readFileSync(path.join(siteDir, 'maintenance.html'), 'utf8');
+const maintenanceJs = fs.readFileSync(path.join(siteDir, 'maintenance.js'), 'utf8');
+const maintenanceCss = fs.readFileSync(path.join(siteDir, 'maintenance.css'), 'utf8');
 const redirects = fs.readFileSync(path.join(siteDir, '_redirects'), 'utf8');
 
 function boot({ backendOffline = false, seedSnapshot = false, forceLive = false } = {}) {
   const runtimeErrors = [];
   const requested = [];
+  const eventStreams = [];
   const blockedByCsp = [];
+  let isHidden = false;
   const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/' });
   const { window } = dom;
-  Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => false });
-  Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => 'visible' });
+  Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => isHidden });
+  Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => isHidden ? 'hidden' : 'visible' });
   window.console = console;
   window.matchMedia = query => ({ matches: false, media: query, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, onchange: null });
   window.requestIdleCallback = callback => setTimeout(() => callback({ didTimeout: false, timeRemaining: () => 50 }), 0);
@@ -44,6 +49,33 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
   }
 
   const response = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  const publicConfig = {
+    maintenance: { active: false }, news: [], sources: { disabled: [] }, streamOverride: { active: false },
+    streamWindow: { active: forceLive, reason: forceLive ? 'test force' : '', startedAt: forceLive ? Date.now() : null },
+    experimental: { enabled: true }
+  };
+  class EventSourceStub {
+    constructor(url) {
+      this.url = String(url);
+      this.listeners = new Map();
+      this.closed = false;
+      eventStreams.push(this);
+      setTimeout(() => {
+        if (this.closed) return;
+        if (backendOffline) this.emit('error', {});
+        else this.emit('config', { data: JSON.stringify(publicConfig) });
+      }, 0);
+    }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+    emit(type, event = {}) {
+      for (const listener of this.listeners.get(type) || []) listener(event);
+    }
+    close() { this.closed = true; }
+  }
+  window.EventSource = EventSourceStub;
   window.fetch = async (url, options = {}) => {
     const value = String(url);
     requested.push({ url: value, options });
@@ -53,7 +85,7 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
     if (!allowed.has(hostname)) { blockedByCsp.push(value); throw new TypeError(`CSP blocked ${hostname}`); }
     if (value.includes('/api/site/config')) {
       if (backendOffline) throw new TypeError('Race Control offline');
-      return response({ maintenance: { active: false }, news: [], sources: { disabled: [] }, streamOverride: { active: false }, streamWindow: { active: forceLive, reason: forceLive ? 'test force' : '', startedAt: forceLive ? Date.now() : null }, experimental: { enabled: true } });
+      return response(publicConfig);
     }
     if (value.includes('driverstandings')) return response({ MRData: { StandingsTable: { StandingsLists: [{ DriverStandings: [] }] } } });
     if (value.includes('constructorstandings')) return response({ MRData: { StandingsTable: { StandingsLists: [{ ConstructorStandings: [] }] } } });
@@ -67,7 +99,45 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
   } catch (error) {
     runtimeErrors.push(`${error.message}\n${error.stack}`);
   }
-  return { window, requested, runtimeErrors, blockedByCsp };
+  return {
+    window, requested, eventStreams, runtimeErrors, blockedByCsp,
+    setHidden(hidden) {
+      isHidden = Boolean(hidden);
+      window.document.dispatchEvent(new window.Event('visibilitychange'));
+    }
+  };
+}
+
+function bootMaintenance() {
+  const dom = new JSDOM(maintenanceHtml, {
+    runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/maintenance.html'
+  });
+  const { window } = dom;
+  const scheduledTimers = [];
+  let stream;
+  window.setInterval = () => 1;
+  window.setTimeout = (callback, delay) => {
+    scheduledTimers.push({ callback, delay });
+    return scheduledTimers.length;
+  };
+  window.EventSource = class {
+    constructor(url) {
+      this.url = String(url);
+      this.listeners = new Map();
+      this.closed = false;
+      stream = this;
+    }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+    emit(type, data) {
+      for (const listener of this.listeners.get(type) || []) listener(data);
+    }
+    close() { this.closed = true; }
+  };
+  window.eval(maintenanceJs);
+  return { window, get stream() { return stream; }, scheduledTimers };
 }
 
 (async () => {
@@ -88,8 +158,21 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
     !normal.window.__freef1TestState?.().viewNames.some(route => ['performance', 'track', '247', 'audio'].includes(route)) &&
     !redirects.split('\n').some(line => /^\/(performance|track|audio|247)(?:\/|\s)/.test(line)));
   check('regular Session Results remain available in the cockpit', Boolean($('sessionsOverlay') && $('sessionsBtn')));
-  check('Race Control is requested only as optional site config', normal.requested.filter(item => item.url.includes('f1admin.onrender.com')).length === 1,
-    normal.requested.filter(item => item.url.includes('f1admin.onrender.com')).map(item => item.url).join(' '));
+  check('Race Control uses one compact push-only config stream, not a parallel config fetch',
+    normal.eventStreams.length === 1 && normal.eventStreams[0].url === 'https://f1admin.onrender.com/api/site/updates' &&
+    !normal.requested.some(item => item.url.includes('f1admin.onrender.com')),
+    normal.eventStreams.map(stream => stream.url).join(' ') || 'no stream');
+  normal.setHidden(true);
+  check('background tabs retain the push stream for immediate maintenance updates', normal.eventStreams[0].closed === false);
+  normal.setHidden(false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  normal.window.dispatchEvent(new normal.window.Event('focus'));
+  normal.window.dispatchEvent(new normal.window.Event('online'));
+  check('visibility, focus, and online events never duplicate the config stream',
+    normal.eventStreams.length === 1 && !normal.eventStreams[0].closed &&
+    normal.eventStreams[0].url === 'https://f1admin.onrender.com/api/site/updates');
+  check('public config changes are not fetched alongside the update stream',
+    !normal.requested.some(item => item.url.includes('/api/site/config')));
   check('public sports data is fetched directly from providers', normal.requested.some(item => item.url.includes('api.jolpi.ca')) &&
     !normal.requested.some(item => item.url.includes('f1admin.onrender.com') && !item.url.includes('/api/site/config')));
   check('Fly 44 and Sky UK 2 sources are absent', typeof normal.window.__freef1TestState === 'function' &&
@@ -99,8 +182,30 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
     normal.window.__freef1TestState?.().urls.some(url => url.startsWith('https://')) &&
     !normal.requested.some(item => /\/api\/stream\/ticket|\/stream\//.test(item.url)));
   check('CSP-allowed direct providers were sufficient for startup', normal.blockedByCsp.length === 0, normal.blockedByCsp.join(', '));
-  check('no visitor, analytics, heartbeat, SSE, or proxy APIs are requested',
-    !normal.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket|\/api\/news/.test(item.url)));
+  check('no visitor analytics, heartbeat, or stream-proxy APIs are requested',
+    !normal.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket|\/api\/news/.test(item.url)) &&
+    normal.eventStreams.every(stream => /\/api\/site\/updates$/.test(stream.url)));
+  check('maintenance page has no public-site bypass or old bypass query logic',
+    !/bypass-maintenance|Continue to FreeF1|BYPASS_MAINTENANCE/.test(maintenanceHtml + appSource));
+  check('maintenance page listens to Race Control and releases when maintenance ends',
+    maintenanceJs.includes('/api/site/updates') && /maintenance\.active !== true/.test(maintenanceJs) &&
+    /location\.replace\('\/'\)/.test(maintenanceJs));
+  check('outlined title uses lighter tracking and stroke to keep the R distinct',
+    /h1 em\s*\{[^}]*letter-spacing:\s*-0\.045em/s.test(maintenanceCss) &&
+    /-webkit-text-stroke:\s*clamp\(1px,\s*0\.12vw,\s*1\.65px\)/.test(maintenanceCss));
+
+  const maintenancePage = bootMaintenance();
+  const maintenanceState = { active: true, message: 'Live pit stop', eta: 'Two minutes', startedAt: Date.now() };
+  maintenancePage.stream.emit('config', { data: JSON.stringify({ maintenance: maintenanceState }) });
+  check('maintenance page applies live message and ETA updates',
+    maintenancePage.window.document.getElementById('maintenanceMessage').textContent === 'Live pit stop' &&
+    maintenancePage.window.document.getElementById('returnEta').textContent === 'Two minutes' &&
+    maintenancePage.window.document.documentElement.classList.contains('site-released') === false);
+  maintenancePage.stream.emit('config', { data: JSON.stringify({ maintenance: { active: false } }) });
+  check('maintenance page shows release state and schedules automatic return when disabled',
+    maintenancePage.window.document.documentElement.classList.contains('site-released') &&
+    maintenancePage.scheduledTimers.some(timer => timer.delay === 360));
+  maintenancePage.window.close();
 
   const termsLink = normal.window.document.querySelector('.foot-links button[data-panel=\"termsPanel\"]');
   termsLink?.dispatchEvent(new normal.window.MouseEvent('click', { bubbles: true }));
@@ -119,11 +224,37 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
   const offlineState = offline.window.__freef1TestState?.();
   check('site still boots when Race Control is offline', offline.runtimeErrors.length === 0 && offline.window.document.getElementById('links').children.length > 0, offline.runtimeErrors.join(' | '));
   check('last local site settings remain available during outage', offlineState?.disabled.includes('dazn') === true);
-  check('failed Race Control request is not retried or polled', offline.requested.filter(item => item.url.includes('f1admin.onrender.com')).length === 1);
+  check('backend outage leaves one native-reconnecting config stream and no fetch polling',
+    offline.eventStreams.length === 1 && offline.eventStreams[0].url.endsWith('/api/site/updates') &&
+    !offline.requested.some(item => item.url.includes('f1admin.onrender.com')));
   check('legacy visitor ID/token/count are removed from local storage',
     ['freef1_user_id', 'freef1_visitor_token', 'freef1_active_count'].every(key => offline.window.localStorage.getItem(key) === null));
-  check('outage path never calls visitor, analytics, SSE, or stream proxy APIs',
-    !offline.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket/.test(item.url)));
+  check('outage path never calls visitor, analytics, heartbeat, or stream proxy APIs',
+    !offline.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket/.test(item.url)) &&
+    offline.eventStreams.every(stream => /\/api\/site\/updates$/.test(stream.url)));
+
+  const liveConfig = {
+    maintenance: { active: false },
+    news: [{ id: 'site-push-test', title: 'Live Race Control update', body: 'No refresh was needed.', tag: 'Race Control', createdAt: Date.now(), updatedAt: Date.now() }],
+    sources: { disabled: [] }, streamOverride: { active: false },
+    streamWindow: { active: true, reason: 'Instant update test', startedAt: Date.now(), updatedAt: Date.now() },
+    experimental: { enabled: true }
+  };
+  const liveStream = normal.eventStreams[normal.eventStreams.length - 1];
+  liveStream.emit('config', { data: JSON.stringify(liveConfig) });
+  const liveState = normal.window.__freef1TestState?.();
+  check('open site applies Force Live and news immediately from a config event',
+    liveState?.streamWindow.active === true && liveState.selectedStreamAvailable === true &&
+    $('newsFeed')?.textContent.includes('Live Race Control update') && normal.window.location.pathname !== '/maintenance.html',
+    JSON.stringify({ streamWindow: liveState?.streamWindow, selectedStreamAvailable: liveState?.selectedStreamAvailable,
+      news: $('newsFeed')?.textContent, path: normal.window.location.pathname, streamUrl: liveStream?.url,
+      streamClosed: liveStream?.closed, errors: normal.runtimeErrors }));
+  const unchangedNewsNode = $('newsFeed')?.firstElementChild;
+  liveStream.emit('config', { data: JSON.stringify({
+    ...liveConfig, streamWindow: { ...liveConfig.streamWindow, reason: 'Updated reason' }
+  }) });
+  check('unrelated live config changes keep existing news DOM in place (no flicker)',
+    $('newsFeed')?.firstElementChild === unchangedNewsNode);
 
   let failed = 0;
   for (const item of checks) {
