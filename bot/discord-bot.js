@@ -52,7 +52,7 @@ const path = require('path');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
-  ChannelType, PermissionFlagsBits,
+  ChannelType, OverwriteType, PermissionFlagsBits,
 } = require('discord.js');
 const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
@@ -390,13 +390,14 @@ function start(deps) {
 
   async function createTicketChannel({ ticketId, name, category, message, diagnostics, createdAt }) {
     const guild = await ticketGuild();
+    // Explicit target types let discord.js encode IDs even when a human member or role is not cached.
     const overwrites = [
-      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-      { id: client.user.id, allow: ticketPermissions },
-      { id: OWNER_ID, allow: ticketPermissions },
+      { id: guild.id, type: OverwriteType.Role, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: client.user.id, type: OverwriteType.Member, allow: ticketPermissions },
+      { id: OWNER_ID, type: OverwriteType.Member, allow: ticketPermissions },
     ];
     const staffRoleId = String(deps.ticketStaffRoleId || '').trim();
-    if (staffRoleId) overwrites.push({ id: staffRoleId, allow: ticketPermissions });
+    if (staffRoleId) overwrites.push({ id: staffRoleId, type: OverwriteType.Role, allow: ticketPermissions });
 
     const options = {
       name: ticketId,
