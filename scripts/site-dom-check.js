@@ -13,19 +13,27 @@ const siteDir = process.env.SITE_DIR || path.resolve(__dirname, '..', '..', 'net
 const indexPath = path.join(siteDir, 'index.html');
 if (!fs.existsSync(indexPath)) throw new Error(`Site not found: ${indexPath}`);
 const html = fs.readFileSync(indexPath, 'utf8');
+const siteCss = fs.readFileSync(path.join(siteDir, 'app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(siteDir, 'app.js'), 'utf8');
+const viewerCounterSource = fs.readFileSync(path.join(siteDir, 'viewer-counter.js'), 'utf8');
+const helpScriptSource = fs.readFileSync(path.join(siteDir, 'help.js'), 'utf8');
+const helpPageHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
+const helpPageCss = fs.readFileSync(path.join(siteDir, 'help.css'), 'utf8');
 const maintenanceHtml = fs.readFileSync(path.join(siteDir, 'maintenance.html'), 'utf8');
 const maintenanceJs = fs.readFileSync(path.join(siteDir, 'maintenance.js'), 'utf8');
 const maintenanceCss = fs.readFileSync(path.join(siteDir, 'maintenance.css'), 'utf8');
 const redirects = fs.readFileSync(path.join(siteDir, '_redirects'), 'utf8');
+const backendSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
+const adminSource = fs.readFileSync(path.resolve(__dirname, '..', 'admin', 'admin.js'), 'utf8');
 
-function boot({ backendOffline = false, seedSnapshot = false, forceLive = false } = {}) {
+function boot({ backendOffline = false, seedSnapshot = false, forceLive = false, pageUrl = 'https://freef1.netlify.app/' } = {}){
   const runtimeErrors = [];
   const requested = [];
   const eventStreams = [];
+  const socketConnections = [];
   const blockedByCsp = [];
   let isHidden = false;
-  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/' });
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: pageUrl });
   const { window } = dom;
   Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => isHidden });
   Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => isHidden ? 'hidden' : 'visible' });
@@ -75,13 +83,42 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
     }
     close() { this.closed = true; }
   }
+  class WebSocketStub {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    constructor(url) {
+      this.url = String(url);
+      this.readyState = WebSocketStub.CONNECTING;
+      this.listeners = new Map();
+      this.sent = [];
+      socketConnections.push(this);
+    }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+    emit(type, event = {}) {
+      if (type === 'open') this.readyState = WebSocketStub.OPEN;
+      if (type === 'close') this.readyState = WebSocketStub.CLOSED;
+      for (const listener of this.listeners.get(type) || []) listener(event);
+    }
+    send(message) { this.sent.push(message); }
+    close(code = 1000, reason = '') {
+      if (this.readyState >= WebSocketStub.CLOSING) return;
+      this.readyState = WebSocketStub.CLOSED;
+      this.emit('close', { code, reason, wasClean: true });
+    }
+  }
   window.EventSource = EventSourceStub;
+  Object.defineProperty(window, 'WebSocket', { configurable: true, writable: true, value: WebSocketStub });
   window.fetch = async (url, options = {}) => {
     const value = String(url);
     requested.push({ url: value, options });
     let hostname = 'self';
     try { hostname = new URL(value, 'https://freef1.netlify.app/').hostname; } catch (_) {}
-    const allowed = new Set(['freef1.netlify.app', 'f1admin.onrender.com', 'api.openf1.org', 'api.jolpi.ca']);
+    const allowed = new Set(['freef1.netlify.app', 'localhost', '127.0.0.1', 'f1admin.onrender.com', 'api.openf1.org', 'api.jolpi.ca']);
     if (!allowed.has(hostname)) { blockedByCsp.push(value); throw new TypeError(`CSP blocked ${hostname}`); }
     if (value.includes('/api/site/config')) {
       if (backendOffline) throw new TypeError('Race Control offline');
@@ -96,11 +133,13 @@ function boot({ backendOffline = false, seedSnapshot = false, forceLive = false 
 
   try {
     window.eval(appSource + `\n;window.__freef1TestState = () => ({\n  ids: sources.map(source => source.id),\n  labels: sources.map(source => source.label),\n  urls: sources.map(source => source.url || ''),\n  disabled: [...disabledSources],\n  streamOverride: { ...streamOverride },\n  streamWindow: { ...streamWindowState },\n  selectedStreamAvailable: isStreamAvailable(currentSession),\n  live: (() => { const live = getCurrentLiveSession(); return live ? { forced: live.forced === true, session: live.session.name } : null; })(),\n  viewNames: Object.keys(VIEWS),\n  activeView,\n  legacyRoutesResolveHome: routeFromPath('/performance') === 'home' && routeFromPath('/247') === 'home'\n});`);
+    window.eval(viewerCounterSource);
+    window.eval(helpScriptSource);
   } catch (error) {
     runtimeErrors.push(`${error.message}\n${error.stack}`);
   }
   return {
-    window, requested, eventStreams, runtimeErrors, blockedByCsp,
+    window, requested, eventStreams, socketConnections, runtimeErrors, blockedByCsp,
     setHidden(hidden) {
       isHidden = Boolean(hidden);
       window.document.dispatchEvent(new window.Event('visibilitychange'));
@@ -148,7 +187,61 @@ function bootMaintenance() {
   await new Promise(resolve => setTimeout(resolve, 250));
   const $ = id => normal.window.document.getElementById(id);
   check('app.js boots without runtime errors', normal.runtimeErrors.length === 0, normal.runtimeErrors.join(' | '));
-  check('no startup availability gate or visitor counter remains', !normal.window.document.documentElement.classList.contains('site-checking') && !$('visitorCount'));
+  check('no startup availability gate remains and the counter pill is present',
+    !normal.window.document.documentElement.classList.contains('site-checking') && Boolean($('viewerCounter')) && !$('visitorCount'));
+  check('viewer counter label is capitalized as Online',
+    $('viewerCounter')?.querySelector('.viewer-count-label')?.textContent.trim() === 'Online');
+  check('desktop navigation tabs stay viewport-centered independently of right-side pills',
+    /@media\s*\(min-width:\s*901px\)\s*\{\s*\.nav-links\s*\{[^}]*position:\s*absolute;[^}]*top:\s*50%;[^}]*left:\s*50%;[^}]*transform:\s*translate\(-50%,-50%\)/.test(siteCss));
+  const publicHelpLinks = [...normal.window.document.querySelectorAll('.help-nav-link')];
+  check('public navigation replaces News with Help and provides an initially hidden unread dot',
+    publicHelpLinks.length === 2 && publicHelpLinks.every(link => link.getAttribute('href') === '/help.html') &&
+    publicHelpLinks.every(link => link.querySelector('.help-notification-dot')?.hidden === true) &&
+    !normal.window.document.querySelector('[data-route="news"]') &&
+    redirects.split('\n').some(line => /^\/news\s+\/\s+302/.test(line)));
+  check('News remains reversible without exposing its public view or deleting its stored-data renderer',
+    appSource.includes('const PUBLIC_NEWS_ENABLED = false') && appSource.includes('function applyNewsUpdate(') &&
+    Boolean(normal.window.document.getElementById('viewNews')) &&
+    normal.window.__freef1TestState?.().viewNames.includes('news') === false &&
+    redirects.split('\n').some(line => /^\/help\s+\/help\.html\s+301/.test(line)));
+  check('News storage and admin create/edit/delete features remain intact',
+    /news:\s*\[\]/.test(backendSource) &&
+    ['/admin/api/news', '/admin/api/news/:id'].every(route => backendSource.includes(route)) &&
+    ['function renderNews(', 'function deleteNewsItem(', "api('/news', { method: 'POST'", "method: 'PATCH'"]
+      .every(marker => adminSource.includes(marker)));
+  check('Help page contains a text-only ticket form, optional diagnostics, and privacy notice',
+    ['helpRequestForm', 'helpName', 'helpCategory', 'helpMessage', 'includeDiagnostics', 'chatMessages', 'deleteTicket']
+      .every(id => helpPageHtml.includes(`id="${id}"`)) &&
+    helpPageHtml.includes('Image uploads are coming soon') && helpPageCss.includes('.chat-message.staff'));
+  const privacyText = $('privacyPanel')?.textContent || '';
+  const faqText = $('faqPanel')?.textContent || '';
+  check('Privacy and FAQ disclose the temporary Cloudflare count and its limits',
+    /temporary WebSocket connection per open FreeF1 page/i.test(privacyText) &&
+    /Cloudflare necessarily processes network and connection metadata/i.test(privacyText) &&
+    /does not attach a visitor ID/i.test(privacyText) &&
+    /not a unique-visitor or video-playback count/i.test(privacyText) &&
+    /Cloudflare may process standard network metadata/i.test(faqText));
+  check('privacy copy explains ticket data, local key loss, Discord storage, and deletion',
+    /random access key stored in this browser/i.test(privacyText) &&
+    /private Discord support channel/i.test(privacyText) &&
+    /Clearing browser storage removes your access key/i.test(privacyText) &&
+    /Delete this ticket control/i.test(privacyText));
+  const viewerSocket = normal.socketConnections[0];
+  check('live count opens one secure WebSocket to the deployed Cloudflare endpoint',
+    normal.socketConnections.length === 1 && viewerSocket?.url === 'wss://freef1-viewer-counter.calvinbotha1julie.workers.dev/ws',
+    viewerSocket?.url || 'no WebSocket');
+  const localPreview = boot({ pageUrl: 'http://localhost:4173/' });
+  check('localhost preview uses its local-only counter Worker endpoint',
+    localPreview.socketConnections.length === 1 && localPreview.socketConnections[0].url === 'ws://127.0.0.1:8787/ws',
+    localPreview.socketConnections[0]?.url || 'no local WebSocket');
+  check('counter displays the server aggregate count and ignores unrelated messages', (() => {
+    if (!viewerSocket) return false;
+    viewerSocket.emit('open');
+    viewerSocket.emit('message', { data: JSON.stringify({ type: 'count', count: 800 }) });
+    viewerSocket.emit('message', { data: JSON.stringify({ type: 'page-view', count: 12 }) });
+    return !$('viewerCounter').hidden && $('viewerCount').textContent === '800' &&
+      $('viewerCounter').dataset.state === 'live' && viewerSocket.sent.length === 0;
+  })());
   check('stream selector renders from local source definitions', $('links')?.children.length > 0, String($('links')?.children.length || 0));
   const pageRoutesRemoved = ['viewPerformance', 'view247', 'footExperimental'].every(id => !normal.window.document.getElementById(id)) &&
     !normal.window.document.querySelector('[data-route=\"performance\"], [data-route=\"track\"], [data-route=\"247\"], [data-route=\"audio\"]');
@@ -168,9 +261,10 @@ function bootMaintenance() {
   await new Promise(resolve => setTimeout(resolve, 20));
   normal.window.dispatchEvent(new normal.window.Event('focus'));
   normal.window.dispatchEvent(new normal.window.Event('online'));
-  check('visibility, focus, and online events never duplicate the config stream',
+  check('visibility, focus, and online events never duplicate either live connection',
     normal.eventStreams.length === 1 && !normal.eventStreams[0].closed &&
-    normal.eventStreams[0].url === 'https://f1admin.onrender.com/api/site/updates');
+    normal.eventStreams[0].url === 'https://f1admin.onrender.com/api/site/updates' &&
+    normal.socketConnections.length === 1);
   check('public config changes are not fetched alongside the update stream',
     !normal.requested.some(item => item.url.includes('/api/site/config')));
   check('public sports data is fetched directly from providers', normal.requested.some(item => item.url.includes('api.jolpi.ca')) &&
@@ -182,16 +276,17 @@ function bootMaintenance() {
     normal.window.__freef1TestState?.().urls.some(url => url.startsWith('https://')) &&
     !normal.requested.some(item => /\/api\/stream\/ticket|\/stream\//.test(item.url)));
   check('CSP-allowed direct providers were sufficient for startup', normal.blockedByCsp.length === 0, normal.blockedByCsp.join(', '));
-  check('no visitor analytics, heartbeat, or stream-proxy APIs are requested',
+  check('no visitor analytics, heartbeat, or stream-proxy HTTP APIs are requested',
     !normal.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket|\/api\/news/.test(item.url)) &&
-    normal.eventStreams.every(stream => /\/api\/site\/updates$/.test(stream.url)));
+    normal.eventStreams.every(stream => /\/api\/site\/updates$/.test(stream.url)) &&
+    viewerSocket?.sent.length === 0);
   check('maintenance page has no public-site bypass or old bypass query logic',
     !/bypass-maintenance|Continue to FreeF1|BYPASS_MAINTENANCE/.test(maintenanceHtml + appSource));
   check('maintenance page listens to Race Control and releases when maintenance ends',
     maintenanceJs.includes('/api/site/updates') && /maintenance\.active !== true/.test(maintenanceJs) &&
     /location\.replace\('\/'\)/.test(maintenanceJs));
   check('outlined title uses lighter tracking and stroke to keep the R distinct',
-    /h1 em\s*\{[^}]*letter-spacing:\s*-0\.045em/s.test(maintenanceCss) &&
+    /h1 em\s*\{[^}]*letter-spacing:\s*-0\.01em/s.test(maintenanceCss) &&
     /-webkit-text-stroke:\s*clamp\(1px,\s*0\.12vw,\s*1\.65px\)/.test(maintenanceCss));
 
   const maintenancePage = bootMaintenance();
@@ -229,7 +324,8 @@ function bootMaintenance() {
     !offline.requested.some(item => item.url.includes('f1admin.onrender.com')));
   check('legacy visitor ID/token/count are removed from local storage',
     ['freef1_user_id', 'freef1_visitor_token', 'freef1_active_count'].every(key => offline.window.localStorage.getItem(key) === null));
-  check('outage path never calls visitor, analytics, heartbeat, or stream proxy APIs',
+  check('outage path keeps the separate live counter and calls no visitor or analytics HTTP API',
+    offline.socketConnections.length === 1 && offline.socketConnections[0].url === 'wss://freef1-viewer-counter.calvinbotha1julie.workers.dev/ws' &&
     !offline.requested.some(item => /visitor|analytics|heartbeat|\/api\/events|\/api\/stream\/ticket/.test(item.url)) &&
     offline.eventStreams.every(stream => /\/api\/site\/updates$/.test(stream.url)));
 
@@ -243,17 +339,18 @@ function bootMaintenance() {
   const liveStream = normal.eventStreams[normal.eventStreams.length - 1];
   liveStream.emit('config', { data: JSON.stringify(liveConfig) });
   const liveState = normal.window.__freef1TestState?.();
-  check('open site applies Force Live and news immediately from a config event',
+  check('open site applies Force Live while keeping News hidden from public config events',
     liveState?.streamWindow.active === true && liveState.selectedStreamAvailable === true &&
-    $('newsFeed')?.textContent.includes('Live Race Control update') && normal.window.location.pathname !== '/maintenance.html',
+    !$('newsFeed')?.textContent.includes('Live Race Control update') && $('viewNews')?.hidden === true &&
+    normal.window.location.pathname !== '/maintenance.html',
     JSON.stringify({ streamWindow: liveState?.streamWindow, selectedStreamAvailable: liveState?.selectedStreamAvailable,
-      news: $('newsFeed')?.textContent, path: normal.window.location.pathname, streamUrl: liveStream?.url,
-      streamClosed: liveStream?.closed, errors: normal.runtimeErrors }));
+      news: $('newsFeed')?.textContent, newsHidden: $('viewNews')?.hidden, path: normal.window.location.pathname,
+      streamUrl: liveStream?.url, streamClosed: liveStream?.closed, errors: normal.runtimeErrors }));
   const unchangedNewsNode = $('newsFeed')?.firstElementChild;
   liveStream.emit('config', { data: JSON.stringify({
     ...liveConfig, streamWindow: { ...liveConfig.streamWindow, reason: 'Updated reason' }
   }) });
-  check('unrelated live config changes keep existing news DOM in place (no flicker)',
+  check('unrelated live config changes leave the retained News data view untouched',
     $('newsFeed')?.firstElementChild === unchangedNewsNode);
 
   let failed = 0;

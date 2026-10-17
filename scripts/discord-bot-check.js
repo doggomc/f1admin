@@ -44,6 +44,24 @@ check('voice dependencies and deployment settings are removed',
     JSON.stringify(packageJson) + server + envExample));
 check('legacy persisted relay state is cleared without replacing other bot settings',
   /delete g\.relay/.test(bot) && /delete g\.config\.audioUrl/.test(bot));
+check('Help ticket Message Content intent is requested only behind the explicit feature flag',
+  /const ticketFeatureEnabled = deps\.ticketsEnabled === true && Boolean\(deps\.guildId && OWNER_ID\)/.test(bot) &&
+  /\.\.\.\(ticketFeatureEnabled \? \[GatewayIntentBits\.MessageContent\] : \[\]\)/.test(bot) &&
+  /DISCORD_TICKETS_ENABLED/.test(server));
+check('Help tickets create private sequential text channels and expose history/message/delete methods',
+  /type: ChannelType\.GuildText/.test(bot) && /name: ticketId/.test(bot) &&
+  /deny: \[PermissionFlagsBits\.ViewChannel\]/.test(bot) &&
+  /guild\.channels\.create\(options\)/.test(bot) &&
+  ['createTicketChannel', 'sendTicketMessage', 'fetchTicketMessages', 'deleteTicketChannel'].every(name => bot.includes(name)));
+check('typed private-channel replies are relayed through MessageCreate and server ticket service',
+  /client\.on\(Events\.MessageCreate/.test(bot) && /onTicketReply\(\{/.test(bot) &&
+  /handleStaffReply\(message\)/.test(server) && /\/api\/help\/events/.test(server));
+check('Help API has no upload endpoint and documents required ticket storage and Discord setup',
+  /uploadsEnabled:\s*false/.test(server) && /DISCORD_TICKET_CATEGORY_ID/.test(envExample) &&
+  /DISCORD_TICKET_STAFF_ROLE_ID/.test(envExample) && /Message Content Intent/.test(fs.readFileSync(path.join(root, 'bot', 'README.md'), 'utf8')) &&
+  /persistent disk/.test(fs.readFileSync(path.join(root, 'RENDER.md'), 'utf8')));
+check('bot invite permissions now include Manage Channels',
+  /permissions=1342262352/.test(fs.readFileSync(path.join(root, 'bot', 'README.md'), 'utf8')));
 
 let failures = 0;
 for (const result of results) {

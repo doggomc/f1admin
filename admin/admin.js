@@ -105,7 +105,7 @@ function updateStorage(storage = config?.storage) {
       ? 'Settings are saved to this instance, but a redeploy may reset them. Configure Upstash Redis (recommended) or a Render persistent disk for durable admin state. Public visitors do not create storage traffic.'
       : 'Settings currently reside in memory and may be lost on restart. Configure Upstash Redis (recommended) or a Render persistent disk for durable admin state. Public visitors do not create storage traffic.';
   } else {
-    $('storageCopy').textContent = 'Admin state is stored durably. The public site fetches a cacheable config snapshot; no visitor telemetry, background polling, or stream relay is used.';
+    $('storageCopy').textContent = 'Admin state is stored durably. Race Control serves configuration and admin actions only. The live page-connection count is handled separately by Cloudflare; this backend stores no visitor IDs or page history and runs no visitor analytics, background polling, or stream relay.';
   }
 }
 

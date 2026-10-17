@@ -150,7 +150,7 @@
           <section class="panel" aria-labelledby="sourceTitle">
             <div class="panel-head"><div class="panel-title" id="sourceTitle">Stream source availability</div><span class="panel-badge normal">Site-local playback</span></div>
             <div class="admin-section">
-              <p class="section-note">Disable a source to hide it from the public selector. Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
+              <p class="section-note">Toggle the sources you want to hide, then click <strong>Save source settings</strong> below to apply the changes to the public selector. Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
               <div class="source-list" id="sourceList" aria-live="polite"></div>
               <div class="btn-row" style="margin-top:14px"><button class="btn sm primary" id="saveSources" type="button">Save source settings</button></div>
               <p class="inline-message" id="sourceMessage" role="status"></p>
@@ -191,7 +191,7 @@
           <section class="panel" aria-labelledby="storageTitle">
             <div class="panel-head"><div class="panel-title" id="storageTitle">Service & storage</div><span class="panel-badge normal">Low traffic</span></div>
             <div class="admin-section">
-              <p class="storage-copy" id="storageCopy">Race Control responds to a single cached config request and admin actions. There are no public visitor counters, heartbeats, analytics, polling loops, or stream relays.</p>
+              <p class="storage-copy" id="storageCopy">Race Control handles public configuration and admin actions. The live page-connection count is served separately by Cloudflare; this backend stores no visitor IDs or page history and runs no visitor heartbeats, analytics, or stream relays.</p>
               <p class="storage-copy" style="margin-top:12px"><strong>Backend:</strong> <span id="backendAddress">https://f1admin.onrender.com</span></p>
               <p class="storage-copy" style="margin-top:8px"><strong>Storage:</strong> <span id="storageDetail">Checking state</span></p>
               <p class="storage-copy" style="margin-top:8px"><strong>Site configuration:</strong> one request per browser cache window; last cached site settings remain usable during an outage.</p>

@@ -108,6 +108,7 @@ window.fetch = async (url, options = {}) => {
   check('initialization makes only status and one config request', calls.length === 2 && calls[0].pathname.endsWith('/status') && calls[1].pathname.endsWith('/config'), JSON.stringify(calls.map(call => call.pathname)));
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
+  check('source instructions say to save draft switch changes', /Toggle the sources[\s\S]*Save source settings/i.test(html));
   check('no visitor, analytics, SSE, or recurring API request is made', calls.every(call => !/visitor|analytics|events|status\?/.test(call.pathname)));
 
   await new Promise(resolve => setTimeout(resolve, 120));

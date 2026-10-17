@@ -1,11 +1,11 @@
 'use strict';
 
 /* FreeF1 Race Control API
- * The public site is a static Netlify app. This Render process serves only
- * the authenticated control panel, its small public configuration snapshot,
- * a config-only live update stream, and the optional Discord bot. It does not
- * proxy streams or sports data, and collects no visitor presence, heartbeats,
- * or analytics.
+ * The public site is a static Netlify app. This Render process serves the
+ * authenticated control panel, a small public configuration snapshot and
+ * push-only config stream, plus an optional text-only Help-ticket API and
+ * Discord bot. It does not proxy streams, sports data, or media, and it does
+ * not collect visitor presence, page history, heartbeats, or analytics.
  */
 const crypto = require('crypto');
 const compression = require('compression');
@@ -13,9 +13,11 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const fs = require('fs');
 const path = require('path');
+const { HelpTicketService, HELP_CATEGORIES } = require('./support-tickets');
 
 const app = express();
 app.disable('x-powered-by');
+let discordBot = null;
 
 // One ephemeral response per visible public tab; no visitor identity or
 // periodic heartbeat is recorded or sent.
@@ -43,6 +45,10 @@ if (PRODUCTION) {
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const ADMIN_DIR = path.join(__dirname, 'admin');
 const CONTROL_FILE = path.join(DATA_DIR, 'race-control.json');
+const HELP_TICKETS_FILE = path.join(DATA_DIR, 'help-tickets.json');
+const HELP_TICKETS_REDIS_KEY = 'freef1:help-tickets:v1';
+const HELP_TICKETS_ENABLED = String(process.env.DISCORD_TICKETS_ENABLED || '').toLowerCase() === 'true';
+const PUBLIC_NEWS_ENABLED = String(process.env.PUBLIC_NEWS_ENABLED || '').toLowerCase() === 'true';
 const LEGACY_FILES = {
   maintenance: path.join(DATA_DIR, 'maintenance.json'),
   news: path.join(DATA_DIR, 'news.json'),
@@ -61,7 +67,10 @@ const LEGACY_REDIS_KEYS = {
 const UPSTASH_URL = cleanEnv('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL').replace(/\/+$/, '');
 const UPSTASH_TOKEN = cleanEnv('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN');
 const UPSTASH_ENABLED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
-const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || 'https://freef1.netlify.app'));
+const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
+  ? 'https://freef1.netlify.app'
+  : 'https://freef1.netlify.app,http://localhost:4173,http://127.0.0.1:4173';
+const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGINS));
 const MAX_NEWS_ITEMS = Math.max(1, Math.min(100, Number.parseInt(process.env.NEWS_MAX_ITEMS || '50', 10) || 50));
 const SITE_CONFIG_MAX_AGE_SECONDS = 300;
 const ADMIN_IP_ALLOWLIST = String(process.env.ADMIN_IP_ALLOWLIST || '').split(',').map(value => value.trim()).filter(Boolean);
@@ -343,6 +352,87 @@ function parseRedisJson(value) {
   try { return JSON.parse(String(value)); } catch (_) { return null; }
 }
 
+const HELP_RATE_LIMIT_SECRET = crypto.randomBytes(32);
+let helpStorageReady = false;
+let helpStorageMode = 'unavailable';
+async function loadHelpTicketState() {
+  const explicitDisk = Boolean(String(process.env.DATA_DIR || '').trim());
+  if (UPSTASH_ENABLED) {
+    try {
+      const reply = await upstashRequest(['GET', HELP_TICKETS_REDIS_KEY], 8000);
+      helpStorageReady = true;
+      helpStorageMode = 'upstash';
+      return parseRedisJson(reply?.result);
+    } catch (error) {
+      console.warn(`[Help] Upstash ticket read failed: ${error.message}`);
+    }
+  }
+  if (fileStoreReady && (!PRODUCTION || explicitDisk)) {
+    helpStorageReady = true;
+    helpStorageMode = explicitDisk ? 'persistent-disk' : 'local';
+    return readLocalJson(HELP_TICKETS_FILE);
+  }
+  helpStorageReady = false;
+  helpStorageMode = 'unavailable';
+  return null;
+}
+
+async function saveHelpTicketState(value) {
+  const explicitDisk = Boolean(String(process.env.DATA_DIR || '').trim());
+  if (UPSTASH_ENABLED && helpStorageMode === 'upstash') {
+    try {
+      const reply = await upstashRequest(['SET', HELP_TICKETS_REDIS_KEY, JSON.stringify(value)], 8000);
+      if (reply?.result !== 'OK') throw new Error('Upstash did not confirm ticket save');
+      helpStorageReady = true;
+      return true;
+    } catch (error) {
+      console.warn(`[Help] Upstash ticket save failed: ${error.message}`);
+      if (PRODUCTION && !explicitDisk) {
+        helpStorageReady = false;
+        helpStorageMode = 'unavailable';
+        return false;
+      }
+    }
+  }
+  if (fileStoreReady && (!PRODUCTION || explicitDisk)) {
+    const saved = writeLocalJson(HELP_TICKETS_FILE, value);
+    if (saved) {
+      helpStorageReady = true;
+      helpStorageMode = explicitDisk ? 'persistent-disk' : 'local';
+      return true;
+    }
+  }
+  helpStorageReady = false;
+  helpStorageMode = 'unavailable';
+  return false;
+}
+
+const helpTicketService = new HelpTicketService({
+  loadState: loadHelpTicketState,
+  saveState: saveHelpTicketState,
+  getBot: () => discordBot,
+  storageReady: () => helpStorageReady,
+  log: (...args) => console.warn('[Help]', ...args),
+});
+
+function helpTokenFromRequest(req) {
+  const match = /^Bearer\s+([A-Za-z0-9_-]{43})$/i.exec(String(req.get('authorization') || '').trim());
+  return match ? match[1] : '';
+}
+
+function helpRateKey(req) {
+  const ip = sanitizeIp(req.ip || req.socket.remoteAddress || 'unknown');
+  return crypto.createHmac('sha256', HELP_RATE_LIMIT_SECRET).update(ip).digest('hex');
+}
+
+function sendHelpError(res, error) {
+  const status = Number(error?.status) || 500;
+  if (Number(error?.retryAfter) > 0) res.setHeader('Retry-After', String(Number(error.retryAfter)));
+  if (status >= 500 && status !== 503) console.warn('[Help] request failed:', error?.message || error);
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(status).json({ error: status === 500 ? 'The support request failed. Please try again.' : String(error?.message || 'The support request could not be completed.').slice(0, 240) });
+}
+
 function applyLegacyLocalState() {
   const maintenance = readLocalJson(LEGACY_FILES.maintenance);
   const news = readLocalJson(LEGACY_FILES.news);
@@ -500,7 +590,7 @@ function deleteNews(id) {
 function publicConfig() {
   return {
     maintenance: state.maintenance,
-    news: publicNews(),
+    news: PUBLIC_NEWS_ENABLED ? publicNews() : [],
     sources: publicSources(),
     streamOverride: publicOverride(),
     streamWindow: state.streamWindow,
@@ -595,7 +685,8 @@ app.use((req, res, next) => {
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Expose-Headers', 'Retry-After');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -643,6 +734,87 @@ app.get('/api/site/updates', async (_req, res) => {
   res.write(': config stream open\nretry: 30000\n\n');
   res.flush?.();
   sendSiteConfigEvent(res);
+});
+
+app.get('/api/help/config', async (_req, res) => {
+  await helpTicketService.ready;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    available: helpTicketService.availability().available,
+    categories: HELP_CATEGORIES,
+    limits: { initialMessage: 4000, chatMessage: 2000, messagesPerMinute: 10 },
+    uploadsEnabled: false,
+  });
+});
+
+app.post('/api/help/tickets', async (req, res) => {
+  try {
+    const result = await helpTicketService.createTicket({
+      token: helpTokenFromRequest(req),
+      body: req.body || {},
+      ipKey: helpRateKey(req),
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(201).json(result);
+  } catch (error) {
+    sendHelpError(res, error);
+  }
+});
+
+app.get('/api/help/ticket/status', async (req, res) => {
+  try {
+    const result = await helpTicketService.getStatus(helpTokenFromRequest(req));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    sendHelpError(res, error);
+  }
+});
+
+app.get('/api/help/ticket', async (req, res) => {
+  try {
+    const result = await helpTicketService.getTicket(helpTokenFromRequest(req));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    sendHelpError(res, error);
+  }
+});
+
+app.post('/api/help/ticket/messages', async (req, res) => {
+  try {
+    const result = await helpTicketService.sendMessage({ token: helpTokenFromRequest(req), text: req.body?.text });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(201).json(result);
+  } catch (error) {
+    sendHelpError(res, error);
+  }
+});
+
+app.delete('/api/help/ticket', async (req, res) => {
+  try {
+    const result = await helpTicketService.deleteTicket(helpTokenFromRequest(req));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    sendHelpError(res, error);
+  }
+});
+
+app.get('/api/help/events', async (req, res) => {
+  try {
+    const token = helpTokenFromRequest(req);
+    await helpTicketService.getStatus(token);
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    helpTicketService.subscribe(token, res);
+  } catch (error) {
+    if (!res.headersSent) sendHelpError(res, error);
+    else res.end();
+  }
 });
 
 function adminSameOrigin(req, res, next) {
@@ -855,8 +1027,7 @@ app.use((error, _req, res, _next) => {
 });
 
 /* Discord bot remains an independent optional worker inside this process.
-   No website presence state or analytics data is passed into it. */
-let discordBot = null;
+   Ticket metadata is limited to support, with no visitor analytics. */
 if (process.env.DISCORD_BOT_TOKEN) {
   try {
     discordBot = require('./bot/discord-bot.js').start({
@@ -865,6 +1036,10 @@ if (process.env.DISCORD_BOT_TOKEN) {
       siteUrl: SITE_URL,
       discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
       ownerId: process.env.DISCORD_OWNER_ID || '',
+      ticketsEnabled: HELP_TICKETS_ENABLED,
+      ticketCategoryId: process.env.DISCORD_TICKET_CATEGORY_ID || '',
+      ticketStaffRoleId: process.env.DISCORD_TICKET_STAFF_ROLE_ID || '',
+      onTicketReply: message => helpTicketService.handleStaffReply(message),
       readLocalJson,
       writeLocalJson,
       upstash: UPSTASH_ENABLED ? upstashRequest : null,

@@ -34,7 +34,12 @@ const child = spawn(process.execPath, ['server.js'], {
     UPSTASH_REDIS_REST_TOKEN: '',
     KV_REST_API_URL: '',
     KV_REST_API_TOKEN: '',
-    ALLOWED_ORIGIN: 'https://freef1.netlify.app'
+    ALLOWED_ORIGIN: 'https://freef1.netlify.app',
+    PUBLIC_NEWS_ENABLED: 'false',
+    DISCORD_BOT_TOKEN: '',
+    DISCORD_GUILD_ID: '',
+    DISCORD_OWNER_ID: '',
+    DISCORD_TICKETS_ENABLED: 'false'
   },
   stdio: ['ignore', 'pipe', 'pipe']
 });
@@ -116,10 +121,27 @@ function nextConfigEvent(reader) {
 
     const siteConfig = await request('/api/site/config', { headers: { Origin: 'https://freef1.netlify.app' } });
     check('public site config is served without admin credentials', siteConfig.response.status === 200 && siteConfig.body.maintenance?.active === false);
+    check('public News payload is empty while the reversible hide flag is off', Array.isArray(siteConfig.body.news) && siteConfig.body.news.length === 0);
     check('public config is HTTP-cacheable for five minutes', /public, max-age=300/.test(siteConfig.response.headers.get('cache-control') || ''));
     check('CORS allows the public site origin', siteConfig.response.headers.get('access-control-allow-origin') === 'https://freef1.netlify.app');
     const deniedOrigin = await request('/api/site/config', { headers: { Origin: 'https://evil.example' } });
     check('untrusted browser origins are rejected', deniedOrigin.response.status === 403);
+
+    const helpConfig = await request('/api/help/config', { headers: { Origin: 'https://freef1.netlify.app' } });
+    check('Help configuration endpoint is public, uncached, and advertises text-only limits',
+      helpConfig.response.status === 200 && helpConfig.body.available === false &&
+      helpConfig.body.uploadsEnabled === false && helpConfig.body.limits?.initialMessage === 4000 &&
+      helpConfig.response.headers.get('cache-control') === 'no-store');
+    check('Help CORS exposes the bearer-header and retry-after contract',
+      helpConfig.response.headers.get('access-control-allow-headers') === 'Content-Type, Authorization' &&
+      helpConfig.response.headers.get('access-control-expose-headers') === 'Retry-After');
+    const helpPreflight = await request('/api/help/ticket/messages', {
+      method: 'OPTIONS', headers: { Origin: 'https://freef1.netlify.app', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' }
+    });
+    check('Help browser preflight allows authenticated POST requests',
+      helpPreflight.response.status === 204 && helpPreflight.response.headers.get('access-control-allow-origin') === 'https://freef1.netlify.app');
+    const helpNoToken = await request('/api/help/ticket/status', { headers: { Origin: 'https://freef1.netlify.app' } });
+    check('ticket status requires a browser bearer key', helpNoToken.response.status === 401);
 
     updateController = new AbortController();
     const siteUpdates = await fetch(`${base}/api/site/updates`, {
@@ -196,11 +218,15 @@ function nextConfigEvent(reader) {
       method: 'POST', headers: authHeaders,
       body: JSON.stringify({ title: 'Smoke test update', body: 'Race Control is online.', tag: 'Test', published: true })
     });
-    check('admin can publish a sanitized news item', news.response.status === 201 && news.body.news?.title === 'Smoke test update');
+    check('admin can publish a sanitized news item while public display is hidden', news.response.status === 201 && news.body.news?.title === 'Smoke test update');
     const pushedNews = await readNextConfigEvent();
-    check('published news is broadcast to connected public tabs', pushedNews.news?.[0]?.title === 'Smoke test update');
+    check('published News stays out of public push events while the hide flag is off', Array.isArray(pushedNews.news) && pushedNews.news.length === 0);
     const publicAfterNews = await request('/api/site/config');
-    check('published news is included in the cacheable public snapshot', publicAfterNews.body.news?.[0]?.title === 'Smoke test update');
+    check('published News stays out of public snapshots while admin data persists',
+      Array.isArray(publicAfterNews.body.news) && publicAfterNews.body.news.length === 0);
+    const adminNews = await request('/admin/api/news', { headers: { Origin: origin, Cookie: cookie } });
+    check('News remains available in the authenticated admin data endpoint',
+      adminNews.response.status === 200 && adminNews.body.news?.some(item => item.title === 'Smoke test update'));
 
     const invalidSource = await request('/admin/api/stream/sources', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['sky-uk-2'] })

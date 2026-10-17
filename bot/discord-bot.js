@@ -39,17 +39,20 @@
      presence     — while a session is live the bot's activity is the
                     Grand Prix name; otherwise a next-session
                     countdown, refreshed at most once a minute.
+     help tickets — when configured, creates private sequentially named
+                    text channels and relays visitor/staff text messages.
 
-   Intents stay unprivileged: Guilds, GuildMessages, GuildMessageReactions
-   (+ Message/Reaction partials so legacy reaction panels survive bot
-   restarts).
+   Intents: Guilds, GuildMessages, GuildMessageReactions (+ Message/Reaction
+   partials for legacy panels). MessageContent is requested only when the
+   optional Help-ticket feature is enabled, to relay staff replies.
    ════════════════════════════════════════════════════════════════════ */
 
 const fs = require('fs');
 const path = require('path');
 const {
-  Client, GatewayIntentBits, Partials, ActionRowBuilder,
+  Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
+  ChannelType, PermissionFlagsBits,
 } = require('discord.js');
 const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
@@ -162,7 +165,7 @@ function websiteEmbed(siteUrl, inviteUrl) {
     description:
       'Every session of the 2026 season in one cockpit.\n' +
       'Direct browser playback, live race-control\n' +
-      'data, standings, news and a pit-stop-fast interface.',
+      'data, standings, Help tickets and a pit-stop-fast interface.',
     fields: [
       { name: 'Streams', value: 'WeStream F1, Sky UHD, F1TV, AppleTV, DAZN, WikiSport', inline: false },
       { name: 'Race control', value: 'Live timing windows, radio feed, standings and results', inline: false },
@@ -351,15 +354,134 @@ function start(deps) {
     },
   };
   const soonMinutesFor = st => Number(st.config && st.config.soonMinutes) || DEFAULT_SOON_MINUTES;
+  const ticketFeatureEnabled = deps.ticketsEnabled === true && Boolean(deps.guildId && OWNER_ID);
 
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMessageReactions,
+      ...(ticketFeatureEnabled ? [GatewayIntentBits.MessageContent] : []),
     ],
     partials: [Partials.Message, Partials.Reaction],
   });
+
+  const ticketCategoryLabels = new Map([
+    ['website', 'Website issue'],
+    ['playback', 'Playback issue'],
+    ['timing', 'Timing or results'],
+    ['discord', 'Discord or account help'],
+    ['other', 'Other'],
+  ]);
+  const ticketText = (value, max = 2000) => String(value == null ? '' : value)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .slice(0, max);
+  const ticketPermissions = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.EmbedLinks,
+  ];
+
+  async function ticketGuild() {
+    if (!ticketFeatureEnabled || !client.isReady()) throw new Error('Help tickets are not enabled or the bot is offline.');
+    return client.guilds.cache.get(String(deps.guildId)) || client.guilds.fetch(String(deps.guildId));
+  }
+
+  async function createTicketChannel({ ticketId, name, category, message, diagnostics, createdAt }) {
+    const guild = await ticketGuild();
+    const overwrites = [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: client.user.id, allow: ticketPermissions },
+      { id: OWNER_ID, allow: ticketPermissions },
+    ];
+    const staffRoleId = String(deps.ticketStaffRoleId || '').trim();
+    if (staffRoleId) overwrites.push({ id: staffRoleId, allow: ticketPermissions });
+
+    const options = {
+      name: ticketId,
+      type: ChannelType.GuildText,
+      topic: `Private FreeF1 help request ${ticketId}`,
+      permissionOverwrites: overwrites,
+      reason: `FreeF1 support ticket ${ticketId}`,
+    };
+    const parent = String(deps.ticketCategoryId || '').trim();
+    if (parent) options.parent = parent;
+    const channel = await guild.channels.create(options);
+
+    const diagnosticLines = Object.entries(diagnostics || {})
+      .map(([key, value]) => `${ticketText(key, 32)}: ${ticketText(value, 140)}`)
+      .filter(line => !/:\s*$/.test(line));
+    const embed = new EmbedBuilder()
+      .setColor(FREEF1_RED)
+      .setTitle(`New Help Ticket · ${ticketId}`)
+      .setDescription(ticketText(message, 4000))
+      .addFields(
+        { name: 'Name', value: ticketText(name, 48) || 'Not provided', inline: true },
+        { name: 'Category', value: ticketCategoryLabels.get(category) || 'Other', inline: true },
+        { name: 'Device diagnostics', value: ticketText(diagnosticLines.join('\n') || 'Not provided', 1000) },
+      )
+      .setFooter({ text: 'freef1:ticket:initial' })
+      .setTimestamp(new Date(createdAt || Date.now()));
+    try {
+      await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    } catch (error) {
+      await channel.delete('Removing incomplete FreeF1 help ticket').catch(() => {});
+      throw error;
+    }
+    return channel.id;
+  }
+
+  async function sendTicketMessage(channelId, { name, text }) {
+    const channel = await client.channels.fetch(String(channelId));
+    if (!channel || !channel.isTextBased()) throw new Error('Ticket channel is unavailable.');
+    const embed = new EmbedBuilder()
+      .setColor(FREEF1_RED)
+      .setTitle(`Website message · ${ticketText(name, 48) || 'Visitor'}`)
+      .setDescription(ticketText(text, 2000))
+      .setFooter({ text: 'freef1:ticket:user-message' })
+      .setTimestamp();
+    const sent = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    return { id: sent.id, role: 'visitor', author: 'You', text: ticketText(text, 2000), createdAt: sent.createdTimestamp };
+  }
+
+  async function fetchTicketMessages(channelId) {
+    const channel = await client.channels.fetch(String(channelId));
+    if (!channel || !channel.isTextBased()) throw new Error('Ticket channel is unavailable.');
+    const found = await channel.messages.fetch({ limit: 100 });
+    return [...found.values()].map(message => {
+      if (message.author?.id === client.user.id) {
+        const marker = message.embeds?.[0]?.footer?.text;
+        if (marker !== 'freef1:ticket:initial' && marker !== 'freef1:ticket:user-message') return null;
+        return {
+          id: message.id,
+          role: 'visitor',
+          author: 'You',
+          text: ticketText(message.embeds?.[0]?.description || '', 4000),
+          createdAt: message.createdTimestamp,
+        };
+      }
+      if (message.author?.bot || !String(message.content || '').trim()) return null;
+      return {
+        id: message.id,
+        role: 'staff',
+        author: 'FreeF1 Support',
+        text: ticketText(message.content, 2000),
+        createdAt: message.createdTimestamp,
+      };
+    }).filter(Boolean).sort((a, b) => a.createdAt - b.createdAt).slice(-100);
+  }
+
+  async function deleteTicketChannel(channelId) {
+    if (!ticketFeatureEnabled) throw new Error('Help tickets are not enabled.');
+    try {
+      const channel = await client.channels.fetch(String(channelId));
+      if (channel) await channel.delete('Ticket deleted by the requester');
+    } catch (error) {
+      if (Number(error?.code) !== 10003 && Number(error?.status) !== 404) throw error;
+    }
+    return true;
+  }
 
   /* ── emoji management ── */
   async function ensureEmojis(guild, st) {
@@ -831,6 +953,21 @@ function start(deps) {
   });
 
   client.on(Events.InteractionCreate, i => { onInteraction(i).catch(e => log('interaction error:', e.message)); });
+  client.on(Events.MessageCreate, message => {
+    if (!ticketFeatureEnabled || typeof deps.onTicketReply !== 'function' || message.author?.bot) return;
+    if (!message.guild || message.guild.id !== String(deps.guildId)) return;
+    // Ticket channels are private by construction: @everyone is denied, and
+    // only the owner and the configured support role can send messages.
+    const text = ticketText(message.content, 2000).trim();
+    if (!text) return;
+    Promise.resolve(deps.onTicketReply({
+      channelId: message.channelId,
+      messageId: message.id,
+      text,
+      createdAt: message.createdTimestamp,
+      fromStaff: true,
+    })).catch(error => log('ticket reply relay failed:', error.message));
+  });
   client.on(Events.MessageReactionAdd, (r, u) => { handleReaction(r, u, true).catch(() => {}); });
   client.on(Events.MessageReactionRemove, (r, u) => { handleReaction(r, u, false).catch(() => {}); });
 
@@ -838,9 +975,15 @@ function start(deps) {
 
   client.login(deps.token).catch(e => log('login failed:', e.message));
 
-  /* Handle for server.js: flush the store during graceful shutdown. */
+  /* Handle for server.js: ticket API methods and graceful store flush. */
   return {
     client,
+    ticketsEnabled: ticketFeatureEnabled,
+    isReady: () => client.isReady(),
+    createTicketChannel,
+    sendTicketMessage,
+    fetchTicketMessages,
+    deleteTicketChannel,
     flush: () => store.save(),
     stop: () => {
       if (tickTimer) clearInterval(tickTimer);
