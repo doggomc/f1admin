@@ -10,7 +10,10 @@ const os = require('os');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const siteDir = path.resolve(process.env.SITE_DIR || path.join(root, '..', 'netlifyf1'));
+const sourceDir = path.resolve(process.env.SITE_DIR || path.join(root, '..', 'netlifyf1'));
+const modern = fs.existsSync(path.join(sourceDir, 'src/app.ts'));
+const siteDir = modern ? path.join(sourceDir, 'dist') : sourceDir;
+const browserSource = name => fs.readFileSync(path.join(sourceDir, modern ? `src/${name}.ts` : `${name}.js`), 'utf8');
 let port = 37000 + Math.floor(Math.random() * 1000);
 
 function startServer() {
@@ -83,25 +86,28 @@ function walk(dir) {
   const counterOrigin = 'wss://freef1-viewer-counter.calvinbotha1julie.workers.dev';
   const counterEndpoint = `${counterOrigin}/ws`;
   const indexHtml = fs.readFileSync(path.join(siteDir, 'index.html'), 'utf8');
-  const viewerCounterJs = fs.readFileSync(path.join(siteDir, 'viewer-counter.js'), 'utf8');
+  const viewerCounterJs = browserSource('viewer-counter');
   check('site connect-src allows the exact deployed Cloudflare WebSocket host',
     directives.get('connect-src')?.split(/\s+/).includes(counterOrigin), directives.get('connect-src') || '');
   check('index configures and loads the matching live-count client',
     indexHtml.includes(`name=\"freef1-viewer-counter-ws\" content=\"${counterEndpoint}\"`) &&
-    /<script src=\"\/viewer-counter\.js\?v=[^\"]+\" defer><\/script>/.test(indexHtml));
+    (modern ? /<script type="module"[^>]+src="\/bundles\/index-[^"]+\.js"/.test(indexHtml) :
+      /<script src=\"\/viewer-counter\.js\?v=[^\"]+\" defer><\/script>/.test(indexHtml)));
   check('live-count client sends no application messages or periodic heartbeats',
     !/\.send\s*\(|setInterval\s*\(/.test(viewerCounterJs));
   check('site framing and media allow HTTPS embeds directly from hosts', directives.get('frame-src')?.includes('https:') && directives.get('media-src')?.includes('https:'));
   check('site fonts are self-hosted', directives.get('font-src')?.includes("'self'") && !/fonts\.(?:googleapis|gstatic)\.com/.test(sitePolicy));
   check('site does not enable external font stylesheets in CSP', !directives.get('style-src')?.includes('fonts.googleapis.com'));
   const helpHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
-  const helpJs = fs.readFileSync(path.join(siteDir, 'help.js'), 'utf8');
-  const helpCacheRules = ['/help.html', '/help.css', '/help.js'].every(route =>
-    headersText.includes(`${route}\n  Cache-Control: public, max-age=0, must-revalidate`));
-  check('Help page declares the same-origin backend and loads local cached-busting assets',
+  const helpJs = browserSource('help');
+  const helpCacheRules = modern
+    ? headersText.includes('/*.html\n  Cache-Control: public, max-age=0, must-revalidate') &&
+      headersText.includes('/bundles/*\n  Cache-Control: public, max-age=31536000, immutable')
+    : ['/help.html', '/help.css', '/help.js'].every(route => headersText.includes(`${route}\n  Cache-Control: public, max-age=0, must-revalidate`));
+  check('Help page uses local build assets with safe HTML and versioned-asset caching',
     helpHtml.includes('https://f1admin.onrender.com') &&
-    /<script src=\"\/help\.js\?v=[^\"]+\" defer><\/script>/.test(helpHtml) &&
-    helpHtml.includes('/help.css?v=') && helpCacheRules);
+    (modern ? /<script type="module"[^>]+src="\/bundles\//.test(helpHtml) && /href="\/bundles\/help-[^"]+\.css"/.test(helpHtml)
+      : helpHtml.includes('/help.js?v=') && helpHtml.includes('/help.css?v=')) && helpCacheRules);
   check('Help chat uses POST plus SSE and contains no polling or upload code',
     helpJs.includes('/api/help/ticket/messages') && helpJs.includes('/api/help/events') &&
     !/setInterval\s*\(|EventSource\s*\(/.test(helpJs) && !/input[^>]+type=\"file\"/i.test(helpHtml));
@@ -146,7 +152,7 @@ function walk(dir) {
   }
   check('all local preload references resolve to files', brokenPreloads.length === 0, brokenPreloads.join(', '));
 
-  const siteJs = fs.readFileSync(path.join(siteDir, 'app.js'), 'utf8') + viewerCounterJs + helpJs;
+  const siteJs = browserSource('app') + viewerCounterJs + helpJs;
   const retired = ['/api/visitors/', '/api/analytics', '/api/events', '/api/stream/ticket', 'sky-uk-2', 'sky-sports-f1', 'flyembed.click/embed/44.php'];
   const retiredFound = retired.filter(value => siteJs.includes(value));
   check('front-end bundle has no retired tracking or removed stream APIs', retiredFound.length === 0, retiredFound.join(', '));

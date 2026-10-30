@@ -32,6 +32,13 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const siteDir = process.env.SITE_DIR || path.resolve(root, '..', 'netlifyf1');
 
+const modern = fs.existsSync(path.join(siteDir, 'src', 'app.ts'));
+const siteCssSource = fs.readFileSync(path.join(siteDir, modern ? 'src/styles/app.css' : 'app.css'), 'utf8') +
+  (modern ? fs.readFileSync(path.join(siteDir, 'src/styles/radio.css'), 'utf8') : '');
+const siteJsSource = fs.readFileSync(path.join(siteDir, modern ? 'src/app.ts' : 'app.js'), 'utf8') +
+  (modern ? fs.readdirSync(path.join(siteDir, 'src/features')).filter(name => name.endsWith('.ts'))
+    .map(name => fs.readFileSync(path.join(siteDir, 'src/features', name), 'utf8')).join('\n') : '');
+
 const checks = [];
 const check = (label, pass, detail = '') => checks.push({ label, pass: Boolean(pass), detail });
 
@@ -63,9 +70,9 @@ function keyframesOf(css) {
   return out;
 }
 
-function auditStylesheet(label, cssPath) {
-  if (!fs.existsSync(cssPath)) { check(`${label}: stylesheet found`, false, cssPath); return; }
-  const css = stripComments(fs.readFileSync(cssPath, 'utf8'));
+function auditStylesheet(label, cssPath, source) {
+  if (!source && !fs.existsSync(cssPath)) { check(`${label}: stylesheet found`, false, cssPath); return; }
+  const css = stripComments(source || fs.readFileSync(cssPath, 'utf8'));
 
   // 1. no keyframe animates layout
   const offenders = [];
@@ -111,9 +118,9 @@ function auditStylesheet(label, cssPath) {
   check(`${label}: every @keyframes is actually used`, orphans.length === 0, orphans.join(', '));
 }
 
-function auditScript(label, jsPath, { scrollHandler, tickerLoop, canvasLoop }) {
-  if (!fs.existsSync(jsPath)) { check(`${label}: script found`, false, jsPath); return; }
-  const src = fs.readFileSync(jsPath, 'utf8');
+function auditScript(label, jsPath, { scrollHandler, tickerLoop, canvasLoop }, source) {
+  if (!source && !fs.existsSync(jsPath)) { check(`${label}: script found`, false, jsPath); return; }
+  const src = source || fs.readFileSync(jsPath, 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/[^\n]*/gm, ' ');
 
   // 5. the scroll handler must measure before it writes
@@ -156,12 +163,12 @@ function auditScript(label, jsPath, { scrollHandler, tickerLoop, canvasLoop }) {
   check(`${label}: scripts honour reduced motion`, /prefers-reduced-motion/.test(code), '');
 }
 
-auditStylesheet('site', path.join(siteDir, 'app.css'));
+auditStylesheet('site', path.join(siteDir, 'app.css'), siteCssSource);
 auditScript('site', path.join(siteDir, 'app.js'), {
   scrollHandler: true,
   tickerLoop: false,
   canvasLoop: 'function initSpeedCanvas'
-});
+}, siteJsSource);
 
 auditStylesheet('admin', path.join(root, 'admin', 'admin.css'));
 auditScript('admin', path.join(root, 'admin', 'admin.js'), {});
@@ -170,8 +177,8 @@ auditScript('admin', path.join(root, 'admin', 'admin.js'), {});
    with the hero call to action (measured overlapping at every width from 641px
    to 940px before this). */
 {
-  const siteCss = fs.readFileSync(path.join(siteDir, 'app.css'), 'utf8');
-  const siteJs = fs.readFileSync(path.join(siteDir, 'app.js'), 'utf8');
+  const siteCss = siteCssSource;
+  const siteJs = siteJsSource;
   const tickerBase = /\.ticker-track\s*\{([^}]*)\}/.exec(siteCss)?.[1] || '';
   const liteTicker = /html\.lite-motion\s+\.ticker-track\s*\{([^}]*)\}/.exec(siteCss)?.[1] || '';
   check('site: telemetry ribbon stays animated on small and data-saver devices',
