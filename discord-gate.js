@@ -32,7 +32,7 @@
 
 const crypto = require('crypto');
 
-const DISCORD_API = 'https://discord.com/api/v10';
+const DISCORD_API = String(process.env.DISCORD_API_BASE || 'https://discord.com/api/v10').replace(/\/+$/, '');
 const EMBDLOL_STRUCT = 'https://api.embdlol.st/struct';
 const EMBDLOL_EMBED = 'https://embdlol.st/embed/';
 const UHD_CHANNEL_NAME = 'f1friuhd';
@@ -123,13 +123,36 @@ function createDiscordGate({ app, siteUrl, log = console }) {
   /* The callback has to come back to THIS server, not to the Netlify site, so it is derived
      from the incoming request (trust proxy is set upstream) with an env override for cases
      where the public host differs from the internal one. */
-  function callbackUri(req) {
-    const override = String(process.env.DISCORD_REDIRECT_URI || '').trim();
-    if (override) return override;
-    const host = req?.get?.('host');
-    if (host) return `${req.protocol}://${host}/api/discord/callback`;
-    return `${String(process.env.PUBLIC_API_URL || 'https://f1admin.onrender.com').replace(/\/+$/, '')}/api/discord/callback`;
+  const CALLBACK_PATH = '/api/discord/callback';
+
+  /* Discord requires a character-for-character match with a redirect registered in the portal,
+     so this is built defensively:
+       1. DISCORD_REDIRECT_URI if set (trimmed, trailing slash removed)
+       2. RENDER_EXTERNAL_URL, which Render sets for us — no proxy guesswork
+       3. PUBLIC_API_URL
+       4. the request's own host, with https forced (behind Render's proxy req.protocol can
+          still read "http", which is the classic way to get invalid redirect_uri)
+     localhost keeps http so local testing still works. */
+  function baseOrigin(req) {
+    const explicit = String(process.env.DISCORD_REDIRECT_URI || '').trim();
+    if (explicit) return explicit.replace(/\/+$/, '');
+
+    const render = String(process.env.RENDER_EXTERNAL_URL || '').trim();
+    if (render) return `${render.replace(/\/+$/, '')}${CALLBACK_PATH}`;
+
+    const publicApi = String(process.env.PUBLIC_API_URL || '').trim();
+    if (publicApi) return `${publicApi.replace(/\/+$/, '')}${CALLBACK_PATH}`;
+
+    const host = String(req?.get?.('host') || '').trim();
+    if (host) {
+      const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host);
+      const proto = local ? 'http' : 'https';
+      return `${proto}://${host}${CALLBACK_PATH}`;
+    }
+    return `https://f1admin.onrender.com${CALLBACK_PATH}`;
   }
+
+  const callbackUri = baseOrigin;
 
   function readSession(req) {
     const raw = parseCookies(req.headers.cookie)[COOKIE_NAME];
@@ -169,6 +192,30 @@ function createDiscordGate({ app, siteUrl, log = console }) {
     }
   }
 
+  /* Adds the visitor to the server using their own access token. Needs the bot in the server
+     with Create Invite, and the guilds.join scope on that token — the user still approves the
+     "join you to servers" line on Discord's consent screen, because Discord never allows a
+     silent add. Returns a reason on failure so the caller can say something useful. */
+  async function addToGuild(userId, accessToken) {
+    if (!config.botToken) return { ok: false, reason: 'no-bot-token' };
+    if (!accessToken) return { ok: false, reason: 'no-user-token' };
+    try {
+      const response = await fetchJson(`${DISCORD_API}/guilds/${config.guildId}/members/${userId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bot ${config.botToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: accessToken })
+      });
+      /* 201 = added now, 204 = was already a member. Both mean "you are in". */
+      if (response.ok || response.status === 204) return { ok: true };
+      /* 403 / code 50013 = the bot lacks permission. 400 / 50026 = token lacks guilds.join. */
+      log.warn?.('[Discord gate] auto-join refused:', response.status, String(response.text || '').slice(0, 160));
+      return { ok: false, reason: response.status === 403 ? 'bot-missing-permission' : 'refused', status: response.status };
+    } catch (error) {
+      log.warn?.('[Discord gate] auto-join error:', error.message);
+      return { ok: false, reason: 'network' };
+    }
+  }
+
   /* Asks Discord whether this user is in the guild, and optionally holds the role. */
   async function checkMembership(userId, accessToken) {
     if (config.requiredRole && config.botToken) {
@@ -192,15 +239,38 @@ function createDiscordGate({ app, siteUrl, log = console }) {
     return { member, role: member ? !config.requiredRole : false };
   }
 
+  /* Resolving the 4K channel means one call to embdlol's directory. That call is the only
+     thing standing between a verified member and their feed, so it is cached for half an hour,
+     retried once on failure, and never allowed to discard a url we already know works. A stale
+     url beats a 503 that makes the site look like it revoked someone's access. */
+  const UHD_REFRESH_MS = 30 * 60_000;
+  let uhdFailureAt = 0;
+
   async function resolveUhdUrl() {
-    if (uhd.url && Date.now() - uhd.at < 5 * 60_000) return uhd.url;
-    try {
-      const struct = await fetchJson(EMBDLOL_STRUCT, { headers: { Accept: 'application/json' } }, 5000);
-      const channel = (struct.json?.channels || []).find((entry) => String(entry.channelname || '').toLowerCase() === UHD_CHANNEL_NAME);
-      if (channel?.id) uhd = { url: `${EMBDLOL_EMBED}${channel.id}`, at: Date.now() };
-    } catch (error) {
-      log.warn?.('[Discord gate] embdlol struct failed:', error.message);
+    const override = String(process.env.DISCORD_4K_URL || '').trim();
+    if (override) return override;
+
+    if (uhd.url && Date.now() - uhd.at < UHD_REFRESH_MS) return uhd.url;
+    /* Do not hammer a failing directory: back off for a minute after a bad attempt. */
+    if (!uhd.url && uhdFailureAt && Date.now() - uhdFailureAt < 60_000) return '';
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const struct = await fetchJson(EMBDLOL_STRUCT, { headers: { Accept: 'application/json' } }, 9000);
+        const channel = (struct.json?.channels || []).find((entry) => String(entry.channelname || '').toLowerCase() === UHD_CHANNEL_NAME);
+        if (channel?.id) {
+          uhd = { url: `${EMBDLOL_EMBED}${channel.id}`, at: Date.now() };
+          uhdFailureAt = 0;
+          return uhd.url;
+        }
+        /* Directory answered but has no 4K entry: keep whatever we had. */
+        break;
+      } catch (error) {
+        log.warn?.(`[Discord gate] embdlol struct attempt ${attempt + 1} failed:`, error.message);
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+      }
     }
+    uhdFailureAt = Date.now();
     return uhd.url;
   }
 
@@ -237,6 +307,31 @@ function createDiscordGate({ app, siteUrl, log = console }) {
     });
   });
 
+  /* Whatever this prints must be pasted into the Discord portal character for character.
+     No secrets in the response. */
+  app.get('/api/discord/debug', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      redirectUri: callbackUri(req),
+      registeredInPortalMustMatch: callbackUri(req),
+      source: process.env.DISCORD_REDIRECT_URI ? 'DISCORD_REDIRECT_URI'
+        : process.env.RENDER_EXTERNAL_URL ? 'RENDER_EXTERNAL_URL'
+        : process.env.PUBLIC_API_URL ? 'PUBLIC_API_URL'
+        : 'request host',
+      configured: config.configured,
+      hasClientId: Boolean(config.clientId),
+      hasClientSecret: Boolean(config.clientSecret),
+      guildId: config.guildId || null,
+      requiresRole: Boolean(config.requiredRole),
+      portalChecklist: [
+        'Discord Developer Portal → your application → OAuth2 → Redirects',
+        'Add the exact redirectUri above (https, no trailing slash)',
+        'Save Changes',
+        'If a redirect is already listed that looks similar, remove it — near matches still fail'
+      ]
+    });
+  });
+
   app.get('/api/discord/login', (req, res) => {
     if (!config.configured) return res.status(503).json({ error: 'Discord gate is not configured' });
     if (!limitAuth(clientIp(req))) return res.status(429).json({ error: 'Too many attempts, try again shortly' });
@@ -246,10 +341,11 @@ function createDiscordGate({ app, siteUrl, log = console }) {
       client_id: config.clientId,
       redirect_uri: uri,
       response_type: 'code',
-      scope: 'identify guilds',
+      scope: 'identify guilds guilds.join',
       state,
       prompt: 'consent'
     });
+    log.log?.(`[Discord gate] login → redirect_uri=${uri}`);
     res.append('Set-Cookie', serializeCookie(STATE_COOKIE, state, { maxAge: 10 * 60_000, sameSite: 'Lax' }));
     res.redirect(302, `https://discord.com/oauth2/authorize?${params.toString()}`);
   });
@@ -287,11 +383,28 @@ function createDiscordGate({ app, siteUrl, log = console }) {
       return back('token');
     }
 
+    let wasJoined = false;
     try {
       const me = await fetchJson(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bearer ${payload.access_token}` } });
       if (!me.ok || !me.json?.id) return back('profile');
-      const check = await checkMembership(String(me.json.id), payload.access_token);
-      if (!check.member) return back('notmember');
+      const userId = String(me.json.id);
+      let check = await checkMembership(userId, payload.access_token);
+
+      if (!check.member) {
+        /* Verified, but not in the server: put them in it, then check again. */
+        const joined = await addToGuild(userId, payload.access_token);
+        if (!joined.ok) {
+          log.warn?.('[Discord gate] could not auto-join:', joined.reason);
+          return back(joined.reason === 'no-bot-token' ? 'notmember' : 'joinfailed');
+        }
+        check = await checkMembership(userId, payload.access_token);
+        if (!check.member) {
+          /* Discord accepted the add but has not caught up yet — treat as joined anyway so the
+             visitor is not bounced; the next status call re-checks. */
+          check = { member: true, role: true };
+        }
+        wasJoined = true;
+      }
       if (config.requiredRole && !check.role) return back('norole');
       writeSession(res, {
         userId: String(me.json.id),
@@ -300,8 +413,8 @@ function createDiscordGate({ app, siteUrl, log = console }) {
         at: Date.now(),
         exp: Date.now() + SESSION_TTL_MS
       });
-      verifiedAt.set(String(me.json.id), Date.now());
-      return back('verified');
+      verifiedAt.set(userId, Date.now());
+      return back(wasJoined ? 'joined' : 'verified');
     } catch (err) {
       log.warn?.('[Discord gate] verification error:', err.message);
       return back('error');
@@ -344,7 +457,7 @@ function createDiscordGate({ app, siteUrl, log = console }) {
 
   if (config.enabled) {
     if (config.configured) {
-      log.log?.(`[Discord gate] enabled · guild ${config.guildId}${config.requiredRole ? ` · role ${config.requiredRole}` : ''} · redirect ${redirectUri}`);
+      log.log?.(`[Discord gate] enabled · guild ${config.guildId}${config.requiredRole ? ` · role ${config.requiredRole}` : ''} · redirect ${callbackUri()}`);
     } else {
       log.log?.('[Discord gate] disabled until DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET and DISCORD_GUILD_ID are set');
     }
