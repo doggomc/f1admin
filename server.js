@@ -89,6 +89,13 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
 const FEED_SOURCES = [
   { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
   { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
+  { id: 'skyf1-1080', label: 'Sky F1 1080p' },
+  { id: 'emb-sky', label: 'Sky F1 (EMB)' },
+  { id: 'emb-apple', label: 'Apple TV (EMB)' },
+  { id: 'emb-dazn', label: 'DAZN ES (EMB)' },
+  { id: 'emb-italia', label: 'Sky Italia (EMB)' },
+  { id: 'emb-de', label: 'Sky DE (EMB)' },
+  { id: 'emb-uhd', label: 'F1 UHD 4K (HEVC)' },
   { id: 'sky-sports', label: 'Sky Sports' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
@@ -720,6 +727,14 @@ let stateReady = loadSiteState();
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+/* Discord membership gate — unlocks the 4K feed. Self-contained in discord-gate.js. */
+let discordGate = null;
+try {
+  discordGate = require('./discord-gate').createDiscordGate({ app, siteUrl: SITE_URL });
+} catch (error) {
+  console.warn('[Discord gate] failed to mount:', error.message);
+}
+
 app.get('/api/site/config', async (_req, res) => {
   await stateReady;
   res.setHeader('Cache-Control', `public, max-age=${SITE_CONFIG_MAX_AGE_SECONDS}`);
@@ -900,7 +915,7 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary() });
+  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary(), discordGate: discordGate ? discordGate.summary() : { enabled: false, configured: false } });
 });
 
 app.get('/admin/api/maintenance', async (_req, res) => {
