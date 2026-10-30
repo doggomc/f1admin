@@ -87,14 +87,16 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
    source missing here can never be switched off, and an id here that the player dropped (f1tv)
    would be silently ignored. */
 const FEED_SOURCES = [
-  { id: 'westream', label: 'WeStream F1' },
-  { id: 'sky-uk', label: 'Sky UHD' },
+  { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
+  { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
   { id: 'sky-sports', label: 'Sky Sports' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
   { id: 'viaplay', label: 'Viaplay' },
   { id: 'sky-italia', label: 'Sky Sport Italia' },
+  { id: 'westream', label: 'WeStream F1' },
   { id: 'wikisport', label: 'WikiSport' },
+  { id: 'ppv', label: 'F1 PPV' },
   { id: 'xstream', label: 'XStream F1' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
