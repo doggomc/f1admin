@@ -154,8 +154,16 @@ function createDiscordGate({ app, siteUrl, log = console }) {
 
   const callbackUri = baseOrigin;
 
+  /* Sessions arrive two ways: a signed bearer token (works when third-party cookies are blocked,
+     which is the default in Safari and increasingly in Chrome) or the cookie as a fallback. */
+  function tokenFromRequest(req) {
+    const header = String(req.headers.authorization || '');
+    if (/^Bearer\s+/i.test(header)) return header.replace(/^Bearer\s+/i, '').trim();
+    return parseCookies(req.headers.cookie)[COOKIE_NAME] || '';
+  }
+
   function readSession(req) {
-    const raw = parseCookies(req.headers.cookie)[COOKIE_NAME];
+    const raw = tokenFromRequest(req);
     if (!raw || !raw.includes('.')) return null;
     const [body, mac] = raw.split('.');
     if (!safeEqual(mac, sign(body, config.secret))) return null;
@@ -282,7 +290,7 @@ function createDiscordGate({ app, siteUrl, log = console }) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.setHeader('Vary', 'Origin');
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -300,6 +308,7 @@ function createDiscordGate({ app, siteUrl, log = console }) {
     return res.json({
       configured: true,
       verified: true,
+      via: /^Bearer\s+/i.test(String(req.headers.authorization || '')) ? 'header' : 'cookie',
       invite: config.invite,
       user: { id: session.userId, name: session.userName },
       checkedAt: session.at,
@@ -351,7 +360,12 @@ function createDiscordGate({ app, siteUrl, log = console }) {
   });
 
   app.get('/api/discord/callback', async (req, res) => {
-    const back = (query) => res.redirect(302, `${siteUrl.replace(/\/+$/, '')}/?discord=${query}`);
+    /* The result goes in the fragment: it is never sent to a server, never appears in a Referer
+       header, and never lands in Netlify's access log. The token rides along here too. */
+    const back = (query, token = '') => {
+      const base = `${siteUrl.replace(/\/+$/, '')}/#discord=${query}`;
+      return res.redirect(302, token ? `${base}&dg=${encodeURIComponent(token)}` : base);
+    };
     if (!config.configured) return back('unavailable');
     if (!limitAuth(clientIp(req))) return back('rate');
     const cookies = parseCookies(req.headers.cookie);
@@ -406,15 +420,18 @@ function createDiscordGate({ app, siteUrl, log = console }) {
         wasJoined = true;
       }
       if (config.requiredRole && !check.role) return back('norole');
-      writeSession(res, {
-        userId: String(me.json.id),
+      const claims = {
+        userId,
         userName: String(me.json.username || 'member'),
         guildId: config.guildId,
         at: Date.now(),
         exp: Date.now() + SESSION_TTL_MS
-      });
+      };
+      writeSession(res, claims);
+      const body = b64url(JSON.stringify(claims));
+      const token = `${body}.${sign(body, config.secret)}`;
       verifiedAt.set(userId, Date.now());
-      return back(wasJoined ? 'joined' : 'verified');
+      return back(wasJoined ? 'joined' : 'verified', token);
     } catch (err) {
       log.warn?.('[Discord gate] verification error:', err.message);
       return back('error');
@@ -423,7 +440,8 @@ function createDiscordGate({ app, siteUrl, log = console }) {
 
   app.get('/api/discord/logout', (req, res) => {
     clearSession(res);
-    res.json({ ok: true });
+    /* A bearer token is client-side state, so the client deletes it on this answer. */
+    res.json({ ok: true, forgetToken: true });
   });
 
   /* The 4K url itself: only ever handed to a verified member. */
