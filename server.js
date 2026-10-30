@@ -82,13 +82,20 @@ const LEGACY_REMOTE_KEYS_TO_DELETE = [
 ];
 const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 'login-guard.json', 'stream-targets.json'];
 
+/* The player list the Race Control panel renders. Keep this in the same order as `sources` in
+   the frontend (netlifyf1/src/app.ts): the admin toggles ids that the player matches 1:1, so a
+   source missing here can never be switched off, and an id here that the player dropped (f1tv)
+   would be silently ignored. */
 const FEED_SOURCES = [
   { id: 'westream', label: 'WeStream F1' },
   { id: 'sky-uk', label: 'Sky UHD' },
-  { id: 'f1tv', label: 'F1TV' },
+  { id: 'sky-sports', label: 'Sky Sports' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
-  { id: 'wikisport', label: 'WikiSport' }
+  { id: 'viaplay', label: 'Viaplay' },
+  { id: 'sky-italia', label: 'Sky Sport Italia' },
+  { id: 'wikisport', label: 'WikiSport' },
+  { id: 'xstream', label: 'XStream F1' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
