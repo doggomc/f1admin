@@ -123,13 +123,18 @@ function walk(dir) {
   check('no served HTML/CSS actively requests Google Fonts', activeGoogleFontReferences.length === 0, activeGoogleFontReferences.join(', '));
 
   const brokenFonts = [];
+  /* Fonts live in the repo-root assets/ folder; the admin stylesheet references
+     them root-relative (/assets/fonts/...). */
+  const assetDirs = [path.join(root, 'assets'), siteDir, path.join(root, 'admin')];
   for (const cssFile of [path.join(siteDir, 'fonts.css'), path.join(root, 'admin', 'fonts.css')]) {
     if (!fs.existsSync(cssFile)) { brokenFonts.push(`${path.relative(root, cssFile)} missing`); continue; }
     const content = fs.readFileSync(cssFile, 'utf8');
     for (const match of content.matchAll(/src:\s*url\(['"]?([^'")]+)['"]?\)/g)) {
       const url = match[1].split('?')[0];
       const baseDir = cssFile.startsWith(siteDir) ? siteDir : path.join(root, 'admin');
-      const target = url.startsWith('/') ? path.join(baseDir, url.slice(1)) : path.resolve(path.dirname(cssFile), url);
+      const target = url.startsWith('/')
+        ? assetDirs.map(dir => path.join(dir, url.slice(1))).find(candidate => fs.existsSync(candidate)) || path.join(baseDir, url.slice(1))
+        : path.resolve(path.dirname(cssFile), url);
       if (!fs.existsSync(target)) brokenFonts.push(`${path.relative(root, cssFile)} → ${url}`);
     }
   }

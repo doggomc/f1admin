@@ -13,7 +13,7 @@ Third-party material is NOT ours and keeps its own terms — a takedown request
 must not claim these:
 
   * Typefaces (Archivo, Inter, JetBrains Mono) — SIL Open Font License 1.1,
-    see admin/assets/fonts/README.md for the bundled files and their notice.
+    see assets/fonts/README.md for the bundled files and their notice.
   * Driver, team and car imagery — (c) Formula 1, loaded at runtime from the
     official F1 media CDN (media.formula1.com) and NOT redistributed here.
   * Timing, results and championship data — via Jolpica (Ergast-compatible) and

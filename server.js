@@ -44,6 +44,7 @@ if (PRODUCTION) {
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const ADMIN_DIR = path.join(__dirname, 'admin');
+const ASSETS_DIR = path.join(__dirname, 'assets');
 const CONTROL_FILE = path.join(DATA_DIR, 'race-control.json');
 const HELP_TICKETS_FILE = path.join(DATA_DIR, 'help-tickets.json');
 const HELP_TICKETS_REDIS_KEY = 'freef1:help-tickets:v1';
@@ -89,6 +90,13 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
 const FEED_SOURCES = [
   { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
   { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
+  { id: 'skyf1-1080', label: 'Sky F1 1080p' },
+  { id: 'emb-sky', label: 'Sky F1 (EMB)' },
+  { id: 'emb-apple', label: 'Apple TV (EMB)' },
+  { id: 'emb-dazn', label: 'DAZN ES (EMB)' },
+  { id: 'emb-italia', label: 'Sky Italia (EMB)' },
+  { id: 'emb-de', label: 'Sky DE (EMB)' },
+  { id: 'emb-uhd', label: 'F1 UHD 4K (HEVC)' },
   { id: 'sky-sports', label: 'Sky Sports' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
@@ -96,8 +104,7 @@ const FEED_SOURCES = [
   { id: 'sky-italia', label: 'Sky Sport Italia' },
   { id: 'westream', label: 'WeStream F1' },
   { id: 'wikisport', label: 'WikiSport' },
-  { id: 'ppv', label: 'F1 PPV' },
-  { id: 'xstream', label: 'XStream F1' }
+  { id: 'ppv', label: 'F1 PPV' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -720,6 +727,53 @@ let stateReady = loadSiteState();
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+/* 4K feed resolver — public, no Discord membership required. The site asks for the
+   address and plays it; joining the Discord is an optional nudge in the UI. */
+const streamResolver = require('./stream-resolver').createStreamResolver();
+
+app.get('/api/stream/resolve', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const path = String(req.query.path || '').trim().slice(0, 120);
+  if (!path) return res.status(400).json({ error: 'A provider path is required.', code: 'bad-request' });
+  try {
+    const result = await streamResolver.resolveDynamic(path);
+    if (!result.url) return res.status(503).json({ error: 'That provider is not serving right now.', code: result.code || 'unavailable' });
+    return res.json({ url: result.url, cached: Boolean(result.cached) });
+  } catch (error) {
+    console.error('[streams] resolve failed:', error?.message || error);
+    return res.status(503).json({ error: 'That provider could not be resolved.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/health', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const report = await streamResolver.getHealth();
+    return res.json({ checkedAt: report.at, providers: report.providers, uhdResolved: report.uhdResolved });
+  } catch (error) {
+    console.error('[streams] health failed:', error?.message || error);
+    return res.status(503).json({ error: 'Health check unavailable.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/uhd', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  try {
+    const url = await streamResolver.resolveUhdUrl();
+    if (!url) {
+      return res.status(503).json({
+        error: 'The 4K channel is not listed upstream right now.',
+        code: 'unavailable'
+      });
+    }
+    return res.json({ url, source: 'emb-uhd' });
+  } catch (error) {
+    console.error('[4K] resolve failed:', error?.message || error);
+    return res.status(503).json({ error: 'The 4K channel could not be resolved.', code: 'unavailable' });
+  }
+});
+
+
 app.get('/api/site/config', async (_req, res) => {
   await stateReady;
   res.setHeader('Cache-Control', `public, max-age=${SITE_CONFIG_MAX_AGE_SECONDS}`);
@@ -900,7 +954,7 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary() });
+  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/maintenance', async (_req, res) => {
@@ -1017,6 +1071,23 @@ function sendAdminIndex(_req, res) {
   res.sendFile(path.join(ADMIN_DIR, 'index.html'));
 }
 app.get(['/admin', '/admin/', '/admin/login'], sendAdminIndex);
+/* Shared asset folder (fonts, bot emoji) lives at the repo root and is
+   referenced root-relative from the admin pages (/assets/...). Bundled
+   documentation ships alongside the files, so markdown never leaves the box. */
+const PUBLIC_DOC_FILE = /\.(?:md|markdown)$/i;
+const assetOptions = {
+  index: false,
+  fallthrough: true,
+  etag: true,
+  maxAge: PRODUCTION ? '1h' : 0,
+  setHeaders(res, filePath) {
+    if (PUBLIC_DOC_FILE.test(filePath)) res.setHeader('Cache-Control', 'no-store');
+  }
+};
+const denyDocs = (req, res, next) =>
+  PUBLIC_DOC_FILE.test(req.path) ? res.status(404).json({ error: 'Not found' }) : next();
+app.use('/assets', denyDocs, express.static(ASSETS_DIR, assetOptions));
+app.use('/admin/assets', denyDocs, express.static(ASSETS_DIR, assetOptions));
 app.use('/admin', express.static(ADMIN_DIR, {
   index: false,
   fallthrough: true,

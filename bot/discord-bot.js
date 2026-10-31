@@ -284,7 +284,7 @@ function start(deps) {
     log('DISCORD_OWNER_ID is not set — bot not starting');
     return { stop() {}, flush: () => Promise.resolve() };
   }
-  const EMOJI_DIR = path.join(__dirname, 'assets', 'emoji');
+  const EMOJI_DIR = path.join(__dirname, '..', 'assets', 'emoji');
 
   /* ── durable store: file locally, Upstash in production ──
      Writes are immediate (no debounce): the sent-markers are the only
