@@ -55,7 +55,8 @@ const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES']
   ['italian', 'Italian'], ['fullhd1', 'Full HD 1'], ['fullhd3', 'Full HD 3']];
 
 /* weelo relays the onboards and the data channel: one id per feed, and /players/state.json says
-   whether it is up. `tab` is the English/Other filter the player draws; `special` keeps these out
+   whether it is up. That file refuses cross-origin requests (it answers only on weelo.live itself),
+   so the server reads it and the browser asks /api/stream/weelo instead. `tab` is the English/Other filter the player draws; `special` keeps these out
    of the broadcaster run and in their own block. */
 const WEELO_STATE = 'https://weelo.live/players/state.json';
 const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
@@ -433,7 +434,9 @@ function createStreamResolver({ log = console } = {}) {
     };
   }
 
-  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor };
+  /* The status map on its own: the browser cannot read it directly (weelo only answers its own
+     origin), so it is relayed from here. */
+  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState };
 }
 
 module.exports = { createStreamResolver, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

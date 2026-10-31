@@ -764,6 +764,20 @@ app.get('/api/stream/sources', async (_req, res) => {
   }
 });
 
+/* weelo's status map, relayed. The browser cannot fetch it itself: the file is served with
+   `access-control-allow-origin: *` but the edge refuses the cross-origin request outright, which
+   shows up in the console as a CORS failure and left every onboard stuck on "unknown". */
+app.get('/api/stream/weelo', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=15');
+  try {
+    const state = await streamResolver.weeloState();
+    return res.json({ state, count: Object.keys(state).length });
+  } catch (error) {
+    console.error('[streams] weelo state failed:', error?.message || error);
+    return res.status(503).json({ error: 'Status unavailable.', code: 'unavailable' });
+  }
+});
+
 app.get('/api/stream/uhd', async (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=300');
   try {
