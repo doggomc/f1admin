@@ -57,6 +57,11 @@ const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-
 
 /* The embdlol feeds whose commentary is not English. */
 const EMB_OTHER = ['dazn', 'skyit', 'skyde', 'german', 'spanish', 'italian'];
+/* A feed may only fail over to another feed of its own language — the old pool offered every F1
+   feed, so the Spanish chip played English Sky. */
+const EMB_LANG = { dazn: 'es', spanish: 'es', skyit: 'it', italian: 'it', skyde: 'de', german: 'de' };
+const embPool = (feed, channels) => [...(channels || new Map())]
+  .filter(([name]) => EMB_LANG[name] === EMB_LANG[feed]).map(([, id]) => id);
 
 /* label + feed key for each embdlol chip, in the same order as the player's row. */
 const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES'], ['skyit', 'Sky Italia'],
@@ -68,6 +73,8 @@ const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES']
    so the server reads it and the browser asks /api/stream/weelo instead. `tab` is the English/Other filter the player draws; `special` keeps these out
    of the broadcaster run and in their own block. */
 const WEELO_STATE = 'https://weelo.live/players/state.json';
+/* The feed is the truth: this URL is an HLS master playlist whenever the stream is up. */
+const WEELO_FEED = 'https://weelo.live/';
 const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
 const WEELO_FEEDS = [
   ['kimi', 'Kimi Antonelli', 'onboard', 'peogcgpgbgchegaciclejgngjgacbeogehpgogfgmgmgjgjcacieee'],
@@ -279,8 +286,9 @@ function createStreamResolver({ log = console } = {}) {
     return catalogueChannels;
   }
 
-  /* weelo's own status map. Offline and dark are the only states that stop a chip playing; 'soon'
-     means the feed is about to come up and is worth offering. */
+  /* weelo's own status map, but it is a stale cache: every onboard reads 'offline' while its real
+     playlist is 200 with a 1080p @50 stream. So the playlist itself decides — one HEAD per id,
+     cached with the map — and weelo's word is kept only as the reason when the probe fails. */
   async function weeloState() {
     if (weelo.at && Date.now() - weelo.at < HEALTH_TTL_MS) return weelo.state;
     try {
@@ -291,6 +299,14 @@ function createStreamResolver({ log = console } = {}) {
         for (const [id, status] of Object.entries(json || {})) {
           if (!id.startsWith('_') && typeof status === 'string') next[id] = status.trim().toLowerCase();
         }
+        /* The map contradicts itself (state 'offline', _evt 'live'), so ask the feed. */
+        await Promise.all(Object.keys(next).map(async (id) => {
+          try {
+            const probe = await fetchWithTimeout(`${WEELO_FEED}${id}/index.html`, { method: 'HEAD' });
+            if (probe.ok) next[id] = 'live';
+            else if (next[id] === 'live') next[id] = 'offline';
+          } catch (_) { /* keep weelo's word */ }
+        }));
         weelo.state = next;
         weelo.at = Date.now();
       }
@@ -321,6 +337,9 @@ function createStreamResolver({ log = console } = {}) {
         main: Boolean(source.main),
         minQuality: source.minQuality,
         channels: source.channel ? [source.channel] : [],
+        /* Which language the chip speaks, and the feed ids it may fail over to: same language only. */
+        lang: EMB_LANG[source.channel] || 'en',
+        pool: source.provider === 'embdlol' ? embPool(source.channel, channels) : [],
         /* The tab the player filters on, and whether the chip is drawn apart from the broadcasters. */
         tab: source.tab || 'en',
         special: source.special || null,
