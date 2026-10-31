@@ -726,6 +726,25 @@ let stateReady = loadSiteState();
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+/* ── /link shared secret ──────────────────────────────────────────────────────
+   The bot and the gate run inside this same process, and the bot calls the gate over loopback to
+   vouch for a five-digit code. That call is authenticated by DISCORD_BOT_SECRET. When the variable
+   is missing the bot can no longer claim codes and members are told "not configured — ping an
+   admin", which is a dead end caused by a missing environment variable rather than a real failure.
+   So: if it is not set, mint one here and hand the same value to both sides. Setting it explicitly
+   still wins, which is what you want if the bot ever runs as a separate worker.
+   The session signing key is deliberately NOT tied to this random value (see SECRET_FOR_SESSIONS),
+   otherwise every redeploy would wipe out every member's stored link. */
+if (!String(process.env.DISCORD_BOT_SECRET || '').trim()) {
+  process.env.DISCORD_BOT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.log('[Discord gate] DISCORD_BOT_SECRET was not set — minted an in-process secret for /link');
+  /* Only a deployment without a bot token can end up with an unstable key, and a gate with no bot
+     token cannot run anyway. So this is informational, not a warning everyone needs to act on. */
+  if (!String(process.env.DISCORD_SESSION_SECRET || process.env.ADMIN_SECRET || '').trim()) {
+    console.log('[Discord gate] session key derived from DISCORD_BOT_TOKEN — stable across redeploys, members keep their 4K.');
+  }
+}
+
 /* Discord membership gate — unlocks the 4K feed. Self-contained in discord-gate.js. */
 let discordGate = null;
 try {

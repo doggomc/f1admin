@@ -53,19 +53,47 @@ const CODE_POLL_TTL_MS = 60 * 60 * 1000; // claimed codes stay collectable for a
 const MEMBER_CACHE_MS = Math.max(5, Number.parseInt(process.env.DISCORD_MEMBER_CACHE_SECONDS || '300', 10) || 300) * 1000;
 const SESSION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000; // effectively "forever"
 
+/* ── the session signing key ──────────────────────────────────────────
+   Member sessions must survive a redeploy. Render's free tier has no persistent disk, so the key
+   cannot be a file, and a random per-boot value would sign everybody out on every deploy.
+
+   Order of preference:
+     1. DISCORD_SESSION_SECRET — set it to pin the key yourself.
+     2. ADMIN_SECRET          — stable, and already configured on a working deployment.
+     3. Derived from DISCORD_BOT_TOKEN, which the gate cannot run without. Deterministic, so two
+        deploys of the same token produce the same key and linked browsers never notice a restart.
+   A gate that is configured (guild + bot token) therefore ALWAYS has a stable key; the random
+   fallback below can only happen on a deployment where the gate would not run at all. */
+function deriveSessionKey(env) {
+  const explicit = String(env.DISCORD_SESSION_SECRET || env.ADMIN_SECRET || '').trim();
+  if (explicit) return { key: explicit, source: 'env' };
+  const botToken = String(env.DISCORD_BOT_TOKEN || '').trim();
+  if (botToken) {
+    return {
+      key: crypto.createHmac('sha256', 'freef1-discord-session-v1').update(botToken).digest('hex'),
+      source: 'bot-token'
+    };
+  }
+  return { key: '', source: 'none' };
+}
+
 function readConfig(env) {
   const guildId = String(env.DISCORD_GUILD_ID || '').trim();
   const botToken = String(env.DISCORD_BOT_TOKEN || '').trim();
+  const session = deriveSessionKey(env);
   return {
     enabled: String(env.DISCORD_GATE_ENABLED || 'true').toLowerCase() !== 'false',
     guildId,
     botToken,
     botSecret: String(env.DISCORD_BOT_SECRET || '').trim(),
-    invite: String(env.DISCORD_GUILD_INVITE || '').trim(),
+    /* Defaulted, not optional: an empty invite makes the site's Join button do nothing. */
+    invite: String(env.DISCORD_GUILD_INVITE || 'https://discord.gg/KYXHCAzhN4').trim(),
     channelId: String(env.DISCORD_LINK_CHANNEL_ID || '').trim(),
     channelName: String(env.DISCORD_LINK_CHANNEL_NAME || '4k-access').trim() || '4k-access',
     requiredRole: String(env.DISCORD_REQUIRED_ROLE || '').trim(),
-    secret: String(env.DISCORD_SESSION_SECRET || env.DISCORD_BOT_SECRET || env.ADMIN_SECRET || 'freef1-discord-gate').trim(),
+    /* Never the minted DISCORD_BOT_SECRET: that changes on boot, which would sign everyone out. */
+    secret: session.key || crypto.randomBytes(32).toString('hex'),
+    secretSource: session.source,
     get configured() { return Boolean(this.guildId && this.botToken); }
   };
 }
@@ -438,6 +466,10 @@ function createDiscordGate({ app, siteUrl, log = console }) {
       channelId: config.channelId || null,
       channelName: config.channelName,
       requiresRole: Boolean(config.requiredRole),
+      /* 'env' (SESSION_SECRET/ADMIN_SECRET), 'bot-token' (derived, still stable across deploys)
+         or 'none'. Never the key itself. */
+      sessionKeySource: config.secretSource,
+      sessionKeyStable: config.secretSource !== 'none',
       invite: config.invite || null,
       pendingCodes: codes.size,
       cachedMembers: members.size,
@@ -454,4 +486,4 @@ function createDiscordGate({ app, siteUrl, log = console }) {
   };
 }
 
-module.exports = { createDiscordGate, _test: { readConfig, sign, b64url, unb64url, randomCode, CODE_TTL_MS, MEMBER_CACHE_MS } };
+module.exports = { createDiscordGate, _test: { readConfig, deriveSessionKey, sign, b64url, unb64url, randomCode, CODE_TTL_MS, MEMBER_CACHE_MS } };

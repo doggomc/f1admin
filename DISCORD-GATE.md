@@ -52,7 +52,8 @@ permission change is missed.
 |---|---|
 | `DISCORD_GUILD_ID` | the server id |
 | `DISCORD_BOT_TOKEN` | the bot's token (the same one the bot already uses) |
-| `DISCORD_BOT_SECRET` | **new** — random string; the only thing allowed to approve a code. `openssl rand -hex 32` |
+| `DISCORD_BOT_SECRET` | optional — only the bot may approve a code. Leave it blank and the backend mints one in-process at boot and shares it with the bot, which is why /link works with no setup. Set it only if the bot runs as a separate worker. |
+| `DISCORD_SESSION_SECRET` | optional — pins the session signing key. Falls back to `ADMIN_SECRET`, then to a key derived from `DISCORD_BOT_TOKEN`. |
 | `DISCORD_GUILD_INVITE` | invite link used by the **Join the Discord** button |
 | `DISCORD_LINK_CHANNEL_ID` | optional, exact channel id `/link` must be used in |
 | `DISCORD_LINK_CHANNEL_NAME` | fallback channel name, default `4k-access` |
@@ -65,6 +66,14 @@ permission change is missed.
 
 `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `DISCORD_REDIRECT_URI` are no longer used. They can
 be deleted from Render.
+
+**Member links survive redeploys, always.** The session signing key comes from, in order:
+`DISCORD_SESSION_SECRET` → `ADMIN_SECRET` → derived by HMAC from `DISCORD_BOT_TOKEN`. A configured
+gate always has a bot token, so the key is always stable and a redeploy never signs anyone out.
+`GET /api/discord/debug` reports `sessionKeySource` (`env` or `bot-token`) and `sessionKeyStable`.
+
+The only thing that invalidates links is rotating `DISCORD_BOT_TOKEN` itself, and then only when no
+`DISCORD_SESSION_SECRET`/`ADMIN_SECRET` is set. Members who use `/link` again are re-linked.
 
 ## API
 
