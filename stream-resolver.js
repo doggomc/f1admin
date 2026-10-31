@@ -19,7 +19,20 @@ const crypto = require('crypto');
 
 const EMBDLOL_STRUCT = 'https://api.embdlol.st/struct';
 const EMBDLOL_EMBED = 'https://embdlol.st/embed/';
-const UHD_CHANNEL_NAME = 'f1friuhd';
+/* embdlol names its F1 channels per event: f1friuhd, f1mexicosatuhd, f1vegasuhd...  So the UHD
+   channel is matched by shape, never by a fixed name — a fixed name is what made the 4K chip
+   report "not upstream" while a 4K channel was sitting in the directory. */
+const UHD_CHANNEL_NAME = 'f1friuhd';                 // kept for the summary output
+const UHD_PATTERN = /^f1[a-z]*uhd$/;
+const isUhdChannel = (name) => UHD_PATTERN.test(String(name || '').trim().toLowerCase());
+
+/* F1 channel names, normalised to the feed they carry, whichever event prefix they use. */
+const FEED_SUFFIXES = ['skyit', 'skyde', 'apple', 'world', 'dazn', 'sky', 'ita', 'deu', 'uhd'];
+const FEED_PATTERN = new RegExp(`^f1[a-z]*?(${FEED_SUFFIXES.join('|')})$`);
+function feedKey(name) {
+  const match = String(name || '').trim().toLowerCase().match(FEED_PATTERN);
+  return match ? match[1] : '';
+}
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
 const UHD_REFRESH_MS = 30 * 60_000;
@@ -30,7 +43,7 @@ const FETCH_TIMEOUT_MS = 9000;
 const HEALTH_TIMEOUT_MS = 6000;
 
 /* ehgembxe paths are opaque to the client, so they are allowlisted here instead. */
-const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-4089']);
+const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089']);
 
 /* The player's own source list, in the same order as `sources` in netlifyf1/src/app.ts.
    GET /api/stream/sources publishes it so Race Control and the player cannot drift apart: every
@@ -61,6 +74,7 @@ const STREAM_SOURCES = [
   { id: 'emb-de', label: 'Sky DE (EMB)', provider: 'embdlol', channel: 'f1friskyde', minQuality: 0, links: [] },
   { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, links: [] },
   { id: 'ehgembxe', label: 'Sky Sports F1 HD (EHG)', provider: 'ehgembxe', minQuality: 720, retryOnExpiry: true, links: [
+    { quality: 1080, url: 'ehgembxe/f596f98r-7758' },
     { quality: 1080, url: 'ehgembxe/f596f98r-4089' }
   ] },
   { id: 'sky-sports', label: 'Sky Sports', provider: 'hakunamatata', minQuality: 0, links: [
@@ -157,7 +171,7 @@ function createStreamResolver({ log = console } = {}) {
         const response = await fetchWithTimeout(EMBDLOL_STRUCT);
         if (!response.ok) throw new Error(`struct responded ${response.status}`);
         const json = await response.json();
-        const channel = (json?.channels || []).find((entry) => String(entry?.channelname || '').toLowerCase() === UHD_CHANNEL_NAME);
+        const channel = (json?.channels || []).find((entry) => isUhdChannel(entry?.channelname));
         if (channel?.id) {
           uhd.url = `${EMBDLOL_EMBED}${channel.id}`;
           uhd.at = Date.now();
@@ -210,10 +224,10 @@ function createStreamResolver({ log = console } = {}) {
       const response = await fetchWithTimeout(EMBDLOL_STRUCT, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`struct responded ${response.status}`);
       const json = await response.json();
-      const next = new Set();
+      const next = new Map();
       for (const channel of Array.isArray(json?.channels) ? json.channels : []) {
-        const name = String(channel?.channelname || '').toLowerCase();
-        if (name) next.add(name);
+        const key = feedKey(channel?.channelname);
+        if (key && channel?.id) next.set(key, String(channel.id));
       }
       catalogueChannels = next;
       catalogueAt = Date.now();
@@ -226,8 +240,8 @@ function createStreamResolver({ log = console } = {}) {
   /* Every source the player draws, plus whatever the provider is publishing as live right now. */
   async function listSources() {
     const [skyMirrors, uhdUrl, channels] = await Promise.all([mirrorsFor('skyf1'), resolveUhdUrl(), embdlolChannels()]);
-    const hasChannel = (name) => (channels instanceof Set ? channels.has(String(name).toLowerCase()) : false);
-    const knownChannels = channels instanceof Set ? channels.size > 0 : false;
+    const hasChannel = (name) => (channels instanceof Map ? channels.has(feedKey(name)) : false);
+    const knownChannels = channels instanceof Map ? channels.size > 0 : false;
     return STREAM_SOURCES.map((source) => {
       let links = source.links.slice();
       if (source.id === 'sky-uk') {
@@ -249,7 +263,11 @@ function createStreamResolver({ log = console } = {}) {
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
         upstream: source.provider !== 'embdlol'
           ? true
-          : source.id === 'emb-uhd' ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null
+          : source.id === 'emb-uhd' ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null,
+        /* Where the chip would play, so a client can also build the pool itself. */
+        resolvedUrl: source.provider === 'embdlol' && knownChannels && hasChannel(source.channel)
+          ? EMBDLOL_EMBED + channels.get(feedKey(source.channel))
+          : null
       };
     });
   }
