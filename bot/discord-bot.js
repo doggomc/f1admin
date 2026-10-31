@@ -277,6 +277,30 @@ function presenceActivity(now = Date.now()) {
 
 /* ───────────────────────── bot ───────────────────────── */
 
+/* Which channel counts as the 4k-access command channel? Kept pure and exported so the
+   matching rules can be tested without a live Discord connection. */
+function isLinkChannelMatch(channel, { guildId, linkChannelId, linkChannelName }) {
+  if (!channel || !channel.guild) return false;                       // DMs and partials
+  if (guildId && String(channel.guild.id) !== String(guildId)) return false;
+  if (linkChannelId) {
+    /* Also catch threads hanging off the command channel. */
+    return String(channel.id) === String(linkChannelId) || String(channel.parentId || '') === String(linkChannelId);
+  }
+  const name = String(channel.name || '').toLowerCase();
+  const parent = String(channel.parent?.name || '').toLowerCase();
+  return name === String(linkChannelName).toLowerCase() || parent === String(linkChannelName).toLowerCase();
+}
+
+/* Decide what to do with a message in the 4k-access channel, without touching Discord.
+   Returns 'ignore', 'delete' or 'skip-own'. */
+function linkSweepDecision(message, { guildId, linkChannelId, linkChannelName, botId, enabled = true }) {
+  if (!enabled) return 'ignore';
+  if (!message || !message.guild) return 'ignore';
+  if (!isLinkChannelMatch(message.channel, { guildId, linkChannelId, linkChannelName })) return 'ignore';
+  if (botId && message.author && message.author.id === botId) return 'skip-own';
+  return 'delete';
+}
+
 function start(deps) {
   const log = deps.log || ((...a) => console.log('[Bot]', ...a));
   const OWNER_ID = String(deps.ownerId || process.env.DISCORD_OWNER_ID || '').trim();
@@ -795,8 +819,152 @@ function start(deps) {
       ],
     },
     { name: 'emojis', description: 'Owner: upload any missing number emojis to this server.', dm_permission: false },
+    {
+      name: 'link', description: 'Superlicense: link this Discord account to the website and unlock 4K.',
+      dm_permission: false,
+      options: [
+        { type: 3, name: 'code', description: 'The five-digit code shown on the website', required: true, min_length: 5, max_length: 6 },
+      ],
+    },
     { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
   ];
+
+  /* ── /link ───────────────────────────────────────────────────────────
+     The human copies `/link 12345` from the website, which minted that code and is
+     polling for the answer. This command vouches for them to the backend, which
+     checks they are really in the server and hands the browser a session token.
+     Ephemeral replies only — nobody else should see anyone's code. */
+  const linkChannelId = String(deps.linkChannelId || process.env.DISCORD_LINK_CHANNEL_ID || '').trim();
+  const linkChannelName = String(deps.linkChannelName || process.env.DISCORD_LINK_CHANNEL_NAME || '4k-access').trim().toLowerCase();
+  const linkApiBase = String(deps.linkApiBase || process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
+  const linkSecret = String(deps.linkSecret || process.env.DISCORD_BOT_SECRET || '').trim();
+
+  const LINK_MESSAGES = {
+    unknown: 'That code is not one I issued. Generate a fresh one on the website and try again.',
+    expired: 'That code has expired. Generate a fresh one on the website — they only last 15 minutes.',
+    used: 'That code has already been used by another account. Generate a fresh one on the website.',
+    'not-member': "I could not confirm you are in the server, so I did not grant access.",
+    'missing-role': 'You are in the server but you are missing the required role.',
+    'wrong-channel': `Run that command in ${'#4k-access'} so it stays tidy.`,
+    rate: 'Too many attempts. Give it a minute.',
+    disabled: 'Superlicense linking is switched off right now.',
+    'not-configured': 'Superlicense linking is not configured on the server yet.',
+    network: 'I could not reach the website. Try again in a moment.'
+  };
+
+  /* ── #4k-access stays clean ──────────────────────────────────────────
+     It is a command channel, not a chat: /link is the only thing people need to do here.
+     Anything a human types gets deleted, with a short self-deleting nudge the first time in a
+     while so they know why. Needs Manage Messages in that channel — checked on startup and
+     logged loudly if missing, because a silent failure looks like the bot ignoring them. */
+  const linkSweepEnabled = String(process.env.DISCORD_LINK_SWEEP || 'true').toLowerCase() !== 'false';
+  const linkNoticeCooldownMs = 10 * 60 * 1000;
+  const linkNotices = new Map();   // userId → last notice timestamp
+  const sweepWarned = new Set();   // channels we have already complained about
+
+  const isLinkChannel = (channel) => isLinkChannelMatch(channel, { guildId: deps.guildId, linkChannelId, linkChannelName });
+
+  async function sweepLinkChannelMessage(message) {
+    /* Leave our own messages alone so an instruction or a pinned note can survive. */
+    const decision = linkSweepDecision(message, {
+      guildId: deps.guildId,
+      linkChannelId,
+      linkChannelName,
+      botId: client.user?.id,
+      enabled: linkSweepEnabled
+    });
+    if (decision !== 'delete') return;
+    if (message.guild.id !== String(deps.guildId)) return;
+
+    try {
+      await message.delete();
+    } catch (error) {
+      /* 50013 = missing Manage Messages. Say it once per channel, not per message. */
+      if (!sweepWarned.has(message.channelId)) {
+        sweepWarned.add(message.channelId);
+        log(`cannot delete in #${message.channel?.name}: ${error.code === 50013 ? 'missing Manage Messages permission' : error.message}`);
+      }
+      return;
+    }
+
+    if (message.author?.bot) return;
+    const now = Date.now();
+    const last = linkNotices.get(message.author.id) || 0;
+    if (now - last < linkNoticeCooldownMs) return;
+    linkNotices.set(message.author.id, now);
+    if (linkNotices.size > 2000) linkNotices.clear();
+
+    try {
+      const notice = await message.channel.send({
+        content: `<@${message.author.id}> this channel is for the \`/link\` command only. Type \`/link\` and your code to get 4K.`,
+        allowedMentions: { users: [message.author.id] }
+      });
+      setTimeout(() => notice.delete().catch(() => {}), 12000);
+    } catch (_) { /* a nudge that fails to send is not worth logging */ }
+  }
+
+  async function handleLinkCommand(interaction) {
+    const channel = interaction.channel;
+    const channelName = String(channel?.name || '').toLowerCase();
+    const rightChannel = linkChannelId
+      ? String(interaction.channelId) === linkChannelId
+      : (channelName === linkChannelName || String(channel?.parent?.name || '').toLowerCase() === linkChannelName);
+
+    if (!rightChannel) {
+      return interaction.reply({
+        content: `Use this in ${linkChannelId ? `<#${linkChannelId}>` : `#${linkChannelName}`}.`,
+        ephemeral: true
+      });
+    }
+
+    const code = String(interaction.options?.getString?.('code') || '').replace(/[^0-9]/g, '');
+    if (code.length < 5) {
+      return interaction.reply({ content: 'That is not a five-digit code. Copy it from the website.', ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!linkApiBase || !linkSecret) {
+      return interaction.editReply({ content: 'The site is not configured to accept links yet (missing DISCORD_BOT_SECRET). Ping an admin.' });
+    }
+
+    let payload = null;
+    let status = 0;
+    try {
+      const response = await fetch(`${linkApiBase}/api/discord/link/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Bot-Secret': linkSecret },
+        body: JSON.stringify({
+          code,
+          userId: interaction.user.id,
+          userName: interaction.user.globalName || interaction.user.username,
+          channelId: interaction.channelId,
+          channelName
+        })
+      });
+      status = response.status;
+      payload = await response.json().catch(() => null);
+    } catch (error) {
+      deps.log?.('link claim failed:', error.message);
+      return interaction.editReply({ content: LINK_MESSAGES.network });
+    }
+
+    if (payload?.ok) {
+      return interaction.editReply({
+        content: [
+          '**Superlicense granted.** 🏁',
+          '',
+          `Your account is linked to the website, ${interaction.user.username}. Go back to the tab where you opened the 4K chip — it will unlock on its own within a couple of seconds.`,
+          '',
+          'You keep 4K on that browser for good, for as long as you are in this server.'
+        ].join('\n')
+      });
+    }
+
+    const error = String(payload?.error || '');
+    const message = LINK_MESSAGES[error] || `I could not link that code (${status}). Generate a fresh one on the website.`;
+    return interaction.editReply({ content: message });
+  }
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
@@ -808,10 +976,12 @@ function start(deps) {
     if (!interaction.isChatInputCommand()) return;
     try {
       const cmd = interaction.commandName;
-      if (cmd !== 'website' && interaction.user.id !== OWNER_ID) {
+      if (cmd !== 'website' && cmd !== 'link' && interaction.user.id !== OWNER_ID) {
         return interaction.reply({ content: 'Owner-only command.', ephemeral: true });
       }
       const guild = interaction.guild;
+
+      if (cmd === 'link') return handleLinkCommand(interaction);
 
       if (cmd === 'website') {
         return interaction.reply({ embeds: [websiteEmbed(deps.siteUrl, deps.discordInvite)], components: [websiteRow(deps.siteUrl, deps.discordInvite)] });
@@ -945,6 +1115,24 @@ function start(deps) {
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 
+    /* #4k-access needs Manage Messages or the sweep is a no-op. Say so plainly at boot. */
+    try {
+      const guild = deps.guildId ? client.guilds.cache.get(String(deps.guildId)) : null;
+      if (guild && linkSweepEnabled) {
+        const channel = (linkChannelId ? guild.channels.cache.get(linkChannelId) : null)
+          || guild.channels.cache.find(c => String(c.name || '').toLowerCase() === linkChannelName);
+        if (!channel) {
+          log(`link channel #${linkChannelName} not found — message sweep and /link channel check are inactive`);
+        } else if (!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.ManageMessages)) {
+          log(`#${channel.name}: missing Manage Messages, so messages there will NOT be deleted`);
+        } else {
+          log(`#${channel.name}: sweeping messages (Manage Messages ok)`);
+        }
+      }
+    } catch (error) {
+      log('link channel permission check failed:', error.message);
+    }
+
     if (!schedulerStarted) {
       schedulerStarted = true;
       tickTimer = setInterval(() => { tick().catch(e => log('tick failed:', e.message)); }, TICK_MS);
@@ -954,6 +1142,15 @@ function start(deps) {
   });
 
   client.on(Events.InteractionCreate, i => { onInteraction(i).catch(e => log('interaction error:', e.message)); });
+  /* #4k-access: delete anything typed in there (creates, edits, and other bots). */
+  client.on(Events.MessageCreate, message => {
+    sweepLinkChannelMessage(message).catch(error => log('link channel sweep failed:', error.message));
+  });
+  client.on(Events.MessageUpdate, (_old, updated) => {
+    const message = updated.partial ? null : updated;
+    if (message) sweepLinkChannelMessage(message).catch(() => {});
+  });
+
   client.on(Events.MessageCreate, message => {
     if (!ticketFeatureEnabled || typeof deps.onTicketReply !== 'function' || message.author?.bot) return;
     if (!message.guild || message.guild.id !== String(deps.guildId)) return;
@@ -996,6 +1193,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
+    isLinkChannelMatch, linkSweepDecision,
     driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,

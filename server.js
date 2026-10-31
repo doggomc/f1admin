@@ -103,8 +103,7 @@ const FEED_SOURCES = [
   { id: 'sky-italia', label: 'Sky Sport Italia' },
   { id: 'westream', label: 'WeStream F1' },
   { id: 'wikisport', label: 'WikiSport' },
-  { id: 'ppv', label: 'F1 PPV' },
-  { id: 'xstream', label: 'XStream F1' }
+  { id: 'ppv', label: 'F1 PPV' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -1059,6 +1058,11 @@ if (process.env.DISCORD_BOT_TOKEN) {
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: SITE_URL,
       discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
+      /* /link: the bot vouches for a code to the gate over the loopback address. */
+      linkApiBase: process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`,
+      linkSecret: process.env.DISCORD_BOT_SECRET || '',
+      linkChannelId: process.env.DISCORD_LINK_CHANNEL_ID || '',
+      linkChannelName: process.env.DISCORD_LINK_CHANNEL_NAME || '4k-access',
       ownerId: process.env.DISCORD_OWNER_ID || '',
       ticketsEnabled: HELP_TICKETS_ENABLED,
       ticketCategoryId: process.env.DISCORD_TICKET_CATEGORY_ID || '',

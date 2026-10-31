@@ -28,8 +28,7 @@ const FEED_SOURCES = [
   { id: 'sky-sports', label: 'Sky Sports' }, { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' }, { id: 'viaplay', label: 'Viaplay' },
   { id: 'sky-italia', label: 'Sky Sport Italia' }, { id: 'westream', label: 'WeStream F1' },
-  { id: 'wikisport', label: 'WikiSport' }, { id: 'ppv', label: 'F1 PPV' },
-  { id: 'xstream', label: 'XStream F1' }
+  { id: 'wikisport', label: 'WikiSport' }, { id: 'ppv', label: 'F1 PPV' }
 ];
 let snapshot = {
   maintenance: { active: false, message: "We'll be back before the race.", eta: 'Before lights out', startedAt: null },
