@@ -190,6 +190,7 @@ function normalizeNews(raw) {
 }
 
 function normalizeSources(raw = {}) {
+  /* Ids that no longer exist are dropped, so a retired chip cannot linger as a hidden switch. */
   const disabled = Array.isArray(raw.disabled) ? raw.disabled.map(String).filter(id => FEED_SOURCE_IDS.has(id)) : [];
   return { disabled: [...new Set(disabled)], updatedAt: Number(raw.updatedAt) || null };
 }

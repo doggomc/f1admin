@@ -27,10 +27,14 @@ const UHD_PATTERN = /^f1[a-z]*uhd$/;
 const isUhdChannel = (name) => UHD_PATTERN.test(String(name || '').trim().toLowerCase());
 
 /* F1 channel names, normalised to the feed they carry, whichever event prefix they use. */
-const FEED_SUFFIXES = ['skyit', 'skyde', 'apple', 'world', 'dazn', 'sky', 'ita', 'deu', 'uhd'];
+const FEED_SUFFIXES = ['fullhd1', 'fullhd3', 'italian', 'spanish', 'german', 'skyit', 'skyde',
+  'apple', 'world', 'dazn', 'sky', 'ita', 'deu', 'uhd'];
 const FEED_PATTERN = new RegExp(`^f1[a-z]*?(${FEED_SUFFIXES.join('|')})$`);
 function feedKey(name) {
-  const match = String(name || '').trim().toLowerCase().match(FEED_PATTERN);
+  /* Some entries are bare ('german', 'fullhd3'), others carry the race prefix ('f1frigerman'). */
+  const flat = String(name || '').trim().toLowerCase().replace(/[\s_]/g, '');
+  if (FEED_SUFFIXES.includes(flat)) return flat;
+  const match = flat.match(FEED_PATTERN);
   return match ? match[1] : '';
 }
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
@@ -45,34 +49,54 @@ const HEALTH_TIMEOUT_MS = 6000;
 /* ehgembxe paths are opaque to the client, so they are allowlisted here instead. */
 const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089']);
 
+/* label + feed key for each embdlol chip, in the same order as the player's row. */
+const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES'], ['skyit', 'Sky Italia'],
+  ['skyde', 'Sky DE'], ['world', 'F1 World'], ['german', 'German'], ['spanish', 'Spanish'],
+  ['italian', 'Italian'], ['fullhd1', 'Full HD 1'], ['fullhd3', 'Full HD 3']];
+
+/* weelo relays the onboards and the data channel: one id per feed, and /players/state.json says
+   whether it is up. `tab` is the English/Other filter the player draws; `special` keeps these out
+   of the broadcaster run and in their own block. */
+const WEELO_STATE = 'https://weelo.live/players/state.json';
+const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
+const WEELO_FEEDS = [
+  ['kimi', 'Kimi Antonelli', 'onboard', 'peogcgpgbgchegaciclejgngjgacbeogehpgogfgmgmgjgjcacieee'],
+  ['charles', 'Charles Leclerc', 'onboard', 'peogcgpgbgchegacicdeigbgchmgfgdhacmefgdgmgfgchdgjcacieee'],
+  ['max', 'Max Verstappen', 'onboard', 'peogcgpgbgchegacicnebgihacgffgchdhehbgahahfgogjcacieee'],
+  ['drivers', 'Drivers Track', 'onboard', 'gebdacefgfaciceechjgghfgchacefchbgdglgfgchjcacieee'],
+  ['data', 'Data Channel', 'data', 'gebdacefgfaciceebgehbgacdeigbgogogfgmgjcacieee']
+];
+
 /* The player's own source list, in the same order as `sources` in netlifyf1/src/app.ts.
    GET /api/stream/sources publishes it so Race Control and the player cannot drift apart: every
    chip the player draws is switchable here, and every switch here is drawn by the player.
 
    `minQuality` is the floor a link has to clear to appear in this provider's pool. */
 const STREAM_SOURCES = [
-  { id: 'sky-uk', label: 'Sky HD', main: true, provider: 'strmfree', minQuality: 720, links: [
+  { id: 'sky-uk', label: 'Sky HD', main: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
     { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
     { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' },
     { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf1' },
     { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf1?server=origin&quality=1080p&category=racing' }
   ] },
-  { id: 'sky-uhd', label: 'Sky UHD', provider: 'strmfree', minQuality: 720, links: [
+  { id: 'sky-uhd', label: 'Sky UHD', provider: 'strmfree', minQuality: 720, tab: 'en', links: [
     { quality: 2160, url: 'https://strmfree.st/embed/racing/skyf12160p' },
     { quality: 2160, url: 'https://streamfree.top/embed/racing/skyf12160p' }
   ] },
+  ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: 'en', links: [] })),
+  { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, tab: 'en', links: [] },
+  /* Onboards and the data channel. `special` chips are drawn apart from the broadcasters. */
+  ...WEELO_FEEDS.map(([id, label, special, weelo]) => ({
+    id: `weelo-${id}`, label, provider: 'weelo', weelo, special, tab: 'en', minQuality: 720,
+    links: [{ quality: 1080, url: WEELO_PLAYER + weelo }]
+  })),
+  /* Works, but serves heavy advertising, so it sits below the EMB feeds. */
   { id: 'sky-f1-uk', label: 'Sky Sports F1 UK', provider: 'cdnlivetv', minQuality: 720, links: [
     { quality: 1080, url: 'https://cdnlivetv.tv/api/v1/channels/player/?name=Sky%20Sports%20F1%20FHD%20UK&code=&user=cdnlivetv&plan=free' },
     { quality: 1080, url: 'https://cdnlivetv.tv/api/v1/channels/player/?name=DAZN%20F1%20FHD&code=&user=cdnlivetv&plan=free' },
     { quality: 1080, url: 'https://cdnlivetv.tv/api/v1/channels/player/?name=Viaplay%20Sports%201%20FHD%20UK&code=&user=cdnlivetv&plan=free' },
     { quality: 1080, url: 'https://cdnlivetv.tv/api/v1/channels/player/?name=Viaplay%20Sports%202%20FHD%20UK&code=&user=cdnlivetv&plan=free' }
   ] },
-  { id: 'emb-sky', label: 'Sky F1 (EMB)', provider: 'embdlol', channel: 'f1frisky', minQuality: 0, links: [] },
-  { id: 'emb-apple', label: 'Apple TV (EMB)', provider: 'embdlol', channel: 'f1friapple', minQuality: 0, links: [] },
-  { id: 'emb-dazn', label: 'DAZN ES (EMB)', provider: 'embdlol', channel: 'f1fridazn', minQuality: 0, links: [] },
-  { id: 'emb-italia', label: 'Sky Italia (EMB)', provider: 'embdlol', channel: 'f1friskyit', minQuality: 0, links: [] },
-  { id: 'emb-de', label: 'Sky DE (EMB)', provider: 'embdlol', channel: 'f1friskyde', minQuality: 0, links: [] },
-  { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, links: [] },
   { id: 'ehgembxe', label: 'Sky Sports F1 HD (EHG)', provider: 'ehgembxe', minQuality: 720, retryOnExpiry: true, links: [
     { quality: 1080, url: 'ehgembxe/f596f98r-7758' },
     { quality: 1080, url: 'ehgembxe/f596f98r-4089' }
@@ -89,17 +113,14 @@ const STREAM_SOURCES = [
   { id: 'viaplay', label: 'Viaplay', provider: 'taifood', minQuality: 720, links: [
     { quality: 720, taid: 31391 }, { quality: 720, taid: 31380 }
   ] },
-  { id: 'sky-italia', label: 'Sky Sport Italia', provider: 'taifood', minQuality: 720, links: [
+  { id: 'sky-italia', label: 'Sky Sport Italia', provider: 'taifood', minQuality: 720, tab: 'other', links: [
     { quality: 720, taid: 31389 }, { quality: 720, taid: 31378 }
   ] },
-  { id: 'sky-de', label: 'Sky Sport F1 DE', provider: 'taifood', minQuality: 720, links: [
+  { id: 'sky-de', label: 'Sky Sport F1 DE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
     { quality: 720, taid: 31388 }, { quality: 720, taid: 31377 }
   ] },
-  { id: 'v-sport', label: 'V Sport Motor SE', provider: 'taifood', minQuality: 720, links: [
+  { id: 'v-sport', label: 'V Sport Motor SE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
     { quality: 720, taid: 31390 }
-  ] },
-  { id: 'czech', label: 'Czech F1', provider: 'taifood', minQuality: 720, links: [
-    { quality: 720, taid: 31381 }
   ] },
   { id: 'wikisport', label: 'WikiSport', provider: 'wikisport', minQuality: 0, links: [
     { quality: 0, url: 'https://wikisport.info/strm/f1.php' },
@@ -132,6 +153,7 @@ function createStreamResolver({ log = console } = {}) {
   const dynamic = new Map();      // path -> { url, at }
   const mirrorCache = new Map();  // stream key -> { at, list }
   let catalogueAt = 0;
+  const weelo = { at: 0, state: {} };
   let catalogueChannels = {};
   let health = { at: 0, providers: {} };
   let healthInFlight = null;
@@ -237,10 +259,31 @@ function createStreamResolver({ log = console } = {}) {
     return catalogueChannels;
   }
 
+  /* weelo's own status map. Offline and dark are the only states that stop a chip playing; 'soon'
+     means the feed is about to come up and is worth offering. */
+  async function weeloState() {
+    if (weelo.at && Date.now() - weelo.at < HEALTH_TTL_MS) return weelo.state;
+    try {
+      const response = await fetchWithTimeout(WEELO_STATE, { headers: { Accept: 'application/json' } });
+      if (response.ok) {
+        const json = await response.json();
+        const next = {};
+        for (const [id, status] of Object.entries(json || {})) {
+          if (!id.startsWith('_') && typeof status === 'string') next[id] = status.trim().toLowerCase();
+        }
+        weelo.state = next;
+        weelo.at = Date.now();
+      }
+    } catch (_) {
+      /* Unreachable: leave the chips reported as unknown rather than claiming they are down. */
+    }
+    return weelo.state;
+  }
+
   /* Every source the player draws, plus whatever the provider is publishing as live right now. */
   async function listSources() {
-    const [skyMirrors, uhdUrl, channels] = await Promise.all([mirrorsFor('skyf1'), resolveUhdUrl(), embdlolChannels()]);
-    const hasChannel = (name) => (channels instanceof Map ? channels.has(feedKey(name)) : false);
+    const [skyMirrors, uhdUrl, channels, state] = await Promise.all([mirrorsFor('skyf1'), resolveUhdUrl(), embdlolChannels(), weeloState()]);
+    const hasChannel = (key) => (channels instanceof Map ? channels.has(key) : false);
     const knownChannels = channels instanceof Map ? channels.size > 0 : false;
     return STREAM_SOURCES.map((source) => {
       let links = source.links.slice();
@@ -258,15 +301,21 @@ function createStreamResolver({ log = console } = {}) {
         main: Boolean(source.main),
         minQuality: source.minQuality,
         channels: source.channel ? [source.channel] : [],
+        /* The tab the player filters on, and whether the chip is drawn apart from the broadcasters. */
+        tab: source.tab || 'en',
+        special: source.special || null,
+        state: source.provider === 'weelo' ? state[source.weelo] || '' : null,
         links,
         /* An EMB chip is only playable when its channel is listed upstream; the 4K chip has its
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
-        upstream: source.provider !== 'embdlol'
+        upstream: source.provider === 'weelo'
+          ? !/^(offline|dark)$/.test(state[source.weelo] || '')
+          : source.provider !== 'embdlol'
           ? true
           : source.id === 'emb-uhd' ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null,
         /* Where the chip would play, so a client can also build the pool itself. */
         resolvedUrl: source.provider === 'embdlol' && knownChannels && hasChannel(source.channel)
-          ? EMBDLOL_EMBED + channels.get(feedKey(source.channel))
+          ? EMBDLOL_EMBED + channels.get(source.channel)
           : null
       };
     });

@@ -180,13 +180,21 @@ function renderSources() {
     row.className = `source-row${enabled ? '' : ' is-off'}`;
     const name = document.createElement('span');
     name.className = 'source-name';
+    /* The tab is shown next to the label so Race Control reads the row the way a visitor does. */
     name.textContent = source.label;
+    if (source.tab === 'other' || source.special) {
+      const tag = document.createElement('em');
+      tag.className = 'source-tag';
+      tag.textContent = source.special ? source.special : 'other';
+      name.append(' ', tag);
+    }
     const id = document.createElement('span');
     id.className = 'source-id';
     id.textContent = source.id;
     const status = document.createElement('span');
     status.className = 'source-state';
-    status.textContent = enabled ? 'Available' : 'Hidden';
+    /* A weelo chip carries the provider's own state when it is known. */
+    status.textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `source-switch${enabled ? ' on' : ''}`;
@@ -211,7 +219,7 @@ function renderSourcesFromDraft() {
     if (!source) return;
     const enabled = !sourceDraft.has(source.id);
     row.classList.toggle('is-off', !enabled);
-    row.querySelector('.source-state').textContent = enabled ? 'Available' : 'Hidden';
+    row.querySelector('.source-state').textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
     const button = row.querySelector('.source-switch');
     button.classList.toggle('on', enabled);
     button.setAttribute('aria-pressed', String(enabled));
