@@ -21,14 +21,10 @@ window.confirm = () => true;
 window.scrollTo = () => {};
 window.addEventListener('error', event => runtimeErrors.push(String(event.error || event.message)));
 
-/* Mirror of FEED_SOURCES in server.js - keep in the same order so the dashboard check renders
-   exactly the controls the live backend serves. */
 const FEED_SOURCES = [
-  { id: 'sky-uk', label: 'Sky UHD' }, { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
-  { id: 'sky-sports', label: 'Sky Sports' }, { id: 'appletv', label: 'AppleTV' },
-  { id: 'dazn', label: 'DAZN' }, { id: 'viaplay', label: 'Viaplay' },
-  { id: 'sky-italia', label: 'Sky Sport Italia' }, { id: 'westream', label: 'WeStream F1' },
-  { id: 'wikisport', label: 'WikiSport' }, { id: 'ppv', label: 'F1 PPV' }
+  { id: 'westream', label: 'WeStream F1' }, { id: 'sky-uk', label: 'Sky UHD' },
+  { id: 'f1tv', label: 'F1TV' }, { id: 'appletv', label: 'AppleTV' },
+  { id: 'dazn', label: 'DAZN' }, { id: 'wikisport', label: 'WikiSport' }
 ];
 let snapshot = {
   maintenance: { active: false, message: "We'll be back before the race.", eta: 'Before lights out', startedAt: null },

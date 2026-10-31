@@ -89,13 +89,6 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
 const FEED_SOURCES = [
   { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
   { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
-  { id: 'skyf1-1080', label: 'Sky F1 1080p' },
-  { id: 'emb-sky', label: 'Sky F1 (EMB)' },
-  { id: 'emb-apple', label: 'Apple TV (EMB)' },
-  { id: 'emb-dazn', label: 'DAZN ES (EMB)' },
-  { id: 'emb-italia', label: 'Sky Italia (EMB)' },
-  { id: 'emb-de', label: 'Sky DE (EMB)' },
-  { id: 'emb-uhd', label: 'F1 UHD 4K (HEVC)' },
   { id: 'sky-sports', label: 'Sky Sports' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
@@ -103,7 +96,8 @@ const FEED_SOURCES = [
   { id: 'sky-italia', label: 'Sky Sport Italia' },
   { id: 'westream', label: 'WeStream F1' },
   { id: 'wikisport', label: 'WikiSport' },
-  { id: 'ppv', label: 'F1 PPV' }
+  { id: 'ppv', label: 'F1 PPV' },
+  { id: 'xstream', label: 'XStream F1' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -726,33 +720,6 @@ let stateReady = loadSiteState();
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-/* ── /link shared secret ──────────────────────────────────────────────────────
-   The bot and the gate run inside this same process, and the bot calls the gate over loopback to
-   vouch for a five-digit code. That call is authenticated by DISCORD_BOT_SECRET. When the variable
-   is missing the bot can no longer claim codes and members are told "not configured — ping an
-   admin", which is a dead end caused by a missing environment variable rather than a real failure.
-   So: if it is not set, mint one here and hand the same value to both sides. Setting it explicitly
-   still wins, which is what you want if the bot ever runs as a separate worker.
-   The session signing key is deliberately NOT tied to this random value (see SECRET_FOR_SESSIONS),
-   otherwise every redeploy would wipe out every member's stored link. */
-if (!String(process.env.DISCORD_BOT_SECRET || '').trim()) {
-  process.env.DISCORD_BOT_SECRET = crypto.randomBytes(32).toString('hex');
-  console.log('[Discord gate] DISCORD_BOT_SECRET was not set — minted an in-process secret for /link');
-  /* Only a deployment without a bot token can end up with an unstable key, and a gate with no bot
-     token cannot run anyway. So this is informational, not a warning everyone needs to act on. */
-  if (!String(process.env.DISCORD_SESSION_SECRET || process.env.ADMIN_SECRET || '').trim()) {
-    console.log('[Discord gate] session key derived from DISCORD_BOT_TOKEN — stable across redeploys, members keep their 4K.');
-  }
-}
-
-/* Discord membership gate — unlocks the 4K feed. Self-contained in discord-gate.js. */
-let discordGate = null;
-try {
-  discordGate = require('./discord-gate').createDiscordGate({ app, siteUrl: SITE_URL });
-} catch (error) {
-  console.warn('[Discord gate] failed to mount:', error.message);
-}
-
 app.get('/api/site/config', async (_req, res) => {
   await stateReady;
   res.setHeader('Cache-Control', `public, max-age=${SITE_CONFIG_MAX_AGE_SECONDS}`);
@@ -933,7 +900,7 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary(), discordGate: discordGate ? discordGate.summary() : { enabled: false, configured: false } });
+  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary() });
 });
 
 app.get('/admin/api/maintenance', async (_req, res) => {
@@ -1077,11 +1044,6 @@ if (process.env.DISCORD_BOT_TOKEN) {
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: SITE_URL,
       discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
-      /* /link: the bot vouches for a code to the gate over the loopback address. */
-      linkApiBase: process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`,
-      linkSecret: process.env.DISCORD_BOT_SECRET || '',
-      linkChannelId: process.env.DISCORD_LINK_CHANNEL_ID || '',
-      linkChannelName: process.env.DISCORD_LINK_CHANNEL_NAME || '4k-access',
       ownerId: process.env.DISCORD_OWNER_ID || '',
       ticketsEnabled: HELP_TICKETS_ENABLED,
       ticketCategoryId: process.env.DISCORD_TICKET_CATEGORY_ID || '',
