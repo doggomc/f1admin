@@ -83,29 +83,15 @@ const LEGACY_REMOTE_KEYS_TO_DELETE = [
 ];
 const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 'login-guard.json', 'stream-targets.json'];
 
-/* The player list the Race Control panel renders. Keep this in the same order as `sources` in
-   the frontend (netlifyf1/src/app.ts): the admin toggles ids that the player matches 1:1, so a
-   source missing here can never be switched off, and an id here that the player dropped (f1tv)
-   would be silently ignored. */
-const FEED_SOURCES = [
-  { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
-  { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
-  { id: 'skyf1-1080', label: 'Sky F1 1080p' },
-  { id: 'emb-sky', label: 'Sky F1 (EMB)' },
-  { id: 'emb-apple', label: 'Apple TV (EMB)' },
-  { id: 'emb-dazn', label: 'DAZN ES (EMB)' },
-  { id: 'emb-italia', label: 'Sky Italia (EMB)' },
-  { id: 'emb-de', label: 'Sky DE (EMB)' },
-  { id: 'emb-uhd', label: 'F1 UHD 4K (HEVC)' },
-  { id: 'sky-sports', label: 'Sky Sports' },
-  { id: 'appletv', label: 'AppleTV' },
-  { id: 'dazn', label: 'DAZN' },
-  { id: 'viaplay', label: 'Viaplay' },
-  { id: 'sky-italia', label: 'Sky Sport Italia' },
-  { id: 'westream', label: 'WeStream F1' },
-  { id: 'wikisport', label: 'WikiSport' },
-  { id: 'ppv', label: 'F1 PPV' }
-];
+/* The player list the Race Control panel renders. It is read from the resolver's STREAM_SOURCES —
+   the same list the player draws and GET /api/stream/sources publishes — so the admin, the API and
+   the site can never drift apart. Add a source there and it appears here, in the player and in
+   "which sources are live" without a second edit. */
+const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) => ({
+  id: source.id,
+  label: source.label,
+  ...(source.main ? { main: true } : {})
+}));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
 const DEFAULT_MAINTENANCE = Object.freeze({
@@ -737,7 +723,13 @@ app.get('/api/stream/resolve', async (req, res) => {
   if (!path) return res.status(400).json({ error: 'A provider path is required.', code: 'bad-request' });
   try {
     const result = await streamResolver.resolveDynamic(path);
-    if (!result.url) return res.status(503).json({ error: 'That provider is not serving right now.', code: result.code || 'unavailable' });
+    if (!result.url) {
+      return res.status(503).json({
+        error: result.code === 'link-expired' ? 'That provider link expired; ask again.' : 'That provider is not serving right now.',
+        code: result.code || 'unavailable',
+        retry: Boolean(result.retry)
+      });
+    }
     return res.json({ url: result.url, cached: Boolean(result.cached) });
   } catch (error) {
     console.error('[streams] resolve failed:', error?.message || error);
@@ -753,6 +745,21 @@ app.get('/api/stream/health', async (_req, res) => {
   } catch (error) {
     console.error('[streams] health failed:', error?.message || error);
     return res.status(503).json({ error: 'Health check unavailable.', code: 'unavailable' });
+  }
+});
+
+/* Every source the player draws, with the links it may use right now. This is the answer to
+   "is the backend in step with the site": one list, published by the server, matched 1:1 with the
+   chips in netlifyf1/src/app.ts. Providers that publish mirrors (strmfree) contribute their
+   current ones on top of the static pool. */
+app.get('/api/stream/sources', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const sources = await streamResolver.listSources();
+    return res.json({ sources, count: sources.length, minQuality: 720 });
+  } catch (error) {
+    console.error('[streams] sources failed:', error?.message || error);
+    return res.status(503).json({ error: 'Source list unavailable.', code: 'unavailable' });
   }
 });
 
