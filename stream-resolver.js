@@ -27,15 +27,21 @@ const UHD_PATTERN = /^f1[a-z]*uhd$/;
 const isUhdChannel = (name) => UHD_PATTERN.test(String(name || '').trim().toLowerCase());
 
 /* F1 channel names, normalised to the feed they carry, whichever event prefix they use. */
+/* Longest first, and the short codes ('ita', 'deu') are included: embdlol renames its F1 channels
+   for every race, and Mexico published f1mexicosatita / f1mexicosatdeu rather than the long names.
+   Matched against a feed key, these aliases are what a chip's key is compared to. */
 const FEED_SUFFIXES = ['fullhd1', 'fullhd3', 'italian', 'spanish', 'german', 'skyit', 'skyde',
   'apple', 'world', 'dazn', 'sky', 'ita', 'deu', 'uhd'];
 const FEED_PATTERN = new RegExp(`^f1[a-z]*?(${FEED_SUFFIXES.join('|')})$`);
+/* The short codes embdlol uses today and the long key a chip uses. Without this, today's
+   f1mexicosatita never matches the 'italian' chip and the whole EMB block reads "no channel". */
+const FEED_ALIASES = { ita: 'italian', deu: 'german', skyit: 'skyit', skyde: 'skyde' };
 function feedKey(name) {
   /* Some entries are bare ('german', 'fullhd3'), others carry the race prefix ('f1frigerman'). */
   const flat = String(name || '').trim().toLowerCase().replace(/[\s_]/g, '');
   if (FEED_SUFFIXES.includes(flat)) return flat;
   const match = flat.match(FEED_PATTERN);
-  return match ? match[1] : '';
+  return match ? (FEED_ALIASES[match[1]] || match[1]) : '';
 }
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
@@ -48,6 +54,9 @@ const HEALTH_TIMEOUT_MS = 6000;
 
 /* ehgembxe paths are opaque to the client, so they are allowlisted here instead. */
 const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089']);
+
+/* The embdlol feeds whose commentary is not English. */
+const EMB_OTHER = ['dazn', 'skyit', 'skyde', 'german', 'spanish', 'italian'];
 
 /* label + feed key for each embdlol chip, in the same order as the player's row. */
 const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES'], ['skyit', 'Sky Italia'],
@@ -68,6 +77,15 @@ const WEELO_FEEDS = [
   ['data', 'Data Channel', 'data', 'gebdacefgfaciceebgehbgacdeigbgogogfgmgjcacieee']
 ];
 
+/* taifood addresses are <event>---<session>-<id><mark>: the mark is part of the address, and the
+   provider publishes several. SD is the base; the crisp mark is offered after it. The mark is a
+   property of the address, not of the chip, so it is added here rather than on each link. */
+const TAID_MARKS = ['SD', 'SD1080pHD'];
+function taidUrl(event, session, id, mark) {
+  const kebab = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `https://taifood-blog.asia/embed/${kebab(event)}---${kebab(session)}-${id}${mark}`;
+}
+
 /* The player's own source list, in the same order as `sources` in netlifyf1/src/app.ts.
    GET /api/stream/sources publishes it so Race Control and the player cannot drift apart: every
    chip the player draws is switchable here, and every switch here is drawn by the player.
@@ -84,7 +102,8 @@ const STREAM_SOURCES = [
     { quality: 2160, url: 'https://strmfree.st/embed/racing/skyf12160p' },
     { quality: 2160, url: 'https://streamfree.top/embed/racing/skyf12160p' }
   ] },
-  ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: 'en', links: [] })),
+  /* The feeds whose commentary is not English draw under the Other tab, in the player and here. */
+  ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
   { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, tab: 'en', links: [] },
   /* Onboards and the data channel. `special` chips are drawn apart from the broadcasters. */
   ...WEELO_FEEDS.map(([id, label, special, weelo]) => ({
@@ -108,10 +127,10 @@ const STREAM_SOURCES = [
   { id: 'appletv', label: 'AppleTV', provider: 'taifood', minQuality: 720, links: [
     { quality: 720, taid: 31385 }, { quality: 720, taid: 31374 }
   ] },
-  { id: 'dazn', label: 'DAZN', provider: 'taifood', minQuality: 720, links: [
+  { id: 'dazn', label: 'DAZN', provider: 'taifood', minQuality: 720, tab: 'other', links: [
     { quality: 720, taid: 31387 }, { quality: 720, taid: 31376 }
   ] },
-  { id: 'viaplay', label: 'Viaplay', provider: 'taifood', minQuality: 720, links: [
+  { id: 'viaplay', label: 'Viaplay', provider: 'taifood', minQuality: 720, tab: 'other', links: [
     { quality: 720, taid: 31391 }, { quality: 720, taid: 31380 }
   ] },
   { id: 'sky-italia', label: 'Sky Sport Italia', provider: 'taifood', minQuality: 720, tab: 'other', links: [
@@ -306,7 +325,7 @@ function createStreamResolver({ log = console } = {}) {
         tab: source.tab || 'en',
         special: source.special || null,
         state: source.provider === 'weelo' ? state[source.weelo] || '' : null,
-        links,
+        links: links.map((link) => (link.taid ? { ...link, marks: TAID_MARKS, shape: taidUrl('{event}', '{session}', link.taid, '{mark}') } : link)),
         /* An EMB chip is only playable when its channel is listed upstream; the 4K chip has its
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
         upstream: source.provider === 'weelo'
