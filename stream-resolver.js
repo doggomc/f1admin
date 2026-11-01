@@ -296,9 +296,18 @@ function createStreamResolver({ log = console } = {}) {
       if (!response.ok) throw new Error(`struct responded ${response.status}`);
       const json = await response.json();
       const next = new Map();
+      const seen = new Map();
       for (const channel of Array.isArray(json?.channels) ? json.channels : []) {
         const key = feedKey(channel?.channelname);
-        if (key && channel?.id) next.set(key, String(channel.id));
+        if (!key || !channel?.id) continue;
+        /* The directory can list the same feed twice: once as a finished catch-up recording and once
+           as the live channel. The recording cannot be watched as live, so a name carrying a day
+           prefix and no 'live' marker loses to a plain live row. */
+        const name = String(channel.channelname || '').toLowerCase();
+        const recording = !/live/.test(name) && /(mon|tue|wed|thu|fri|sat|sun|replay|highlights)/.test(name);
+        if (recording && !seen.get(key)) { if (!next.has(key)) next.set(key, String(channel.id)); continue; }
+        seen.set(key, true);
+        next.set(key, String(channel.id));
       }
       catalogueChannels = next;
       catalogueAt = Date.now();
