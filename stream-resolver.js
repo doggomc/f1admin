@@ -46,6 +46,8 @@ function feedKey(name) {
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
 const UHD_REFRESH_MS = 30 * 60_000;
+/* How long an address that DID resolve stays trusted. Ids rotate per session. */
+const UHD_RESOLVED_TTL_MS = 5 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60_000;
 const RESOLVE_TTL_MS = 5 * 60_000;
 const HEALTH_TTL_MS = 120_000;
@@ -224,7 +226,10 @@ function createStreamResolver({ log = console } = {}) {
   async function resolveUhdUrl() {
     const pinned = override();
     if (pinned) return pinned;
-    if (uhd.url && Date.now() - uhd.at < UHD_REFRESH_MS) return uhd.url;
+    /* A resolved address is only trusted for a few minutes, not the half hour a channel list is.
+       embdlol repoints its ids between sessions and drops them when the channel goes off air, and a
+       pinned address outlived the session it belonged to: the chip played yesterday's id today. */
+    if (uhd.url && Date.now() - uhd.at < UHD_RESOLVED_TTL_MS) return uhd.url;
     if (!uhd.url && uhd.failedAt && Date.now() - uhd.failedAt < RETRY_AFTER_FAILURE_MS) return '';
 
     for (let attempt = 0; attempt < 2; attempt++) {
