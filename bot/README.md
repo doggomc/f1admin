@@ -132,7 +132,7 @@ driver panel uses buttons (`freef1:grid:<number>`). The alert opt-in is a single
 
 Legacy reaction panels already posted in a server continue to work until you
 replace them with `/rolemenu` or `/alertsmenu`. The bot uploads white pixel-digit
-PNGs from `bot/assets/emoji/` because Unicode does not provide two-digit
+PNGs from `assets/emoji/` because Unicode does not provide two-digit
 keycaps.
 
 ## Files
@@ -141,7 +141,7 @@ keycaps.
 |---|---|
 | `bot/discord-bot.js` | Bot store, panels, buttons, scheduler, presence, commands, and optional private ticket channels/replies. |
 | `bot/schedule-2026.json` | Season data; update alongside the frontend schedule when the calendar changes. |
-| `bot/assets/emoji/` | Number and alert-dot PNGs uploaded on first run. |
+| `assets/emoji/` | Number and alert-dot PNGs uploaded on first run. |
 | `server.js` | Optional bot startup and graceful-shutdown flush. |
 
 ## Operations

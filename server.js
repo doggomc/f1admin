@@ -44,6 +44,7 @@ if (PRODUCTION) {
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const ADMIN_DIR = path.join(__dirname, 'admin');
+const ASSETS_DIR = path.join(__dirname, 'assets');
 const CONTROL_FILE = path.join(DATA_DIR, 'race-control.json');
 const HELP_TICKETS_FILE = path.join(DATA_DIR, 'help-tickets.json');
 const HELP_TICKETS_REDIS_KEY = 'freef1:help-tickets:v1';
@@ -82,29 +83,15 @@ const LEGACY_REMOTE_KEYS_TO_DELETE = [
 ];
 const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 'login-guard.json', 'stream-targets.json'];
 
-/* The player list the Race Control panel renders. Keep this in the same order as `sources` in
-   the frontend (netlifyf1/src/app.ts): the admin toggles ids that the player matches 1:1, so a
-   source missing here can never be switched off, and an id here that the player dropped (f1tv)
-   would be silently ignored. */
-const FEED_SOURCES = [
-  { id: 'sky-uk', label: 'Sky UHD' },   // main source: first in the player row and the default
-  { id: 'sky-f1-uk', label: 'Sky Sports F1 UK' },
-  { id: 'skyf1-1080', label: 'Sky F1 1080p' },
-  { id: 'emb-sky', label: 'Sky F1 (EMB)' },
-  { id: 'emb-apple', label: 'Apple TV (EMB)' },
-  { id: 'emb-dazn', label: 'DAZN ES (EMB)' },
-  { id: 'emb-italia', label: 'Sky Italia (EMB)' },
-  { id: 'emb-de', label: 'Sky DE (EMB)' },
-  { id: 'emb-uhd', label: 'F1 UHD 4K (HEVC)' },
-  { id: 'sky-sports', label: 'Sky Sports' },
-  { id: 'appletv', label: 'AppleTV' },
-  { id: 'dazn', label: 'DAZN' },
-  { id: 'viaplay', label: 'Viaplay' },
-  { id: 'sky-italia', label: 'Sky Sport Italia' },
-  { id: 'westream', label: 'WeStream F1' },
-  { id: 'wikisport', label: 'WikiSport' },
-  { id: 'ppv', label: 'F1 PPV' }
-];
+/* The player list the Race Control panel renders. It is read from the resolver's STREAM_SOURCES —
+   the same list the player draws and GET /api/stream/sources publishes — so the admin, the API and
+   the site can never drift apart. Add a source there and it appears here, in the player and in
+   "which sources are live" without a second edit. */
+const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) => ({
+  id: source.id,
+  label: source.label,
+  ...(source.main ? { main: true } : {})
+}));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
 const DEFAULT_MAINTENANCE = Object.freeze({
@@ -118,7 +105,7 @@ const DEFAULT_MAINTENANCE = Object.freeze({
 const state = {
   maintenance: { ...DEFAULT_MAINTENANCE },
   news: [],
-  sources: { disabled: [], updatedAt: null },
+  sources: { disabled: [], overrides: {}, updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
   experimental: { enabled: true }
@@ -202,9 +189,28 @@ function normalizeNews(raw) {
     .sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_NEWS_ITEMS);
 }
 
+/* Chip overrides: a label, a custom link, or both, keyed by source id. Ids that no longer exist are
+   dropped, so a retired chip cannot keep a ghost name. */
+const OVERRIDE_TEXT = 40;
+function normalizeOverrides(raw = {}) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [id, value] of Object.entries(raw)) {
+    if (!FEED_SOURCE_IDS.has(id) || !value || typeof value !== 'object') continue;
+    const entry = {};
+    const label = safeText(value.label, OVERRIDE_TEXT);
+    if (label) entry.label = label;
+    const url = httpsUrl(value.url);
+    if (url) entry.url = url.href.slice(0, 500);
+    if (entry.label || entry.url) out[id] = { ...entry, updatedAt: Number(value.updatedAt) || Date.now() };
+  }
+  return out;
+}
+
 function normalizeSources(raw = {}) {
+  /* Ids that no longer exist are dropped, so a retired chip cannot linger as a hidden switch. */
   const disabled = Array.isArray(raw.disabled) ? raw.disabled.map(String).filter(id => FEED_SOURCE_IDS.has(id)) : [];
-  return { disabled: [...new Set(disabled)], updatedAt: Number(raw.updatedAt) || null };
+  return { disabled: [...new Set(disabled)], overrides: normalizeOverrides(raw.overrides), updatedAt: Number(raw.updatedAt) || null };
 }
 
 function httpsUrl(value) {
@@ -554,7 +560,23 @@ function storageSummary() {
 }
 
 function publicSources() {
-  return { disabled: [...state.sources.disabled], updatedAt: state.sources.updatedAt };
+  return { disabled: [...state.sources.disabled], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+}
+
+/* Race Control sees the chip as a visitor will: the custom name and link when there is one. */
+function adminSourceList() {
+  return FEED_SOURCES.map((source) => {
+    const custom = state.sources.overrides[source.id] || {};
+    const link = state.sources.overrides[source.id]?.url;
+    return {
+      ...source,
+      label: custom.label || source.label,
+      baseLabel: source.label,
+      customLabel: custom.label || '',
+      customUrl: link || '',
+      updatedAt: custom.updatedAt || null
+    };
+  });
 }
 
 function publicOverride() {
@@ -726,13 +748,99 @@ let stateReady = loadSiteState();
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-/* Discord membership gate — unlocks the 4K feed. Self-contained in discord-gate.js. */
-let discordGate = null;
-try {
-  discordGate = require('./discord-gate').createDiscordGate({ app, siteUrl: SITE_URL });
-} catch (error) {
-  console.warn('[Discord gate] failed to mount:', error.message);
-}
+/* 4K feed resolver — public, no Discord membership required. The site asks for the
+   address and plays it; joining the Discord is an optional nudge in the UI. */
+const streamResolver = require('./stream-resolver').createStreamResolver();
+
+app.get('/api/stream/resolve', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const path = String(req.query.path || '').trim().slice(0, 120);
+  if (!path) return res.status(400).json({ error: 'A provider path is required.', code: 'bad-request' });
+  try {
+    const result = await streamResolver.resolveDynamic(path);
+    if (!result.url) {
+      return res.status(503).json({
+        error: result.code === 'link-expired' ? 'That provider link expired; ask again.' : 'That provider is not serving right now.',
+        code: result.code || 'unavailable',
+        retry: Boolean(result.retry)
+      });
+    }
+    return res.json({ url: result.url, cached: Boolean(result.cached) });
+  } catch (error) {
+    console.error('[streams] resolve failed:', error?.message || error);
+    return res.status(503).json({ error: 'That provider could not be resolved.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/health', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const report = await streamResolver.getHealth();
+    return res.json({ checkedAt: report.at, providers: report.providers, uhdResolved: report.uhdResolved });
+  } catch (error) {
+    console.error('[streams] health failed:', error?.message || error);
+    return res.status(503).json({ error: 'Health check unavailable.', code: 'unavailable' });
+  }
+});
+
+/* Every source the player draws, with the links it may use right now. This is the answer to
+   "is the backend in step with the site": one list, published by the server, matched 1:1 with the
+   chips in netlifyf1/src/app.ts. Providers that publish mirrors (strmfree) contribute their
+   current ones on top of the static pool. */
+app.get('/api/stream/sources', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const sources = await streamResolver.listSources();
+    return res.json({ sources, count: sources.length, minQuality: 720 });
+  } catch (error) {
+    console.error('[streams] sources failed:', error?.message || error);
+    return res.status(503).json({ error: 'Source list unavailable.', code: 'unavailable' });
+  }
+});
+
+/* weelo's status map, relayed. The browser cannot fetch it itself: the file is served with
+   `access-control-allow-origin: *` but the edge refuses the cross-origin request outright, which
+   shows up in the console as a CORS failure and left every onboard stuck on "unknown". */
+/* taifood's per-race channel list, relayed: it has no CORS headers, so the browser cannot read it. */
+app.get('/api/stream/taifood', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const { list, at } = await streamResolver.taifoodChannels();
+    return res.json({ channels: list, count: list.length, updatedAt: at || null });
+  } catch (error) {
+    console.error('[streams] taifood list failed:', error?.message || error);
+    return res.status(503).json({ error: 'Channel list unavailable.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/weelo', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=15');
+  try {
+    const state = await streamResolver.weeloState();
+    return res.json({ state, count: Object.keys(state).length });
+  } catch (error) {
+    console.error('[streams] weelo state failed:', error?.message || error);
+    return res.status(503).json({ error: 'Status unavailable.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/uhd', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  try {
+    const url = await streamResolver.resolveUhdUrl();
+    if (!url) {
+      return res.status(503).json({
+        error: 'The 4K channel is not listed upstream right now.',
+        code: 'unavailable'
+      });
+    }
+    return res.json({ url, source: 'emb-uhd' });
+  } catch (error) {
+    console.error('[4K] resolve failed:', error?.message || error);
+    return res.status(503).json({ error: 'The 4K channel could not be resolved.', code: 'unavailable' });
+  }
+});
+
 
 app.get('/api/site/config', async (_req, res) => {
   await stateReady;
@@ -914,7 +1022,7 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sourceList: FEED_SOURCES, adminNews: adminNews(), storage: storageSummary(), discordGate: discordGate ? discordGate.summary() : { enabled: false, configured: false } });
+  res.json({ ...publicConfig(), sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/maintenance', async (_req, res) => {
@@ -995,9 +1103,51 @@ app.post('/admin/api/stream/sources', async (req, res) => {
   if (!Array.isArray(req.body?.disabled)) return res.status(400).json({ error: 'disabled must be an array of source IDs.' });
   const unknown = req.body.disabled.map(String).filter(id => !FEED_SOURCE_IDS.has(id));
   if (unknown.length) return res.status(400).json({ error: `Unknown source ID(s): ${unknown.join(', ')}` });
-  state.sources = normalizeSources({ disabled: req.body.disabled, updatedAt: Date.now() });
+  state.sources = normalizeSources({ disabled: req.body.disabled, overrides: state.sources.overrides, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: FEED_SOURCES, ...state.sources, ...persisted });
+});
+
+/* One chip: its custom name and its custom link. Distinct from /stream/override, which forces the
+   whole site onto one address. */
+app.post('/admin/api/stream/chip', async (req, res) => {
+  await stateReady;
+  const id = String(req.body?.id || '');
+  if (!FEED_SOURCE_IDS.has(id)) return res.status(400).json({ error: 'Unknown source ID.' });
+  const raw = { ...state.sources.overrides[id] };
+  /* An empty string clears the field; leaving the key out of the body leaves it untouched. */
+  if ('label' in (req.body || {})) {
+    const label = safeText(req.body.label, OVERRIDE_TEXT);
+    if (label) raw.label = label;
+    else delete raw.label;
+  }
+  if ('url' in (req.body || {})) {
+    const value = String(req.body.url || '').trim();
+    if (!value) delete raw.url;
+    else {
+      const url = httpsUrl(value);
+      if (!url) return res.status(400).json({ error: 'The custom link must be a full https:// address.' });
+      raw.url = url.href.slice(0, 500);
+    }
+  }
+  const overrides = { ...state.sources.overrides };
+  if (raw.label || raw.url) overrides[id] = { ...raw, updatedAt: Date.now() };
+  else delete overrides[id];
+  state.sources = normalizeSources({ disabled: state.sources.disabled, overrides, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, sourceList: adminSourceList(), ...state.sources, ...persisted });
+});
+
+app.post('/admin/api/reset-all', async (_req, res) => {
+  await stateReady;
+  /* Everything Race Control can change goes back to the shipped default: nothing hidden, no custom
+     names or links, no forced stream, no maintenance, no news. Storage settings are left alone. */
+  state.sources = normalizeSources({ disabled: [], overrides: {}, updatedAt: Date.now() });
+  state.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: Date.now() };
+  state.maintenance = normalizeMaintenance({ active: false, updatedAt: Date.now() });
+  state.news = [];
+  const persisted = await persistState();
+  res.json({ success: true, ...publicConfig(), sourceList: adminSourceList(), adminNews: adminNews(), ...persisted });
 });
 
 app.get('/admin/api/news', async (_req, res) => {
@@ -1031,6 +1181,23 @@ function sendAdminIndex(_req, res) {
   res.sendFile(path.join(ADMIN_DIR, 'index.html'));
 }
 app.get(['/admin', '/admin/', '/admin/login'], sendAdminIndex);
+/* Shared asset folder (fonts, bot emoji) lives at the repo root and is
+   referenced root-relative from the admin pages (/assets/...). Bundled
+   documentation ships alongside the files, so markdown never leaves the box. */
+const PUBLIC_DOC_FILE = /\.(?:md|markdown)$/i;
+const assetOptions = {
+  index: false,
+  fallthrough: true,
+  etag: true,
+  maxAge: PRODUCTION ? '1h' : 0,
+  setHeaders(res, filePath) {
+    if (PUBLIC_DOC_FILE.test(filePath)) res.setHeader('Cache-Control', 'no-store');
+  }
+};
+const denyDocs = (req, res, next) =>
+  PUBLIC_DOC_FILE.test(req.path) ? res.status(404).json({ error: 'Not found' }) : next();
+app.use('/assets', denyDocs, express.static(ASSETS_DIR, assetOptions));
+app.use('/admin/assets', denyDocs, express.static(ASSETS_DIR, assetOptions));
 app.use('/admin', express.static(ADMIN_DIR, {
   index: false,
   fallthrough: true,
@@ -1058,11 +1225,6 @@ if (process.env.DISCORD_BOT_TOKEN) {
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: SITE_URL,
       discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
-      /* /link: the bot vouches for a code to the gate over the loopback address. */
-      linkApiBase: process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`,
-      linkSecret: process.env.DISCORD_BOT_SECRET || '',
-      linkChannelId: process.env.DISCORD_LINK_CHANNEL_ID || '',
-      linkChannelName: process.env.DISCORD_LINK_CHANNEL_NAME || '4k-access',
       ownerId: process.env.DISCORD_OWNER_ID || '',
       ticketsEnabled: HELP_TICKETS_ENABLED,
       ticketCategoryId: process.env.DISCORD_TICKET_CATEGORY_ID || '',

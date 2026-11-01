@@ -694,6 +694,9 @@ from {
   flex: none;
 }
 
+.btn.danger { color:#ff8f7a; border-color:rgba(255,143,122,.42); }
+.btn.danger:hover { background:rgba(255,143,122,.12); }
+.btn.danger::before, .btn.danger::after { border-color:rgba(255,143,122,.42); }
 .btn.primary {
   background: var(--team);
   border-color: var(--team);
@@ -5448,6 +5451,7 @@ td .pill-sm{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;bord
 }
 .source-row.is-off{opacity:.5}.source-row.is-off .source-name{text-decoration:line-through}
 .source-name{font-size:.78rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.source-tag{display:inline-block;margin-left:4px;padding:1px 5px;border:1px solid var(--line,#333);border-radius:3px;font-size:.55rem;font-style:normal;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);vertical-align:1px}
 .source-id{font-size:.6rem;letter-spacing:.04em;color:var(--muted);text-transform:uppercase}
 .source-state{font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--green);font-weight:700}
 .source-row.is-off .source-state{color:var(--amber)}

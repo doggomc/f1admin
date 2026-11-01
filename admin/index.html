@@ -8,9 +8,9 @@
   <meta name="description" content="FreeF1 Race Control administration.">
   <title>FreeF1 — Race Control</title>
   <link rel="icon" href="/admin/favicon.svg" type="image/svg+xml">
-  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/Inter-latin.woff2" crossorigin>
-  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/Archivo-latin.woff2" crossorigin>
-  <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/JetBrainsMono-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Inter-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Archivo-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/JetBrainsMono-latin.woff2" crossorigin>
   <link rel="stylesheet" href="/admin/fonts.css">
   <link rel="stylesheet" href="/admin/admin.css">
   <style>
@@ -58,6 +58,11 @@
     .source-switch.on { border-color:rgba(0,213,126,.5);background:rgba(0,213,126,.18); }
     .source-switch.on i { transform:translateX(17px);background:var(--green); }
     .source-switch:focus-visible { outline:2px solid var(--green);outline-offset:2px; }
+    .source-custom { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr); gap:8px; grid-column:1/-1; margin-top:2px; }
+    .source-custom input { width:100%; font:inherit; font-size:.72rem; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm); padding:6px 8px; }
+    .source-custom input::placeholder { color:var(--dim); }
+    .source-custom input:focus-visible { outline:2px solid var(--green); outline-offset:1px; }
+    .source-custom .is-set { border-color:rgba(0,213,126,.55); }
     .news-list { display:flex;flex-direction:column;gap:9px; }
     .news-card { border:1px solid var(--line);border-radius:var(--r-sm);background:rgba(255,255,255,.025);padding:12px; }
     .news-card-head { display:flex;justify-content:space-between;gap:12px;align-items:flex-start; }
@@ -83,7 +88,7 @@
     .checkbox-row { display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.72rem; }
     .checkbox-row input { accent-color:var(--red); }
     @media(max-width:920px) { .admin-columns { grid-template-columns:1fr; } }
-    @media(max-width:580px) { .field-row { grid-template-columns:1fr;gap:0; } .admin-section { padding:15px; } .source-row { grid-template-columns:minmax(0,1fr) auto; } .source-id { grid-column:1; } .source-state { display:none; } }
+    @media(max-width:580px) { .field-row { grid-template-columns:1fr;gap:0; } .admin-section { padding:15px; } .source-row { grid-template-columns:minmax(0,1fr) auto; } .source-id { grid-column:1; } .source-state { display:none; } .source-custom { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -150,9 +155,12 @@
           <section class="panel" aria-labelledby="sourceTitle">
             <div class="panel-head"><div class="panel-title" id="sourceTitle">Stream source availability</div><span class="panel-badge normal">Site-local playback</span></div>
             <div class="admin-section">
-              <p class="section-note">Toggle the sources you want to hide, then click <strong>Save source settings</strong> below to apply the changes to the public selector. Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
+              <p class="section-note">Toggle a source to hide it, give it a <strong>custom name</strong> or a <strong>custom link</strong>, then save. Names and links go live to every open tab immediately; an empty field means "use the shipped value". Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
               <div class="source-list" id="sourceList" aria-live="polite"></div>
-              <div class="btn-row" style="margin-top:14px"><button class="btn sm primary" id="saveSources" type="button">Save source settings</button></div>
+              <div class="btn-row" style="margin-top:14px">
+                <button class="btn sm primary" id="saveSources" type="button">Save source settings</button>
+                <button class="btn sm danger" id="resetAll" type="button">Reset all</button>
+              </div>
               <p class="inline-message" id="sourceMessage" role="status"></p>
             </div>
           </section>

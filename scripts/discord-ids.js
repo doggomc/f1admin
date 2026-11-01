@@ -72,8 +72,7 @@ async function get(path) {
 
   console.log('');
   console.log('Still needed from the portal, not from this script:');
-  console.log('  OAuth2 → Client Secret → Reset Secret          → DISCORD_CLIENT_SECRET');
-  console.log('  OAuth2 → Redirects → add exactly:');
-  console.log('  https://f1admin.onrender.com/api/discord/callback');
+  console.log('  Bot → Privileged Gateway Intents as required for tickets, and the invite URL below.');
+  console.log('  There is no OAuth2 redirect any more: the 4K feed is public and needs no linking.');
   console.log('');
 })();

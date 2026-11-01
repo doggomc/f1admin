@@ -51,6 +51,17 @@ const LAYOUT_PROPS = new Set([
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, ' ');
 
+function functionBody(source, start) {
+  const open = source.indexOf('{', start);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) return source.slice(open + 1, i);
+  }
+  return source.slice(open + 1);
+}
+
 function keyframesOf(css) {
   const out = [];
   const re = /@keyframes\s+([\w-]+)\s*\{/g;
@@ -101,7 +112,9 @@ function auditStylesheet(label, cssPath, source) {
   // 4. will-change is deliberate, not sprayed
   const willChange = [...css.matchAll(/([^{}]+)\{([^}]*will-change:\s*(?!auto)([a-z-]+)[^}]*)\}/g)]
     .map(m => ({ selector: m[1].trim().split('\n').pop().trim(), prop: m[3] }));
-  const allowedSelectors = ['.hero-layer', '.ticker-track'];
+  /* #speedCanvas is drawn every frame by src/features/canvas.ts, so it belongs
+     in the same bucket as the CSS-driven hero layer and ticker track. */
+  const allowedSelectors = ['.hero-layer', '.ticker-track', '#speedCanvas'];
   const strays = willChange.filter(w => !allowedSelectors.some(a => w.selector.includes(a)));
   check(`${label}: will-change only on the constantly-animating layers`, strays.length === 0,
     strays.map(s => `${s.selector} → ${s.prop}`).join(' | '));
@@ -123,15 +136,44 @@ function auditScript(label, jsPath, { scrollHandler, tickerLoop, canvasLoop }, s
   const src = source || fs.readFileSync(jsPath, 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/[^\n]*/gm, ' ');
 
-  // 5. the scroll handler must measure before it writes
+  // 5. the scroll path must measure before it writes. Layout reads and style
+  // writes may sit in one handler, or be split into a measuring function and a
+  // painting function: the handler then batches writes in a rAF callback, keeps
+  // layout reads out of it, and measurement runs in its own rAF callback.
   if (scrollHandler) {
     const at = code.indexOf('function onScroll');
-    const body = at === -1 ? '' : code.slice(at, code.indexOf('addEventListener(\'scroll\'', at));
-    const lastRead = body.lastIndexOf('getBoundingClientRect');
-    const firstWrite = body.indexOf('.style.');
+    const handler = at === -1 ? '' : code.slice(at, code.indexOf('addEventListener(\'scroll\'', at));
+    const inlineRead = handler.lastIndexOf('getBoundingClientRect');
+    const inlineWrite = handler.indexOf('.style.');
+    const inline = inlineRead !== -1 && inlineWrite !== -1 && inlineRead < inlineWrite;
+
+    const frame = /requestAnimationFrame\(\s*\(\)\s*=>\s*\{([\s\S]{0,600}?)\}\s*\)/.exec(handler);
+    const driven = frame ? frame[1] : '';
+    const callers = [...driven.matchAll(/\b(\w+)\s*\(/g)].map(m => m[1])
+      .filter(name => !['requestAnimationFrame', 'if', 'for', 'while', 'switch'].includes(name));
+    const readRe = /getBoundingClientRect|scrollWidth|offsetWidth|scrollHeight|offsetHeight/;
+    const writesInFrames = driven !== '' && !readRe.test(driven) && !readRe.test(handler.split('requestAnimationFrame')[0]);
+    const calleesClean = callers.every(name => {
+      const found = code.indexOf('function ' + name);
+      return found !== -1 && !readRe.test(functionBody(code, found));
+    });
+
+    const measure = /function\s+(\w*[Mm]easure\w*)\s*\(/.exec(code);
+    const measureBody = measure ? functionBody(code, measure.index) : '';
+    const batchedMeasure = Boolean(measure) && readRe.test(measureBody) &&
+      new RegExp(`requestAnimationFrame\\([\\s\\S]{0,200}?${measure[1]}\\(`).test(code);
+
+    const batched = Boolean(frame) && writesInFrames && calleesClean && batchedMeasure;
     check(`${label}: scroll handler measures before it writes`,
-      at !== -1 && lastRead !== -1 && firstWrite !== -1 && lastRead < firstWrite,
-      at === -1 ? 'function onScroll not found' : `last layout read at ${lastRead}, first style write at ${firstWrite}`);
+      at !== -1 && (inline || batched),
+      at === -1 ? 'function onScroll not found'
+        : inline ? `last layout read at ${inlineRead}, first style write at ${inlineWrite}`
+        : !frame ? 'onScroll does not batch work in requestAnimationFrame'
+        : !writesInFrames ? 'layout read inside the scroll rAF callback'
+        : !calleesClean ? `paint function read layout inside the rAF callback: ${callers.join(', ')}`
+        : !measure ? 'no measuring function found'
+        : !readRe.test(measureBody) ? `${measure[1]}() performs no layout read`
+        : `measurement must be scheduled through requestAnimationFrame (${measure[1]})`);
   }
 
   // 6. no layout reads inside a perpetual animation loop. The current site

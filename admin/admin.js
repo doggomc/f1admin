@@ -169,24 +169,36 @@ function renderForceLive() {
   $('disableForceLive').disabled = !active || forceLiveSaving;
 }
 
+/* What is typed in the custom fields, before it is saved. Seeded from the saved state each render. */
+let customDraft = {};
+
 function renderSources() {
   const list = $('sourceList');
   list.replaceChildren();
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   sourceDraft = new Set((config?.sources?.disabled || []).map(String));
+  customDraft = {};
   for (const source of sources) {
     const enabled = !sourceDraft.has(source.id);
     const row = document.createElement('div');
     row.className = `source-row${enabled ? '' : ' is-off'}`;
     const name = document.createElement('span');
     name.className = 'source-name';
+    /* The tab is shown next to the label so Race Control reads the row the way a visitor does. */
     name.textContent = source.label;
+    if (source.tab === 'other' || source.special) {
+      const tag = document.createElement('em');
+      tag.className = 'source-tag';
+      tag.textContent = source.special ? source.special : 'other';
+      name.append(' ', tag);
+    }
     const id = document.createElement('span');
     id.className = 'source-id';
     id.textContent = source.id;
     const status = document.createElement('span');
     status.className = 'source-state';
-    status.textContent = enabled ? 'Available' : 'Hidden';
+    /* A weelo chip carries the provider's own state when it is known. */
+    status.textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `source-switch${enabled ? ' on' : ''}`;
@@ -198,7 +210,28 @@ function renderSources() {
       else sourceDraft.add(source.id);
       renderSourcesFromDraft();
     });
-    row.append(name, id, status, button);
+    /* The custom fields: what the chip says, and the address it opens. Both start as the shipped
+       value so Race Control can see at a glance what is live and what has been changed. */
+    const custom = document.createElement('div');
+    custom.className = 'source-custom';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 40;
+    nameInput.value = source.customLabel || '';
+    nameInput.placeholder = `Name: ${source.baseLabel || source.label}`;
+    nameInput.setAttribute('aria-label', `Custom name for ${source.label}`);
+    nameInput.className = source.customLabel ? 'is-set' : '';
+    const linkInput = document.createElement('input');
+    linkInput.type = 'url';
+    linkInput.value = source.customUrl || '';
+    linkInput.placeholder = 'Link: shipped default';
+    linkInput.setAttribute('aria-label', `Custom link for ${source.label}`);
+    linkInput.className = source.customUrl ? 'is-set' : '';
+    customDraft[source.id] = { label: source.customLabel || '', url: source.customUrl || '' };
+    nameInput.addEventListener('input', () => { customDraft[source.id].label = nameInput.value; });
+    linkInput.addEventListener('input', () => { customDraft[source.id].url = linkInput.value; });
+    custom.append(nameInput, linkInput);
+    row.append(name, id, status, button, custom);
     list.append(row);
   }
 }
@@ -211,7 +244,7 @@ function renderSourcesFromDraft() {
     if (!source) return;
     const enabled = !sourceDraft.has(source.id);
     row.classList.toggle('is-off', !enabled);
-    row.querySelector('.source-state').textContent = enabled ? 'Available' : 'Hidden';
+    row.querySelector('.source-state').textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
     const button = row.querySelector('.source-switch');
     button.classList.toggle('on', enabled);
     button.setAttribute('aria-pressed', String(enabled));
@@ -272,7 +305,7 @@ function renderConfig() {
   $('configTime').textContent = `Loaded once · ${new Date().toLocaleString()}`;
 }
 
-async function loadConfig() {
+async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
   config = {
     maintenance: payload.maintenance || {},
@@ -286,6 +319,8 @@ async function loadConfig() {
     storage: payload.storage || {}
   };
   renderConfig();
+  if (silent) return;
+  return payload;
 }
 
 function resetNewsForm() {
@@ -481,11 +516,41 @@ $('saveSources').addEventListener('click', async () => {
   try {
     const result = await api('/stream/sources', { method: 'POST', body: { disabled: [...sourceDraft] } });
     config.sources = { disabled: result.disabled || [...sourceDraft], updatedAt: result.updatedAt || Date.now() };
-    renderSources();
-    setMessage('sourceMessage', 'Source settings saved.', 'success');
+    /* Names and links are saved per chip, so one bad address only rejects its own row. */
+    const failures = [];
+    for (const source of (config.sourceList || [])) {
+      const draft = customDraft[source.id];
+      if (!draft) continue;
+      const label = draft.label.trim();
+      const url = draft.url.trim();
+      if (label === (source.customLabel || '') && url === (source.customUrl || '')) continue;
+      try {
+        await api('/stream/chip', { method: 'POST', body: { id: source.id, label, url } });
+      } catch (error) {
+        failures.push(`${source.label}: ${error.message}`);
+      }
+    }
+    await loadConfig({ silent: true });
+    setMessage('sourceMessage', failures.length
+      ? `Saved, but ${failures.join(' · ')}`
+      : 'Source settings saved. Names and links are live.', failures.length ? 'error' : 'success');
     acceptWrite(result, 'Source settings saved.');
   } catch (error) { setMessage('sourceMessage', error.message, 'error'); }
   finally { button.disabled = false; }
+});
+
+$('resetAll').addEventListener('click', async () => {
+  if (!confirm('Reset everything to the shipped defaults? This clears source visibility, custom names and links, the forced stream, maintenance mode and all news.')) return;
+  const button = $('resetAll');
+  button.disabled = true;
+  try {
+    const result = await api('/reset-all', { method: 'POST', body: {} });
+    await loadConfig({ silent: true });
+    setMessage('sourceMessage', 'Everything is back to the shipped defaults.', 'success');
+    acceptWrite(result, 'All settings reset.');
+  } catch (error) {
+    setMessage('sourceMessage', error.message, 'error');
+  } finally { button.disabled = false; }
 });
 
 $('newsForm').addEventListener('submit', async (event) => {
