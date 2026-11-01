@@ -31,11 +31,11 @@ const isUhdChannel = (name) => UHD_PATTERN.test(String(name || '').trim().toLowe
    for every race, and Mexico published f1mexicosatita / f1mexicosatdeu rather than the long names.
    Matched against a feed key, these aliases are what a chip's key is compared to. */
 const FEED_SUFFIXES = ['fullhd1', 'fullhd3', 'italian', 'spanish', 'german', 'skyit', 'skyde',
-  'apple', 'world', 'dazn', 'sky', 'ita', 'deu', 'uhd'];
+  'apple', 'world', 'dazn', 'sky', 'esp', 'ita', 'deu', 'uhd'];
 const FEED_PATTERN = new RegExp(`^f1[a-z]*?(${FEED_SUFFIXES.join('|')})$`);
 /* The short codes embdlol uses today and the long key a chip uses. Without this, today's
    f1mexicosatita never matches the 'italian' chip and the whole EMB block reads "no channel". */
-const FEED_ALIASES = { ita: 'italian', deu: 'german', skyit: 'skyit', skyde: 'skyde' };
+const FEED_ALIASES = { esp: 'spanish', ita: 'italian', deu: 'german', skyit: 'skyit', skyde: 'skyde' };
 function feedKey(name) {
   /* Some entries are bare ('german', 'fullhd3'), others carry the race prefix ('f1frigerman'). */
   const flat = String(name || '').trim().toLowerCase().replace(/[\s_]/g, '');
@@ -45,7 +45,12 @@ function feedKey(name) {
 }
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
-const UHD_REFRESH_MS = 30 * 60_000;
+/* How long the published channel list is trusted. This used to be 30 minutes, which is far too
+   long around a session: embdlol publishes its F1 feeds minutes before they matter and drops them
+   afterwards, so a half-hour cache reported 'no channel' for the first half hour of the race.
+   Also used as the ceiling for a resolved 4K address. */
+const CHANNEL_REFRESH_MS = 2 * 60_000;
+const UHD_REFRESH_MS = CHANNEL_REFRESH_MS;
 /* How long an address that DID resolve stays trusted. Ids rotate per session. */
 const UHD_RESOLVED_TTL_MS = 5 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60_000;
@@ -285,7 +290,7 @@ function createStreamResolver({ log = console } = {}) {
 
   /* embdlol's channel names, refreshed hourly. A chip whose channel is not listed has no link. */
   async function embdlolChannels() {
-    if (catalogueAt && Date.now() - catalogueAt < UHD_REFRESH_MS) return catalogueChannels;
+    if (catalogueAt && Date.now() - catalogueAt < CHANNEL_REFRESH_MS) return catalogueChannels;
     try {
       const response = await fetchWithTimeout(EMBDLOL_STRUCT, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`struct responded ${response.status}`);
