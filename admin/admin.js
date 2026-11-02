@@ -11,6 +11,11 @@ const API = '/admin/api';
 let config = null;
 let editingNewsId = null;
 let sourceDraft = new Set();
+/* id -> { current, online, shipped[] } from /admin/api/stream/links */
+let linkReport = {};
+let linkReportAt = 0;
+let sourceFilter = 'all';
+let sourceQuery = '';
 let toastTimer = null;
 let forceLiveSaving = false;
 const adminNav = $('adminNav');
@@ -172,13 +177,119 @@ function renderForceLive() {
 /* What is typed in the custom fields, before it is saved. Seeded from the saved state each render. */
 let customDraft = {};
 
+/* ── whole-group actions ────────────────────────────────────────────────
+   One request per group: 'disable all EMB' used to mean toggling nine switches by
+   hand, and any of them failing left the group half-off. */
+const BULK_GROUPS = [
+  { key: 'emb', label: 'EMB' },
+  { key: 'weelo', label: 'weelo' },
+  { key: 'taifood', label: 'taifood' },
+  { key: 'strmfree', label: 'strmfree' },
+  { key: 'other', label: 'Other tab' },
+  { key: 'special', label: 'Onboards' },
+  { key: 'all', label: 'Everything' }
+];
+
+function renderBulkGroups() {
+  const host = $('bulkGroups');
+  if (!host) return;
+  host.replaceChildren();
+  for (const group of BULK_GROUPS) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bulk-group';
+    const name = document.createElement('span');
+    name.className = 'bulk-name';
+    name.textContent = group.label;
+    const off = document.createElement('button');
+    off.type = 'button';
+    off.className = 'btn xs danger';
+    off.textContent = 'Disable';
+    off.addEventListener('click', () => bulkSources(group, 'disable', off));
+    const on = document.createElement('button');
+    on.type = 'button';
+    on.className = 'btn xs';
+    on.textContent = 'Enable';
+    on.addEventListener('click', () => bulkSources(group, 'enable', on));
+    wrap.append(name, off, on);
+    host.append(wrap);
+  }
+}
+
+async function bulkSources(group, action, button) {
+  const message = $('sourceMessage');
+  const verb = action === 'disable' ? 'Disabling' : 'Enabling';
+  button.disabled = true;
+  if (message) message.textContent = `${verb} every ${group.label} source…`;
+  try {
+    const result = await api('/stream/sources/bulk', { method: 'POST', body: { action, group: group.key } });
+    config.sources = { disabled: result.disabled || [], updatedAt: result.updatedAt || Date.now() };
+    sourceDraft = new Set((result.disabled || []).map(String));
+    renderSourcesFromDraft();
+    const total = result.touched ?? 0;
+    if (message) message.textContent = `${action === 'disable' ? 'Hidden' : 'Shown'} ${total} source${total === 1 ? '' : 's'} under ${group.label}. Live now.`;
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ── live links ──────────────────────────────────────────────────────── */
+async function loadLinks({ quiet = false } = {}) {
+  const message = $('sourceMessage');
+  if (!quiet && message) message.textContent = 'Reading the current links…';
+  try {
+    const result = await api('/stream/links');
+    linkReport = {};
+    for (const row of result.streams || []) linkReport[row.id] = row;
+    linkReportAt = result.checkedAt || Date.now();
+    if (message) {
+      const live = Object.values(linkReport).filter((row) => row.online).length;
+      message.textContent = live
+        ? `${live} of ${Object.keys(linkReport).length} sources have an address right now.`
+        : 'No source has an address right now.';
+    }
+    renderSources();
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
+}
+
+const whenLabel = (at) => {
+  if (!at) return '';
+  const secs = Math.max(0, Math.round((Date.now() - at) / 1000));
+  return secs < 60 ? `${secs}s ago` : `${Math.round(secs / 60)}m ago`;
+};
+
 function renderSources() {
   const list = $('sourceList');
   list.replaceChildren();
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   sourceDraft = new Set((config?.sources?.disabled || []).map(String));
   customDraft = {};
-  for (const source of sources) {
+  const visible = sources.filter((source) => {
+    if (sourceQuery) {
+      const needle = sourceQuery.toLowerCase();
+      if (!`${source.label} ${source.id} ${source.provider || ''}`.toLowerCase().includes(needle)) return false;
+    }
+    if (sourceFilter === 'off') return sourceDraft.has(source.id);
+    if (sourceFilter === 'on') return !sourceDraft.has(source.id);
+    if (sourceFilter === 'live') return Boolean(linkReport[source.id]?.online);
+    if (sourceFilter === 'all') return true;
+    return sourceFilter === 'emb' ? source.provider === 'embdlol'
+      : sourceFilter === 'weelo' ? source.provider === 'weelo'
+      : sourceFilter === 'taifood' ? source.provider === 'taifood'
+      : sourceFilter === 'other' ? source.tab === 'other'
+      : Boolean(source.special);
+  });
+  if (!visible.length) {
+    const empty = document.createElement('p');
+    empty.className = 'section-note';
+    empty.textContent = 'No source matches this filter.';
+    list.append(empty);
+    return;
+  }
+  for (const source of visible) {
     const enabled = !sourceDraft.has(source.id);
     const row = document.createElement('div');
     row.className = `source-row${enabled ? '' : ' is-off'}`;
@@ -214,6 +325,9 @@ function renderSources() {
        value so Race Control can see at a glance what is live and what has been changed. */
     const custom = document.createElement('div');
     custom.className = 'source-custom';
+    row.dataset.sourceId = source.id;
+    row.dataset.provider = source.provider || '';
+    row.dataset.tab = source.tab || '';
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.maxLength = 40;
@@ -231,7 +345,37 @@ function renderSources() {
     nameInput.addEventListener('input', () => { customDraft[source.id].label = nameInput.value; });
     linkInput.addEventListener('input', () => { customDraft[source.id].url = linkInput.value; });
     custom.append(nameInput, linkInput);
-    row.append(name, id, status, button, custom);
+
+    /* What this chip would open right now, and where that address came from. */
+    const live = linkReport[source.id];
+    const address = document.createElement('div');
+    address.className = 'source-address';
+    if (!live) {
+      address.innerHTML = '<span class="addr-empty">Address not read yet — press “Refresh live links”.</span>';
+    } else if (live.online && live.current) {
+      const link = document.createElement('a');
+      link.href = live.current.startsWith('http') ? live.current : '#';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.className = 'addr-url';
+      link.textContent = live.current;
+      link.title = live.current;
+      const from = document.createElement('em');
+      from.className = 'addr-from';
+      from.textContent = live.customUrl ? 'custom' : (live.shipped[0]?.from || 'shipped');
+      address.append(link, from);
+    } else {
+      address.innerHTML = '<span class="addr-empty">No address right now</span>';
+    }
+    if (live?.shipped?.length > 1) {
+      const more = document.createElement('span');
+      more.className = 'addr-more';
+      more.textContent = `+${live.shipped.length - 1} fallback${live.shipped.length > 2 ? 's' : ''}`;
+      more.title = live.shipped.slice(1).map((e) => e.url).join('\n');
+      address.append(more);
+    }
+
+    row.append(name, id, status, button, custom, address);
     list.append(row);
   }
 }
@@ -239,8 +383,9 @@ function renderSources() {
 function renderSourcesFromDraft() {
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   const list = $('sourceList');
-  [...list.children].forEach((row, index) => {
-    const source = sources[index];
+  [...list.children].forEach((row) => {
+    /* Read the id off the row: the list is filtered, so its position no longer indexes sourceList. */
+    const source = sources.find((entry) => entry.id === row.dataset.sourceId);
     if (!source) return;
     const enabled = !sourceDraft.has(source.id);
     row.classList.toggle('is-off', !enabled);
@@ -295,13 +440,22 @@ function renderNews() {
   }
 }
 
+/* The link report is a separate, slow-ish call (it consults three providers), so it is loaded after
+   the dashboard is already on screen and never blocks the rest of the panel. */
+function primeLinks() {
+  if (!Object.keys(linkReport).length) void loadLinks({ quiet: true });
+}
+
 function renderConfig() {
   renderMaintenance();
   renderOverride();
   renderForceLive();
+  renderBulkGroups();
+  renderFilterChips();
   renderSources();
   renderNews();
   updateStorage();
+  primeLinks();
   $('configTime').textContent = `Loaded once · ${new Date().toLocaleString()}`;
 }
 
@@ -509,6 +663,44 @@ async function setForceLive(active) {
 
 $('enableForceLive').addEventListener('click', () => setForceLive(true));
 $('disableForceLive').addEventListener('click', () => setForceLive(false));
+
+/* ── filters ─────────────────────────────────────────────────────────── */
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'live', label: 'Has an address' },
+  { key: 'on', label: 'Shown' },
+  { key: 'off', label: 'Hidden' },
+  { key: 'emb', label: 'EMB' },
+  { key: 'weelo', label: 'weelo' },
+  { key: 'taifood', label: 'taifood' },
+  { key: 'other', label: 'Other tab' },
+  { key: 'special', label: 'Onboards' }
+];
+
+function renderFilterChips() {
+  const host = $('filterChips');
+  if (!host) return;
+  host.replaceChildren();
+  for (const filter of FILTERS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `filter-chip${sourceFilter === filter.key ? ' active' : ''}`;
+    button.textContent = filter.label;
+    button.setAttribute('aria-pressed', String(sourceFilter === filter.key));
+    button.addEventListener('click', () => {
+      sourceFilter = filter.key;
+      renderFilterChips();
+      renderSources();
+    });
+    host.append(button);
+  }
+}
+
+$('sourceSearch')?.addEventListener('input', (event) => {
+  sourceQuery = event.target.value.trim();
+  renderSources();
+});
+$('refreshLinks')?.addEventListener('click', () => loadLinks());
 
 $('saveSources').addEventListener('click', async () => {
   const button = $('saveSources');

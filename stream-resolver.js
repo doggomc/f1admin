@@ -49,18 +49,22 @@ const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnliv
    long around a session: embdlol publishes its F1 feeds minutes before they matter and drops them
    afterwards, so a half-hour cache reported 'no channel' for the first half hour of the race.
    Also used as the ceiling for a resolved 4K address. */
-const CHANNEL_REFRESH_MS = 2 * 60_000;
+/* Overridable so the guard can be exercised without waiting two minutes in a test. */
+const CHANNEL_REFRESH_MS = Number(process.env.EMBDLOL_REFRESH_MS) || 2 * 60_000;
 const UHD_REFRESH_MS = CHANNEL_REFRESH_MS;
 /* How long an address that DID resolve stays trusted. Ids rotate per session. */
 const UHD_RESOLVED_TTL_MS = 5 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60_000;
-const RESOLVE_TTL_MS = 5 * 60_000;
+/* ehgembxe mints a JWT that dies after ~15-30 seconds (measured: 200 at t+15s, 403 'Link Expired'
+   at t+30s), so a five-minute cache guaranteed every visitor got a dead address. A resolved dynamic
+   address is now only trusted for a few seconds, and the player is expected to mint at click time. */
+const RESOLVE_TTL_MS = 8_000;
 const HEALTH_TTL_MS = 120_000;
 const FETCH_TIMEOUT_MS = 9000;
 const HEALTH_TIMEOUT_MS = 6000;
 
 /* ehgembxe paths are opaque to the client, so they are allowlisted here instead. */
-const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089']);
+const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089', 'ehgembxe/f596f98r-5690']);
 
 /* The embdlol feeds whose commentary is not English. */
 const EMB_OTHER = ['dazn', 'skyit', 'skyde', 'german', 'spanish', 'italian'];
@@ -71,10 +75,12 @@ const EMB_LANG = { dazn: 'es', spanish: 'es', skyit: 'it', italian: 'it', skyde:
 const embPool = (feed, channels) => (channels instanceof Map ? [...channels] : [])
   .filter(([name]) => EMB_LANG[name] === EMB_LANG[feed]).map(([, id]) => id);
 
-/* label + feed key for each embdlol chip, in the same order as the player's row. */
-const EMB_FEEDS = [['sky', 'Sky F1'], ['apple', 'Apple TV'], ['dazn', 'DAZN ES'], ['skyit', 'Sky Italia'],
-  ['skyde', 'Sky DE'], ['world', 'F1 World'], ['german', 'German'], ['spanish', 'Spanish'],
-  ['italian', 'Italian'], ['fullhd1', 'Full HD 1'], ['fullhd3', 'Full HD 3']];
+/* label + feed key for each embdlol chip, in the same order as the player's row. 'sky' and 'apple'
+   are gone: embdlol publishes ONE English F1 channel (today f1mexicofullhd1/3) and those two chips
+   could never resolve to anything the fullhd chips do not, so they were empty for their whole life. */
+const EMB_FEEDS = [['fullhd1', 'Full HD 1'], ['fullhd3', 'Full HD 3'], ['dazn', 'DAZN ES'],
+  ['skyit', 'Sky Italia'], ['skyde', 'Sky DE'], ['world', 'F1 World'], ['german', 'German'],
+  ['spanish', 'Spanish'], ['italian', 'Italian']];
 
 /* weelo relays the onboards and the data channel: one id per feed, and /players/state.json says
    whether it is up. That file refuses cross-origin requests (it answers only on weelo.live itself),
@@ -88,6 +94,10 @@ const WEELO_FEED = 'https://weelo.live/';
    race weekend, so a fixed table is stale by Sunday — this is the authority. It is offered without
    CORS headers, so the browser cannot read it and the server relays it. */
 const TAIFOOD_CHANNELS = 'https://cdn.flive.dpdns.org/channels.json';
+/* taifood groups its list by the first word of the broadcaster name; this is which bucket each of
+   our chips reads, mirroring the keys the player uses. */
+const TAIFOOD_BUCKET = { appletv: 'apple', dazn: 'dazn', viaplay: 'viaplay', 'sky-italia': 'sky',
+  'sky-de': 'sky', 'v-sport': 'v', sport: 'v', eleven: 'eleven', nova: 'nova' };
 const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
 /* [key, label, special, id, tab]. Every id and language is from weelo's own event feed
    (weelo.live/feed/events.json): 'Multi-audio' feeds carry several commentaries, so they are Other. */
@@ -145,28 +155,37 @@ const STREAM_SOURCES = [
   ] },
   { id: 'ehgembxe', label: 'Sky Sports F1 HD (EHG)', provider: 'ehgembxe', minQuality: 720, retryOnExpiry: true, links: [
     { quality: 1080, url: 'ehgembxe/f596f98r-7758' },
-    { quality: 1080, url: 'ehgembxe/f596f98r-4089' }
+    { quality: 1080, url: 'ehgembxe/f596f98r-4089' },
+    { quality: 1080, url: 'ehgembxe/f596f98r-5690' }
   ] },
   { id: 'sky-sports', label: 'Sky Sports', provider: 'hakunamatata', minQuality: 0, links: [
     { quality: 0, url: 'https://hakunamatata5.org/hakunamatata5.html' }
   ] },
+  /* Race block of the round taifood published when this was written; they rotate every session, so
+     they are the parachute under the live catalogue, never the first choice. */
   { id: 'appletv', label: 'AppleTV', provider: 'taifood', minQuality: 720, links: [
-    { quality: 720, taid: 31385 }, { quality: 720, taid: 31374 }
+    { quality: 720, taid: 31407 }, { quality: 720, taid: 31385 }
   ] },
   { id: 'dazn', label: 'DAZN', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31387 }, { quality: 720, taid: 31376 }
+    { quality: 720, taid: 31409 }, { quality: 720, taid: 31387 }
   ] },
   { id: 'viaplay', label: 'Viaplay', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31391 }, { quality: 720, taid: 31380 }
+    { quality: 720, taid: 31413 }, { quality: 720, taid: 31391 }
   ] },
   { id: 'sky-italia', label: 'Sky Sport Italia', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31389 }, { quality: 720, taid: 31378 }
+    { quality: 720, taid: 31411 }, { quality: 720, taid: 31389 }
   ] },
   { id: 'sky-de', label: 'Sky Sport F1 DE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31388 }, { quality: 720, taid: 31377 }
+    { quality: 720, taid: 31410 }, { quality: 720, taid: 31388 }
   ] },
   { id: 'v-sport', label: 'V Sport Motor SE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31390 }
+    { quality: 720, taid: 31412 }, { quality: 720, taid: 31390 }
+  ] },
+  { id: 'eleven', label: 'Eleven Sports PL', provider: 'taifood', minQuality: 720, tab: 'other', links: [
+    { quality: 720, taid: 31415 }
+  ] },
+  { id: 'nova', label: 'Nova Sport CZ', provider: 'taifood', minQuality: 720, tab: 'other', links: [
+    { quality: 720, taid: 31414 }
   ] },
   { id: 'wikisport', label: 'WikiSport', provider: 'wikisport', minQuality: 0, links: [
     { quality: 0, url: 'https://wikisport.info/strm/f1.php' },
@@ -259,6 +278,56 @@ function createStreamResolver({ log = console } = {}) {
     return uhd.url;
   }
 
+  /* ── Race Control: what each chip would actually open ───────────────── */
+  /* The dashboard could not show a chip's live address before this, because the address only exists
+     after the catalogue is consulted (taifood ids rotate per session, embdlol ids per race, and weelo
+     publishes its own). This resolves the same way the player does and reports what it found. */
+  async function chipAddresses() {
+    const [channels, uhdUrl, state, taifood] = await Promise.all([embdlolChannels(), resolveUhdUrl(), weeloState(), taifoodChannels().catch(() => ({}))]);
+    return STREAM_SOURCES.map((source) => {
+      const addresses = [];
+      /* A fixed list: the shipped addresses, already ordered. A taid entry is a taifood id, which
+         only becomes an address once the session is known, so it is shown as the id it will ask for. */
+      for (const link of source.links || []) {
+        if (link.url) addresses.push({ url: link.url, quality: link.quality || 0, from: 'shipped' });
+        else if (link.taid) addresses.push({ url: `taifood id ${link.taid}`, quality: link.quality || 0, from: 'taifood-id' });
+      }
+      /* What taifood publishes for this chip right now, which is the address that actually plays. */
+      if (source.provider === 'taifood') {
+        /* taifoodChannels() answers { list, key, at }: entries are grouped by the first word of the
+           broadcaster name, which is how the player's chips find their own addresses too. */
+        const bucketKey = TAIFOOD_BUCKET[source.id];
+        const bucket = (bucketKey && taifood.key && taifood.key[bucketKey]) || [];
+        const live = bucket.filter((entry) => entry && entry.uri);
+        addresses.unshift(...live.map((entry) => ({ url: entry.uri, quality: 0, from: 'taifood-live' })));
+      }
+      /* embdlol: the id for THIS feed, exactly as the player picks it. */
+      if (source.provider === 'embdlol' && source.id !== 'emb-uhd') {
+        const id = channels instanceof Map ? channels.get(source.channel) : null;
+        if (id) addresses.unshift({ url: `${EMBDLOL_EMBED}${id}`, quality: 0, from: 'embdlol' });
+      }
+      if (source.id === 'emb-uhd' && uhdUrl) addresses.unshift({ url: uhdUrl, quality: 2160, from: 'embdlol' });
+      /* weelo: one address, and only while weelo reports the feed as up. The address is kept in
+         `wouldUse` so the admin panel can still show what the chip will ask for once it is live. */
+      let wouldUse = '';
+      if (source.weelo) {
+        addresses.length = 0;
+        wouldUse = `https://weellz.live/beta?stream=${source.weelo}`;
+        if (weeloUp(state, source.weelo) !== 'off') addresses.push({ url: wouldUse, quality: 1080, from: 'weelo' });
+      }
+      /* A chip with nothing resolvable still shows what it WOULD ask for, so it is debuggable. */
+      return {
+        id: source.id,
+        addresses,
+        current: addresses[0]?.url || '',
+        wouldUse: wouldUse || addresses[0]?.url || '',
+        online: Boolean(addresses.length),
+        /* Why there is no address, in the chips' own terms. */
+        state: source.weelo ? `weelo: ${weeloUp(state, source.weelo)}` : ''
+      };
+    });
+  }
+
   /* ── published mirrors ──────────────────────────────────────────────── */
   /* Both domains of the mirror pair publish the addresses they consider live for a stream key.
      Cached for the health TTL; a domain that is down simply contributes nothing. */
@@ -295,9 +364,17 @@ function createStreamResolver({ log = console } = {}) {
       const response = await fetchWithTimeout(EMBDLOL_STRUCT, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`struct responded ${response.status}`);
       const json = await response.json();
+      const rows = Array.isArray(json?.channels) ? json.channels : [];
+      /* The directory answers {"code":200,"channels":[]} when it has withdrawn its feeds, and it has
+         done that for hours. An empty answer is therefore not news: it must not replace the last good
+         map, or one blip blanks every EMB chip until the next refresh. */
+      if (!rows.length) {
+        if (!catalogueAt) catalogueAt = Date.now();   // remember we asked, so it is not re-polled flat out
+        return catalogueChannels;
+      }
       const next = new Map();
       const seen = new Map();
-      for (const channel of Array.isArray(json?.channels) ? json.channels : []) {
+      for (const channel of rows) {
         const key = feedKey(channel?.channelname);
         if (!key || !channel?.id) continue;
         /* The directory can list the same feed twice: once as a finished catch-up recording and once
@@ -317,9 +394,11 @@ function createStreamResolver({ log = console } = {}) {
     return catalogueChannels;
   }
 
-  /* weelo's own status map, but it is a stale cache: every onboard reads 'offline' while its real
-     playlist is 200 with a 1080p @50 stream. So the playlist itself decides — one HEAD per id,
-     cached with the map — and weelo's word is kept only as the reason when the probe fails. */
+  /* weelo publishes its own status map, and that map is the only trustworthy word on whether an
+     onboard is on air. Its PLAYER at least says so itself: an offline feed renders "STREAM IS
+     OFFLINE" and retries, while weelo's state.json says 'dark'. Both agree between sessions — so the
+     chip reports weelo's state instead of pretending everything is live. The map is per-id, so a feed
+     that is missing from it is 'unknown', never 'offline': weelo adds ids only while a session runs. */
   async function weeloState() {
     if (weelo.at && Date.now() - weelo.at < HEALTH_TTL_MS) return weelo.state;
     try {
@@ -330,21 +409,25 @@ function createStreamResolver({ log = console } = {}) {
         for (const [id, status] of Object.entries(json || {})) {
           if (!id.startsWith('_') && typeof status === 'string') next[id] = status.trim().toLowerCase();
         }
-        /* The map contradicts itself (state 'offline', _evt 'live'), so ask the feed. */
-        await Promise.all(Object.keys(next).map(async (id) => {
-          try {
-            const probe = await fetchWithTimeout(`${WEELO_FEED}${id}/index.html`, { method: 'HEAD' });
-            if (probe.ok) next[id] = 'live';
-            else if (next[id] === 'live') next[id] = 'offline';
-          } catch (_) { /* keep weelo's word */ }
-        }));
-        weelo.state = next;
-        weelo.at = Date.now();
+        /* An empty map is not news (weelo serves {..} between rounds); keep the last good one. */
+        if (Object.keys(next).length) {
+          weelo.state = next;
+          weelo.at = Date.now();
+        }
       }
     } catch (_) {
       /* Unreachable: leave the chips reported as unknown rather than claiming they are down. */
     }
     return weelo.state;
+  }
+
+  /* weelo's word, in plain language: 'live', 'soon' (up shortly) or 'off' (dark/offline/unknown). */
+  function weeloUp(state, id) {
+    const status = String(state[id] || '');
+    if (!status) return 'unknown';
+    if (/^(live|on|online|up)$/.test(status)) return 'live';
+    if (/^(soon|starting|scheduled)$/.test(status)) return 'soon';
+    return 'off';
   }
 
   /* Every source the player draws, plus whatever the provider is publishing as live right now. */
@@ -374,12 +457,12 @@ function createStreamResolver({ log = console } = {}) {
         /* The tab the player filters on, and whether the chip is drawn apart from the broadcasters. */
         tab: source.tab || 'en',
         special: source.special || null,
-        state: source.provider === 'weelo' ? state[source.weelo] || '' : null,
+        state: source.provider === 'weelo' ? weeloUp(state, source.weelo) : null,
         links: links.map((link) => (link.taid ? { ...link, marks: TAID_MARKS, shape: taidUrl('{event}', '{session}', link.taid, '{mark}') } : link)),
         /* An EMB chip is only playable when its channel is listed upstream; the 4K chip has its
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
         upstream: source.provider === 'weelo'
-          ? !/^(offline|dark)$/.test(state[source.weelo] || '')
+          ? weeloUp(state, source.weelo) !== 'off'
           : source.provider !== 'embdlol'
           ? true
           : source.id === 'emb-uhd' ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null,
@@ -426,9 +509,16 @@ function createStreamResolver({ log = console } = {}) {
     return taifood;
   }
 
-  /* 'Apple TV (F1TV)' → 'apple', 'Sky Sport F1' → 'sky', 'V Sport Motor' → 'v sport motor'. */
+  /* 'Apple TV (F1TV)' → 'apple', 'Sky Sport F1' → 'sky', 'V Sport Motor' → 'v'. A quality prefix
+     ('HD | Apple TV …') and a leading '[Embed]' tag are not broadcaster names, so both are stripped
+     first — without that, every 'HD | …' row bucketbed under 'hd' and the chips never saw it. */
   function keyWord(name) {
-    const first = String(name || '').toLowerCase().replace(/\(.*?\)/g, ' ').trim().split(/\s+/)[0];
+    const cleaned = String(name || '')
+      .replace(/^\[Embed\]\s*/i, '')
+      .replace(/^(?:HD|SD|4K)\s*\|\s*/i, '')
+      .replace(/\(.*?\)/g, ' ')
+      .trim();
+    const first = cleaned.toLowerCase().split(/\s+/)[0];
     return /^[a-z]+$/.test(first) ? first : '';
   }
 
@@ -546,7 +636,7 @@ function createStreamResolver({ log = console } = {}) {
 
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own
      origin), so it is relayed from here. */
-  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState, taifoodChannels };
+  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState, taifoodChannels, chipAddresses };
 }
 
 module.exports = { createStreamResolver, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

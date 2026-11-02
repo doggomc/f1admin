@@ -90,7 +90,12 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
 const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) => ({
   id: source.id,
   label: source.label,
-  ...(source.main ? { main: true } : {})
+  provider: source.provider,
+  ...(source.main ? { main: true } : {}),
+  /* Carried so Race Control can group rows (all EMB, all weelo, all taifood …) without parsing ids. */
+  tab: source.tab || 'en',
+  ...(source.lang ? { lang: source.lang } : {}),
+  ...(source.special ? { special: source.special } : {})
 }));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -1106,6 +1111,66 @@ app.post('/admin/api/stream/sources', async (req, res) => {
   state.sources = normalizeSources({ disabled: req.body.disabled, overrides: state.sources.overrides, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: FEED_SOURCES, ...state.sources, ...persisted });
+});
+
+/* Bulk availability: 'disable'/'enable' + a group (emb / weelo / taifood / strmfree / all …) or an
+   explicit id list. One request, so a group toggle cannot half-apply. */
+app.post('/admin/api/stream/sources/bulk', async (req, res) => {
+  await stateReady;
+  const action = String(req.body?.action || '');
+  if (action !== 'disable' && action !== 'enable') return res.status(400).json({ error: "action must be 'disable' or 'enable'." });
+  const group = String(req.body?.group || '');
+  const explicit = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : null;
+  const inGroup = (source) => {
+    if (explicit) return explicit.includes(source.id);
+    if (!group) return false;
+    if (group === 'all') return true;
+    /* 'emb' covers embdlol chips; every other name is matched against the provider. */
+    if (group === 'emb') return source.provider === 'embdlol';
+    if (group === 'other') return source.tab === 'other';
+    if (group === 'special') return Boolean(source.special);
+    return String(source.provider || '') === group;
+  };
+  const pending = new Set(state.sources.disabled.map(String));
+  let touched = 0;
+  for (const source of FEED_SOURCES) {
+    if (!inGroup(source)) continue;
+    touched += 1;
+    if (action === 'disable') pending.add(source.id);
+    else pending.delete(source.id);
+  }
+  if (!touched) return res.status(400).json({ error: 'That group matched no sources.' });
+  state.sources = normalizeSources({ disabled: [...pending], overrides: state.sources.overrides, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, action, group: group || null, touched, sources: FEED_SOURCES, ...state.sources, ...persisted });
+});
+
+/* What each chip would open right now, next to the address it is configured to use. Read-only. */
+app.get('/admin/api/stream/links', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const rows = await streamResolver.chipAddresses();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const list = adminSourceList().map((source) => {
+      const live = byId.get(source.id) || { addresses: [], current: '', online: false };
+      return {
+        id: source.id,
+        label: source.label,
+        provider: source.provider,
+        tab: source.tab,
+        disabled: state.sources.disabled.includes(source.id),
+        /* A chip Race Control typed an address for shows BOTH: the typed one wins in the player. */
+        customUrl: source.customUrl || '',
+        shipped: live.addresses.map((entry) => ({ url: entry.url, quality: entry.quality, from: entry.from })),
+        current: source.customUrl || live.current || '',
+        online: Boolean(source.customUrl) || live.online
+      };
+    });
+    return res.json({ checkedAt: Date.now(), streams: list });
+  } catch (error) {
+    console.error('[streams] link report failed:', error?.message || error);
+    return res.status(503).json({ error: 'Could not read the current links.' });
+  }
 });
 
 /* One chip: its custom name and its custom link. Distinct from /stream/override, which forces the
