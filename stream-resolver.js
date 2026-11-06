@@ -94,6 +94,15 @@ const WEELO_FEED = 'https://weelo.live/';
    race weekend, so a fixed table is stale by Sunday — this is the authority. It is offered without
    CORS headers, so the browser cannot read it and the server relays it. */
 const TAIFOOD_CHANNELS = 'https://cdn.flive.dpdns.org/channels.json';
+/* The list moved on 2026-11-06 to a new CDN: the old host and its 301 target now 404 the file, so
+   the resolver was reading "no channels" instead of "moved", which emptied every taifood chip while
+   the channels were in fact online. The new host is discovered from flive.cc.cd's own bundle, so it
+   is their published address and not a guess; the dead hosts stay in the list as last resorts. */
+const TAIFOOD_CHANNELS_MIRRORS = [
+  'https://cdn.flive.cc.cd/channels.json',
+  'https://flive.cc.cd/channels.json',
+  'https://flive.dpdns.org/channels.json'
+];
 /* taifood groups its list by the first word of the broadcaster name; this is which bucket each of
    our chips reads, mirroring the keys the player uses. */
 const TAIFOOD_BUCKET = { appletv: 'apple', dazn: 'dazn', viaplay: 'viaplay', 'sky-italia': 'sky',
@@ -481,8 +490,15 @@ function createStreamResolver({ log = console } = {}) {
   async function taifoodChannels() {
     if (taifood.at && Date.now() - taifood.at < HEALTH_TTL_MS) return taifood;
     try {
-      const response = await fetchWithTimeout(TAIFOOD_CHANNELS, { headers: { Accept: 'application/json' } });
-      if (response.ok) {
+      /* First source that answers with JSON wins; a 404 page is not a channel list. */
+      let response = null;
+      for (const url of [TAIFOOD_CHANNELS, ...TAIFOOD_CHANNELS_MIRRORS]) {
+        try {
+          const candidate = await fetchWithTimeout(url, { headers: { Accept: 'application/json' }, redirect: 'follow' });
+          if (candidate.ok) { response = candidate; break; }
+        } catch { /* try the next mirror */ }
+      }
+      if (response) {
         const json = await response.json();
         const list = (Array.isArray(json) ? json : [])
           .filter((c) => c && typeof c.uri === 'string' && /taifood/.test(c.uri))
