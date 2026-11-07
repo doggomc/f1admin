@@ -953,13 +953,18 @@ $('cancelNewsEdit').addEventListener('click', () => resetNewsForm());
 
 async function initialize() {
   resetNewsForm();
+  const params = new URLSearchParams(window.location.search);
+  const failedFromForm = params.get('auth') === 'failed';
+  if (failedFromForm && window.history?.replaceState) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
   try {
     const status = await api('/status');
     if (status.authenticated) {
       showDashboard();
       await loadConfig();
     } else {
-      showAuth();
+      showAuth(failedFromForm ? 'Invalid username or password.' : '');
     }
   } catch (error) {
     showAuth(error.message);

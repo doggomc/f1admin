@@ -157,6 +157,12 @@ function nextConfigEvent(reader) {
 
     const adminPage = await request('/admin/');
     check('admin panel is served from Render with no-store', adminPage.response.status === 200 && /Race Control/.test(adminPage.text) && adminPage.response.headers.get('cache-control') === 'no-store');
+    check('admin panel cache-busts its stylesheet and script URLs',
+      /\/admin\/admin\.css\?v=[a-f0-9]{10}/.test(adminPage.text) &&
+      /\/admin\/admin\.js\?v=[a-f0-9]{10}/.test(adminPage.text));
+    const adminJs = await request('/admin/admin.js');
+    check('admin static assets revalidate instead of serving stale 1h cache',
+      adminJs.response.status === 200 && /no-cache/.test(adminJs.response.headers.get('cache-control') || ''));
     check('admin page has no visitor or analytics module references', !/analytics\.js|charts\.js|visitorTable|onlineCount/.test(adminPage.text));
 
     const missingSession = await request('/admin/api/news', { headers: { Origin: origin } });

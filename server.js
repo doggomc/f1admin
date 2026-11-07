@@ -760,6 +760,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '40kb' }));
+app.use('/admin/api/login', express.urlencoded({ extended: false, limit: '8kb' }));
 app.use('/admin', (req, res, next) => {
   if (adminIpAllowed(req.ip || req.socket.remoteAddress)) return next();
   return res.status(404).end();
@@ -1021,14 +1022,17 @@ function recordLoginFailure(ip) {
 }
 
 app.post('/admin/api/login', adminSameOrigin, checkLoginRate, (req, res) => {
+  const isFormPost = !req.is('application/json') && req.accepts(['html', 'json']) === 'html';
   const username = safeText(req.body?.username, 100);
   const password = String(req.body?.password || '').slice(0, 500);
   if (!isSafeEqual(username, ADMIN_USER) || !isSafeEqual(password, ADMIN_PASS)) {
     recordLoginFailure(req.loginIp);
+    if (isFormPost) return res.redirect(303, '/admin/?auth=failed');
     return res.status(401).json({ success: false, error: 'Invalid username or password.' });
   }
   loginAttempts.delete(req.loginIp);
   req.session = { isAdmin: true, loginAt: Date.now() };
+  if (isFormPost) return res.redirect(303, '/admin/');
   res.json({ success: true });
 });
 
@@ -1282,9 +1286,19 @@ app.delete('/admin/api/news/:id', async (req, res) => {
   res.json({ success: true, ...persisted });
 });
 
+const ADMIN_ASSET_VERSION = (() => {
+  const hash = crypto.createHash('sha256');
+  for (const name of ['fonts.css', 'admin.css', 'admin.js', 'index.html']) {
+    try { hash.update(fs.readFileSync(path.join(ADMIN_DIR, name))); } catch (_) {}
+  }
+  return hash.digest('hex').slice(0, 10);
+})();
+const ADMIN_INDEX_HTML = fs.readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8')
+  .replace(/\/admin\/(fonts\.css|admin\.css|admin\.js)(?:\?[^"']*)?/g, `/admin/$1?v=${ADMIN_ASSET_VERSION}`);
+
 function sendAdminIndex(_req, res) {
   res.setHeader('Cache-Control', 'no-store');
-  res.sendFile(path.join(ADMIN_DIR, 'index.html'));
+  res.type('html').send(ADMIN_INDEX_HTML);
 }
 app.get(['/admin', '/admin/', '/admin/login'], sendAdminIndex);
 /* Shared asset folder (fonts, bot emoji) lives at the repo root and is
@@ -1308,9 +1322,10 @@ app.use('/admin', express.static(ADMIN_DIR, {
   index: false,
   fallthrough: true,
   etag: true,
-  maxAge: PRODUCTION ? '1h' : 0,
+  maxAge: 0,
   setHeaders(res, filePath) {
     if (/\.html?$/i.test(filePath)) res.setHeader('Cache-Control', 'no-store');
+    else res.setHeader('Cache-Control', 'no-cache');
   }
 }));
 

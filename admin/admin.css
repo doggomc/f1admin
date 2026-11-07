@@ -690,6 +690,14 @@ button {
   background: #111216;
 }
 
+.field input:-webkit-autofill,
+.field input:-webkit-autofill:hover,
+.field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-elev) inset;
+  caret-color: var(--ink);
+}
+
 .field textarea {
   resize: vertical;
   min-height: 92px;
