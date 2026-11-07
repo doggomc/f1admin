@@ -329,12 +329,55 @@ function nextConfigEvent(reader) {
             })
           };
         }
+        if (String(url).includes('weellz.live/beta')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => [
+              '<!doctype html><html><head><title>Player</title></head><body>',
+              '<template id="rl-pu"><script src="https://capitalhospitals.org/1/b6758a8d28634c9706ac96e0212095ea" async></script></template>',
+              '<script src="https://ssl.p.jwpcdn.com/player/v/8.39.3/jwplayer.js"></script>',
+              '<script>function rlGuard(){return true;}</script>',
+              '</body></html>'
+            ].join('')
+          };
+        }
+        if (String(url).includes('rewnd.live/k/')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: (h) => (String(h).toLowerCase() === 'date' ? 'Sat, 07 Nov 2026 12:00:00 GMT' : null) },
+            arrayBuffer: async () => Uint8Array.from({ length: 16 }, (_, idx) => idx + 1).buffer
+          };
+        }
         return { ok: false, status: 503, json: async () => ({}), text: async () => '' };
       }
     });
     const ppvCatalog = await mockResolver.taifoodChannels();
     const chipRows = await mockResolver.chipAddresses();
     const chipById = new Map(chipRows.map(row => [row.id, row]));
+    const strippedEmbed = await mockResolver.weellzStrippedHtml();
+    const keyRelay = await mockResolver.weellzAesKey('dflgjhacdfahpgchehacbdacoekfacieee', '2990184.0123456789abcdef0123');
+    check('stream-resolver strips ad popup + rlGuard from weellz.live/beta and relays 16-byte AES keys',
+      strippedEmbed.html.includes('<base href="https://weellz.live/">') &&
+      strippedEmbed.html.includes('<meta name="referrer" content="no-referrer">') &&
+      !strippedEmbed.html.includes('capitalhospitals.org') &&
+      !strippedEmbed.html.includes('id="rl-pu"') &&
+      strippedEmbed.html.includes('function _disabledRlGuard(') &&
+      keyRelay.ok === true &&
+      Buffer.isBuffer(keyRelay.body) &&
+      keyRelay.body.length === 16 &&
+      chipById.get('weelo-stripped-skyweelo')?.wouldUse === '/api/stream/weellz-embed?stream=dflgjhacdfahpgchehacbdacoekfacieee');
+    const previewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-42--freef1.netlify.app' } });
+    const badWeellzEmbed = await request('/api/stream/weellz-embed?stream=bad$id');
+    const badWeellzKey = await request('/api/stream/weellz-key/testkid?t=badtoken', { headers: { Origin: 'null' } });
+    check('Netlify deploy previews and sandboxed weellz relay CORS headers are accepted',
+      previewConfig.response.status === 200 &&
+      previewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-42--freef1.netlify.app' &&
+      badWeellzEmbed.response.status === 400 &&
+      badWeellzKey.response.status === 400 &&
+      badWeellzKey.response.headers.get('access-control-allow-origin') === '*' &&
+      badWeellzKey.response.headers.get('access-control-expose-headers') === 'Date, Retry-After');
     check('stream-resolver builds PPV channels from api.ppv.st/api/streams and drops all 540p variants',
       ppvCatalog.ppv === 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying' &&
       ppvCatalog.list.length === 3 &&

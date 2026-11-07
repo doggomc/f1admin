@@ -95,7 +95,8 @@ const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) =>
   /* Carried so Race Control can group rows (all EMB, all weelo, all taifood …) without parsing ids. */
   tab: source.tab || 'en',
   ...(source.lang ? { lang: source.lang } : {}),
-  ...(source.special ? { special: source.special } : {})
+  ...(source.special ? { special: source.special } : {}),
+  ...(source.stripped ? { stripped: true } : {})
 }));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -153,8 +154,12 @@ function normalizeOrigin(value) {
 
 function isPublicSiteOrigin(origin) {
   if (ALLOWED_ORIGINS.has(origin)) return true;
-  // Netlify deploy previews for this project share the production suffix.
-  return /^https:\/\/[a-z0-9-]+--freef1\.netlify\.app$/i.test(origin);
+  // Netlify deploy previews and branch deploys for this project share the production suffix.
+  if (/^https:\/\/[a-z0-9-]+--freef1\.netlify\.app$/i.test(origin)) return true;
+  if (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin)) {
+    return true;
+  }
+  return false;
 }
 
 function selfOrigin(req) {
@@ -745,15 +750,21 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  const origin = normalizeOrigin(req.headers.origin || '');
+  const rawOrigin = String(req.headers.origin || '').trim();
+  const origin = normalizeOrigin(rawOrigin);
   const own = selfOrigin(req);
+  const isWeellzRelay = req.path === '/api/stream/weellz-embed' || req.path.startsWith('/api/stream/weellz-key/');
   res.setHeader('Vary', 'Origin');
   if (origin && origin !== own && !isPublicSiteOrigin(origin)) return res.status(403).json({ error: 'Forbidden origin' });
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Expose-Headers', 'Retry-After');
+    res.setHeader('Access-Control-Expose-Headers', isWeellzRelay ? 'Date, Retry-After' : 'Retry-After');
+  } else if (rawOrigin === 'null' && isWeellzRelay) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', 'Date, Retry-After');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -865,6 +876,67 @@ app.get('/api/stream/weelo', async (_req, res) => {
     console.error('[streams] weelo state failed:', error?.message || error);
     return res.status(503).json({ error: 'Status unavailable.', code: 'unavailable' });
   }
+});
+
+/* Stripped (ad-free) weellz.live embed document + 16-byte AES-128 key relay.
+   Video manifests and segments stream directly from weelo.live to the viewer's browser;
+   only the cached player HTML shell and 16-byte decryption keys touch this process. */
+const WEELLZ_EMBED_FRAME_ANCESTORS = [...new Set([
+  "'self'",
+  SITE_URL,
+  'https://freef1.netlify.app',
+  'https://*.netlify.app',
+  ...ALLOWED_ORIGINS,
+  ...(PRODUCTION ? [] : ['http://localhost:*', 'http://127.0.0.1:*', 'https://*.e2b.app'])
+].filter(Boolean))].join(' ');
+
+const WEELLZ_EMBED_CSP = [
+  "default-src 'self' https: blob: data:",
+  "base-uri https://weellz.live 'self'",
+  "object-src 'none'",
+  `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://ssl.p.jwpcdn.com https://*.jwpcdn.com${PRODUCTION ? '' : ' http://ssl.p.jwpcdn.com'} https://weellz.live blob:`,
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline' https://weellz.live",
+  "font-src 'self' data: https://weellz.live",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: data: https:",
+  "connect-src 'self' https: wss:",
+  `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}`,
+  "form-action 'none'",
+  ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
+].join('; ');
+
+app.get('/api/stream/weellz-embed', async (req, res) => {
+  const stream = String(req.query.stream || '').trim();
+  if (!/^[A-Za-z0-9_-]{4,160}$/.test(stream)) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(400).json({ error: 'A valid stream id is required.', code: 'bad-request' });
+  }
+  try {
+    const { html } = await streamResolver.weellzStrippedHtml();
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.type('html').send(html);
+  } catch (error) {
+    console.error('[streams] weellz stripped embed failed:', error?.message || error);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(503).json({ error: 'Stripped player unavailable right now.', code: 'unavailable' });
+  }
+});
+
+app.get('/api/stream/weellz-key/:kid', async (req, res) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Access-Control-Expose-Headers', 'Date, Retry-After');
+  const result = await streamResolver.weellzAesKey(req.params.kid, req.query.t);
+  if (result.date) res.setHeader('Date', result.date);
+  if (!result.ok) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(result.status || 502).json({ error: result.error || 'Key unavailable.', code: 'unavailable' });
+  }
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.type('application/octet-stream').status(200).send(result.body);
 });
 
 app.get('/api/stream/uhd', async (_req, res) => {

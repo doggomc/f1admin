@@ -163,6 +163,12 @@ const PPV_F1_PATTERNS = [
 ];
 const PPV_NON_F1_SERIES = /\b(?:moto\s*gp|moto\s*[23]|formula\s*[23e]\b|f[23]\s+championship|indycar|nascar|supercars|wrc|wec)\b/i;
 const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
+const WEELLZ_BETA_URL = 'https://weellz.live/beta';
+const REWND_KEY_BASE = 'https://rewnd.live/k/';
+const WEELO_STRIPPED_EMBED = '/api/stream/weellz-embed?stream=';
+const WEELLZ_HTML_TTL_MS = 5 * 60_000;
+const WEELLZ_KEY_TTL_MS = 2 * 60 * 60_000;
+const WEELLZ_KEY_MAX_ENTRIES = 500;
 /* [key, label, special, id, tab]. Every id and language is from weelo's own event feed
    (weelo.live/feed/events.json): 'Multi-audio' feeds carry several commentaries, so they are Other. */
 const WEELO_FEEDS = [
@@ -176,6 +182,26 @@ const WEELO_FEEDS = [
   ['skyweelo', 'Sky Sports (weelo)', 'feed', 'dflgjhacdfahpgchehacbdacoekfacieee', 'en'],
   ['shows', 'F1 TV (Shows)', 'feed', 'gebdacefgfacicdfigpghhdhjcacieee', 'en']
 ];
+
+function stripWeellzHtml(rawHtml) {
+  let html = String(rawHtml || '');
+  html = html.replace(/<template\b[^>]*\bid=["']rl-pu["'][^>]*>[\s\S]*?<\/template>/gi, '');
+  html = html.replace(/<script\b[^>]*(?:capitalhospitals\.org|cloudflareinsights\.com)[^>]*>[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/\bfunction\s+rlGuard\s*\(/g, 'function _disabledRlGuard(');
+  const shim = [
+    '<base href="https://weellz.live/">',
+    '<meta name="referrer" content="no-referrer">',
+    '<script>(function(){',
+    "var keyBase=window.location.origin+window.location.pathname.replace(/\\/weellz-embed\\/?$/,'/weellz-key/');",
+    'var origOpen=XMLHttpRequest.prototype.open;',
+    "XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string'&&u.indexOf('https://rewnd.live/k/')===0){arguments[1]=keyBase+u.slice(21);}return origOpen.apply(this,arguments);};",
+    "var origFetch=window.fetch;if(origFetch){window.fetch=function(i,o){if(typeof i==='string'&&i.indexOf('https://rewnd.live/k/')===0){i=keyBase+i.slice(21);}return origFetch.call(this,i,o);};}",
+    'window.open=function(){return null;};',
+    "window.addEventListener('message',function(ev){try{var d=typeof ev.data==='string'?JSON.parse(ev.data):ev.data;if(d&&d.type==='freef1-audio'){var m=Boolean(d.muted);if(typeof window.jwplayer==='function'){var p=window.jwplayer();if(p&&typeof p.setMute==='function')p.setMute(m);}document.querySelectorAll('video').forEach(function(v){v.muted=m;});}}catch(_){}});",
+    '})();</script>'
+  ].join('');
+  return html.replace(/<head\b[^>]*>/i, (match) => `${match}${shim}`);
+}
 
 /* taifood addresses are <event>---<session>-<id><mark>: the mark is part of the address, and the
    provider publishes several. SD is the base; the crisp mark is offered after it. The mark is a
@@ -209,6 +235,11 @@ const STREAM_SOURCES = [
   ...WEELO_FEEDS.map(([id, label, special, weelo, tab]) => ({
     id: `weelo-${id}`, label, provider: 'weelo', weelo, special, tab, minQuality: 720,
     links: [{ quality: 1080, url: WEELO_PLAYER + weelo }]
+  })),
+  /* Stripped (ad-free) counterparts of every Weelo feed, relayed via /api/stream/weellz-embed. */
+  ...WEELO_FEEDS.map(([id, label, special, weelo, tab]) => ({
+    id: `weelo-stripped-${id}`, label: `${label} (Stripped)`, provider: 'weelo-stripped', stripped: true, weelo, special, tab, minQuality: 720,
+    links: [{ quality: 1080, url: WEELO_STRIPPED_EMBED + weelo }]
   })),
   /* Works, but serves heavy advertising, so it sits below the EMB feeds. */
   { id: 'sky-f1-uk', label: 'Sky Sports F1 UK', provider: 'cdnlivetv', minQuality: 720, links: [
@@ -381,8 +412,12 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
       let wouldUse = '';
       if (source.weelo) {
         addresses.length = 0;
-        wouldUse = `https://weellz.live/beta?stream=${source.weelo}`;
-        if (weeloUp(state, source.weelo) !== 'off') addresses.push({ url: wouldUse, quality: 1080, from: 'weelo' });
+        wouldUse = source.stripped
+          ? `${WEELO_STRIPPED_EMBED}${source.weelo}`
+          : `https://weellz.live/beta?stream=${source.weelo}`;
+        if (weeloUp(state, source.weelo) !== 'off') {
+          addresses.push({ url: wouldUse, quality: 1080, from: source.stripped ? 'weelo-stripped' : 'weelo' });
+        }
       }
       /* A chip with nothing resolvable still shows what it WOULD ask for, so it is debuggable. */
       return {
@@ -543,11 +578,12 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         /* The tab the player filters on, and whether the chip is drawn apart from the broadcasters. */
         tab: source.tab || 'en',
         special: source.special || null,
-        state: source.provider === 'weelo' ? weeloUp(state, source.weelo) : null,
+        stripped: Boolean(source.stripped),
+        state: (source.provider === 'weelo' || source.provider === 'weelo-stripped') ? weeloUp(state, source.weelo) : null,
         links: links.map((link) => (link.taid ? { ...link, marks: TAID_MARKS, shape: taidUrl('{event}', '{session}', link.taid, '{mark}') } : link)),
         /* An EMB chip is only playable when its channel is listed upstream; the 4K chip has its
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
-        upstream: source.provider === 'weelo'
+        upstream: (source.provider === 'weelo' || source.provider === 'weelo-stripped')
           ? weeloUp(state, source.weelo) !== 'off'
           : source.provider !== 'embdlol'
           ? true
@@ -785,6 +821,81 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     }
   }
 
+  /* ── stripped weellz.live embed & 16-byte AES key relay ─────────────── */
+  const weellzShell = { html: '', at: 0, inFlight: null };
+  const weellzKeys = new Map(); // kid -> { body: Buffer, at: number }
+
+  async function weellzStrippedHtml() {
+    if (weellzShell.html && Date.now() - weellzShell.at < WEELLZ_HTML_TTL_MS) {
+      return { html: weellzShell.html, cached: true };
+    }
+    if (weellzShell.inFlight) return weellzShell.inFlight;
+    weellzShell.inFlight = (async () => {
+      try {
+        const response = await fetchWithTimeout(WEELLZ_BETA_URL, {
+          headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' }
+        });
+        if (!response.ok) throw new Error(`weellz beta responded ${response.status}`);
+        const raw = await response.text();
+        if (!/<head\b/i.test(raw) || !/jwplayer|hls\.js/i.test(raw)) {
+          throw new Error('unexpected weellz player payload');
+        }
+        const stripped = stripWeellzHtml(raw);
+        weellzShell.html = stripped;
+        weellzShell.at = Date.now();
+        return { html: stripped, cached: false };
+      } catch (error) {
+        if (weellzShell.html) return { html: weellzShell.html, cached: true, stale: true };
+        throw error;
+      } finally {
+        weellzShell.inFlight = null;
+      }
+    })();
+    return weellzShell.inFlight;
+  }
+
+  async function weellzAesKey(kid, token) {
+    const cleanKid = String(kid || '').trim();
+    const cleanToken = String(token || '').trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(cleanKid)) {
+      return { ok: false, status: 400, error: 'Invalid key id.' };
+    }
+    if (!/^[0-9]{4,14}\.[0-9a-f]{16,64}$/i.test(cleanToken)) {
+      return { ok: false, status: 400, error: 'Invalid key token.' };
+    }
+    const cached = weellzKeys.get(cleanKid);
+    if (cached && Date.now() - cached.at < WEELLZ_KEY_TTL_MS) {
+      return { ok: true, status: 200, body: cached.body, date: new Date().toUTCString(), cached: true };
+    }
+    try {
+      const target = `${REWND_KEY_BASE}${encodeURIComponent(cleanKid)}?t=${encodeURIComponent(cleanToken)}`;
+      const response = await fetchWithTimeout(target, {
+        headers: {
+          Accept: '*/*',
+          Origin: 'https://weellz.live',
+          Referer: 'https://weellz.live/'
+        }
+      });
+      const dateHeader = response.headers?.get?.('date') || new Date().toUTCString();
+      if (!response.ok) {
+        return { ok: false, status: response.status || 502, date: dateHeader };
+      }
+      const ab = await response.arrayBuffer();
+      const body = Buffer.from(ab);
+      if (body.length === 16) {
+        if (weellzKeys.size >= WEELLZ_KEY_MAX_ENTRIES) {
+          const oldest = weellzKeys.keys().next().value;
+          if (oldest !== undefined) weellzKeys.delete(oldest);
+        }
+        weellzKeys.set(cleanKid, { body, at: Date.now() });
+      }
+      return { ok: true, status: 200, body, date: dateHeader, cached: false };
+    } catch (error) {
+      log.warn?.('[streams] weellz key relay failed:', error.message);
+      return { ok: false, status: 502, error: 'Upstream key server unreachable.' };
+    }
+  }
+
   function summary() {
     return {
       channelName: UHD_CHANNEL_NAME,
@@ -798,7 +909,20 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
 
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own
      origin), so it is relayed from here. */
-  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState, taifoodChannels, embdlolPublicChannels, chipAddresses };
+  return {
+    resolveUhdUrl,
+    resolveDynamic,
+    getHealth,
+    summary,
+    listSources,
+    mirrorsFor,
+    weeloState,
+    taifoodChannels,
+    embdlolPublicChannels,
+    chipAddresses,
+    weellzStrippedHtml,
+    weellzAesKey
+  };
 }
 
-module.exports = { createStreamResolver, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };
+module.exports = { createStreamResolver, stripWeellzHtml, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

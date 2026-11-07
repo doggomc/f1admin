@@ -339,6 +339,7 @@ const FILTER_GROUPS = [
   ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online)],
   ['emb', 'EMB', (s) => s.provider === 'embdlol'],
   ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
+  ['weelo-stripped', 'Weelo Stripped', (s) => s.provider === 'weelo-stripped'],
   ['ppv', 'PPV', (s) => s.provider === 'ppv' || s.provider === 'taifood'],
   ['other', 'Other langs', (s) => s.tab === 'other'],
   ['special', 'Special', (s) => Boolean(s.special)]
@@ -347,6 +348,7 @@ const FILTER_GROUPS = [
 const BULK_GROUPS = [
   ['emb', 'EMB'],
   ['weelo', 'Weelo'],
+  ['weelo-stripped', 'Weelo Stripped'],
   ['ppv', 'PPV'],
   ['strmfree', 'StreamFree'],
   ['other', 'Other langs'],
@@ -460,6 +462,7 @@ function renderSources() {
     if (sourceFilter === 'all') return true;
     return sourceFilter === 'emb' ? source.provider === 'embdlol'
       : sourceFilter === 'weelo' ? source.provider === 'weelo'
+      : sourceFilter === 'weelo-stripped' ? source.provider === 'weelo-stripped'
       : sourceFilter === 'ppv' || sourceFilter === 'taifood' ? (source.provider === 'ppv' || source.provider === 'taifood')
       : sourceFilter === 'other' ? source.tab === 'other'
       : Boolean(source.special);
@@ -489,6 +492,12 @@ function renderSources() {
       tag.className = 'source-tag';
       tag.textContent = source.special ? source.special : 'other';
       name.append(' ', tag);
+    }
+    if (source.stripped) {
+      const strippedTag = document.createElement('em');
+      strippedTag.className = 'source-tag';
+      strippedTag.textContent = 'stripped';
+      name.append(' ', strippedTag);
     }
 
     const id = document.createElement('span');
