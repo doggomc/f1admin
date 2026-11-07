@@ -832,14 +832,14 @@ app.get('/api/stream/sources', async (_req, res) => {
 /* weelo's status map, relayed. The browser cannot fetch it itself: the file is served with
    `access-control-allow-origin: *` but the edge refuses the cross-origin request outright, which
    shows up in the console as a CORS failure and left every onboard stuck on "unknown". */
-/* taifood's per-race channel list, relayed: it has no CORS headers, so the browser cannot read it. */
-app.get('/api/stream/taifood', async (_req, res) => {
+/* PPV F1 channel list (built from https://api.ppv.st/api/streams with 540p variants excluded). */
+app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=60');
   try {
-    const { list, at } = await streamResolver.taifoodChannels();
-    return res.json({ channels: list, count: list.length, updatedAt: at || null });
+    const { list, ppv, at } = await streamResolver.taifoodChannels();
+    return res.json({ channels: list, ppv: ppv || '', count: list.length, updatedAt: at || null });
   } catch (error) {
-    console.error('[streams] taifood list failed:', error?.message || error);
+    console.error('[streams] ppv list failed:', error?.message || error);
     return res.status(503).json({ error: 'Channel list unavailable.', code: 'unavailable' });
   }
 });
@@ -1183,8 +1183,9 @@ app.post('/admin/api/stream/sources/bulk', async (req, res) => {
     if (explicit) return explicit.includes(source.id);
     if (!group) return false;
     if (group === 'all') return true;
-    /* 'emb' covers embdlol chips; every other name is matched against the provider. */
+    /* 'emb' covers embdlol chips; 'ppv'/'taifood' covers PPV chips; every other name matches provider. */
     if (group === 'emb') return source.provider === 'embdlol';
+    if (group === 'ppv' || group === 'taifood') return source.provider === 'ppv' || source.provider === 'taifood';
     if (group === 'other') return source.tab === 'other';
     if (group === 'special') return Boolean(source.special);
     return String(source.provider || '') === group;

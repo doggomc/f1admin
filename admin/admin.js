@@ -339,7 +339,7 @@ const FILTER_GROUPS = [
   ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online)],
   ['emb', 'EMB', (s) => s.provider === 'embdlol'],
   ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
-  ['taifood', 'Taifood', (s) => s.provider === 'taifood'],
+  ['ppv', 'PPV', (s) => s.provider === 'ppv' || s.provider === 'taifood'],
   ['other', 'Other langs', (s) => s.tab === 'other'],
   ['special', 'Special', (s) => Boolean(s.special)]
 ];
@@ -347,7 +347,7 @@ const FILTER_GROUPS = [
 const BULK_GROUPS = [
   ['emb', 'EMB'],
   ['weelo', 'Weelo'],
-  ['taifood', 'Taifood'],
+  ['ppv', 'PPV'],
   ['strmfree', 'StreamFree'],
   ['other', 'Other langs'],
   ['all', 'Every source']
@@ -460,7 +460,7 @@ function renderSources() {
     if (sourceFilter === 'all') return true;
     return sourceFilter === 'emb' ? source.provider === 'embdlol'
       : sourceFilter === 'weelo' ? source.provider === 'weelo'
-      : sourceFilter === 'taifood' ? source.provider === 'taifood'
+      : sourceFilter === 'ppv' || sourceFilter === 'taifood' ? (source.provider === 'ppv' || source.provider === 'taifood')
       : sourceFilter === 'other' ? source.tab === 'other'
       : Boolean(source.special);
   });

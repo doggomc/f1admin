@@ -90,23 +90,61 @@ const WEELO_STATE = 'https://weelo.live/players/state.json';
 /* The feed is the truth: this URL is an HLS master playlist whenever the stream is up. */
 const WEELO_FEED = 'https://weelo.live/';
 
-/* taifood publishes a per-race channel list: title, address and online/offline. The ids change every
-   race weekend, so a fixed table is stale by Sunday — this is the authority. It is offered without
-   CORS headers, so the browser cannot read it and the server relays it. */
-const TAIFOOD_CHANNELS = 'https://cdn.flive.dpdns.org/channels.json';
-/* The list moved on 2026-11-06 to a new CDN: the old host and its 301 target now 404 the file, so
-   the resolver was reading "no channels" instead of "moved", which emptied every taifood chip while
-   the channels were in fact online. The new host is discovered from flive.cc.cd's own bundle, so it
-   is their published address and not a guess; the dead hosts stay in the list as last resorts. */
-const TAIFOOD_CHANNELS_MIRRORS = [
-  'https://cdn.flive.cc.cd/channels.json',
-  'https://flive.cc.cd/channels.json',
-  'https://flive.dpdns.org/channels.json'
+/* PPV publishes the Formula 1 stream list at https://api.ppv.st/api/streams: a main HD stream
+   (Sky Sports F1) plus a substreams[] list per broadcaster in both HD and SD (_540p). Every 540p /
+   SD variant is excluded so only >=720p PPV streams are ever served or shown in Race Control. */
+const PPV_STREAMS = 'https://api.ppv.st/api/streams';
+const TAIFOOD_CHANNELS_FALLBACKS = [
+  'https://cdn.flive.cc.cd/channels.json'
 ];
-/* taifood groups its list by the first word of the broadcaster name; this is which bucket each of
-   our chips reads, mirroring the keys the player uses. */
+/* PPV groups its substreams by the first word of the broadcaster name; this is which bucket and
+   commentary language each PPV chip reads, mirroring netlifyf1/src/app.ts. */
 const TAIFOOD_BUCKET = { appletv: 'apple', dazn: 'dazn', viaplay: 'viaplay', 'sky-italia': 'sky',
   'sky-de': 'sky', 'v-sport': 'v', sport: 'v', eleven: 'eleven', nova: 'nova' };
+const PPV_CHIP_LANG = {
+  ppv: 'english',
+  appletv: 'english',
+  dazn: 'spanish',
+  viaplay: 'dutch',
+  'sky-italia': 'italian',
+  'sky-de': 'german',
+  'v-sport': 'swedish',
+  eleven: 'polish',
+  nova: 'czech'
+};
+const PPV_LOCALE_MAP = {
+  en: 'english', 'en-gb': 'english', 'en-us': 'english', 'en-au': 'english', 'en-ca': 'english', english: 'english',
+  es: 'spanish', 'es-es': 'spanish', 'es-mx': 'spanish', spanish: 'spanish',
+  nl: 'dutch', 'nl-nl': 'dutch', dutch: 'dutch',
+  de: 'german', 'de-de': 'german', 'de-at': 'german', german: 'german',
+  it: 'italian', 'it-it': 'italian', italian: 'italian',
+  sv: 'swedish', 'sv-se': 'swedish', swedish: 'swedish',
+  cs: 'czech', 'cs-cz': 'czech', cz: 'czech', czech: 'czech',
+  pl: 'polish', 'pl-pl': 'polish', polish: 'polish'
+};
+function normalizePpvLang(raw) {
+  const clean = String(raw || '').trim().toLowerCase();
+  if (!clean) return '';
+  if (PPV_LOCALE_MAP[clean]) return PPV_LOCALE_MAP[clean];
+  const base = clean.split(/[-_]/)[0] || '';
+  return PPV_LOCALE_MAP[base] || clean;
+}
+function isPpv540p(item) {
+  if (!item || typeof item !== 'object') return true;
+  const uri = String(item.iframe || item.uri || '');
+  const uriName = String(item.uri_name || '');
+  const tag = String(item.source_tag || item.title || '');
+  const name = String(item.name || '');
+  if (/540p/i.test(uri) || /540p/i.test(uriName)) return true;
+  if (/\b540p\b|^\s*SD\s*\|/i.test(tag) || /\b540p\b|^\s*SD\s*\|/i.test(name)) return true;
+  return false;
+}
+const PPV_F1_PATTERNS = [
+  /formula[\s-]?1|\bf1\b|grand\s?prix/i,
+  /\/embed\/f1\//i,
+  /---(?:race|qualifying|sprint|practice)[-\w]*/i
+];
+const PPV_NON_F1_SERIES = /\b(?:moto\s*gp|moto\s*[23]|formula\s*[23e]\b|f[23]\s+championship|indycar|nascar|supercars|wrc|wec)\b/i;
 const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
 /* [key, label, special, id, tab]. Every id and language is from weelo's own event feed
    (weelo.live/feed/events.json): 'Multi-audio' feeds carry several commentaries, so they are Other. */
@@ -170,31 +208,32 @@ const STREAM_SOURCES = [
   { id: 'sky-sports', label: 'Sky Sports', provider: 'hakunamatata', minQuality: 0, links: [
     { quality: 0, url: 'https://hakunamatata5.org/hakunamatata5.html' }
   ] },
-  /* Race block of the round taifood published when this was written; they rotate every session, so
-     they are the parachute under the live catalogue, never the first choice. */
-  { id: 'appletv', label: 'AppleTV', provider: 'taifood', minQuality: 720, links: [
-    { quality: 720, taid: 31407 }, { quality: 720, taid: 31385 }
+  /* PPV streams built from https://api.ppv.st/api/streams (main HD feed + non-540p substreams).
+     Fallback ids rotate every session, so they are only a parachute under the live PPV catalogue. */
+  { id: 'ppv', label: 'Sky Sports (PPV)', provider: 'ppv', minQuality: 720, links: [{ quality: 1080, ppv: true }] },
+  { id: 'appletv', label: 'AppleTV (PPV)', provider: 'ppv', minQuality: 720, links: [
+    { quality: 1080, taid: 31865 }, { quality: 1080, taid: 31854 }
   ] },
-  { id: 'dazn', label: 'DAZN', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31409 }, { quality: 720, taid: 31387 }
+  { id: 'dazn', label: 'DAZN (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31867 }, { quality: 1080, taid: 31856 }
   ] },
-  { id: 'viaplay', label: 'Viaplay', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31413 }, { quality: 720, taid: 31391 }
+  { id: 'viaplay', label: 'Viaplay (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31871 }, { quality: 1080, taid: 31860 }
   ] },
-  { id: 'sky-italia', label: 'Sky Sport Italia', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31411 }, { quality: 720, taid: 31389 }
+  { id: 'sky-italia', label: 'Sky Sport Italia (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31869 }, { quality: 1080, taid: 31858 }
   ] },
-  { id: 'sky-de', label: 'Sky Sport F1 DE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31410 }, { quality: 720, taid: 31388 }
+  { id: 'sky-de', label: 'Sky Sport F1 DE (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31868 }, { quality: 1080, taid: 31857 }
   ] },
-  { id: 'v-sport', label: 'V Sport Motor SE', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31412 }, { quality: 720, taid: 31390 }
+  { id: 'v-sport', label: 'V Sport Motor SE (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31870 }, { quality: 1080, taid: 31859 }
   ] },
-  { id: 'eleven', label: 'Eleven Sports PL', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31415 }
+  { id: 'eleven', label: 'Eleven Sports PL (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31873 }, { quality: 1080, taid: 31862 }
   ] },
-  { id: 'nova', label: 'Nova Sport CZ', provider: 'taifood', minQuality: 720, tab: 'other', links: [
-    { quality: 720, taid: 31414 }
+  { id: 'nova', label: 'Nova Sport CZ (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31872 }, { quality: 1080, taid: 31861 }
   ] },
   { id: 'wikisport', label: 'WikiSport', provider: 'wikisport', minQuality: 0, links: [
     { quality: 0, url: 'https://wikisport.info/strm/f1.php' },
@@ -203,8 +242,7 @@ const STREAM_SOURCES = [
   ] },
   { id: 'westream', label: 'WeStream F1', provider: 'westream', minQuality: 0, links: [
     { quality: 0, url: 'https://westreamf1.com/westreamf1.php' }
-  ] },
-  { id: 'ppv', label: 'F1 PPV', provider: 'taifood', minQuality: 720, links: [{ quality: 720, ppv: true }] }
+  ] }
 ];
 
 /* A provider's published mirrors, used to grow a pool without a redeploy. */
@@ -222,7 +260,7 @@ const PROVIDER_PROBES = [
   { provider: 'ehgembxe', label: 'ehgembxe', url: 'https://ehgembxe.cfd/f596f98r-4089', follow: true }
 ];
 
-function createStreamResolver({ log = console } = {}) {
+function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
   const uhd = { url: '', at: 0, failedAt: 0 };
   const dynamic = new Map();      // path -> { url, at }
   const mirrorCache = new Map();  // stream key -> { at, list }
@@ -238,7 +276,7 @@ function createStreamResolver({ log = console } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, {
+      return await fetchImpl(url, {
         redirect,
         signal: controller.signal,
         /* Several providers reject unfamiliar agents with a 502 (verified against ehgembxe),
@@ -295,20 +333,25 @@ function createStreamResolver({ log = console } = {}) {
     const [channels, uhdUrl, state, taifood] = await Promise.all([embdlolChannels(), resolveUhdUrl(), weeloState(), taifoodChannels().catch(() => ({}))]);
     return STREAM_SOURCES.map((source) => {
       const addresses = [];
-      /* A fixed list: the shipped addresses, already ordered. A taid entry is a taifood id, which
+      /* A fixed list: the shipped addresses, already ordered. A taid entry is a PPV id, which
          only becomes an address once the session is known, so it is shown as the id it will ask for. */
       for (const link of source.links || []) {
         if (link.url) addresses.push({ url: link.url, quality: link.quality || 0, from: 'shipped' });
-        else if (link.taid) addresses.push({ url: `taifood id ${link.taid}`, quality: link.quality || 0, from: 'taifood-id' });
+        else if (link.taid) addresses.push({ url: `ppv id ${link.taid}`, quality: link.quality || 0, from: 'ppv-id' });
       }
-      /* What taifood publishes for this chip right now, which is the address that actually plays. */
-      if (source.provider === 'taifood') {
-        /* taifoodChannels() answers { list, key, at }: entries are grouped by the first word of the
-           broadcaster name, which is how the player's chips find their own addresses too. */
-        const bucketKey = TAIFOOD_BUCKET[source.id];
-        const bucket = (bucketKey && taifood.key && taifood.key[bucketKey]) || [];
-        const live = bucket.filter((entry) => entry && entry.uri);
-        addresses.unshift(...live.map((entry) => ({ url: entry.uri, quality: 0, from: 'taifood-live' })));
+      /* What https://api.ppv.st/api/streams publishes for this chip right now (never 540p). */
+      if (source.provider === 'ppv' || source.provider === 'taifood') {
+        if (source.id === 'ppv') {
+          if (taifood.ppv) addresses.unshift({ url: taifood.ppv, quality: 1080, from: 'ppv-live' });
+        } else {
+          const bucketKey = TAIFOOD_BUCKET[source.id];
+          const wantedLang = PPV_CHIP_LANG[source.id] || '';
+          const bucket = (bucketKey && taifood.key && taifood.key[bucketKey]) || [];
+          const live = bucket
+            .filter((entry) => entry && entry.uri && !/540p/i.test(entry.uri) && (!wantedLang || !entry.lang || entry.lang === wantedLang))
+            .sort((a, b) => Number(Boolean(wantedLang && b.lang === wantedLang)) - Number(Boolean(wantedLang && a.lang === wantedLang)));
+          addresses.unshift(...live.map((entry) => ({ url: entry.uri, quality: 1080, from: 'ppv-live' })));
+        }
       }
       /* embdlol: the id for THIS feed, exactly as the player picks it. */
       if (source.provider === 'embdlol' && source.id !== 'emb-uhd') {
@@ -483,43 +526,114 @@ function createStreamResolver({ log = console } = {}) {
     });
   }
 
-  /* taifood's current channel list. Titles look like 'HD | Apple TV (F1TV) [English]'; the bracketed
-     word is the language, which is how a chip picks its own entry. Offline entries are kept and
-     ranked last rather than dropped. */
-  const taifood = { at: 0, list: [], key: {} };
+  /* PPV's current F1 channel list built from https://api.ppv.st/api/streams (main HD stream +
+     non-540p substreams across broadcasters). Every 540p / SD variant is dropped. */
+  const taifood = { at: 0, list: [], key: {}, ppv: '' };
   async function taifoodChannels() {
     if (taifood.at && Date.now() - taifood.at < HEALTH_TTL_MS) return taifood;
     try {
-      /* First source that answers with JSON wins; a 404 page is not a channel list. */
-      let response = null;
-      for (const url of [TAIFOOD_CHANNELS, ...TAIFOOD_CHANNELS_MIRRORS]) {
-        try {
-          const candidate = await fetchWithTimeout(url, { headers: { Accept: 'application/json' }, redirect: 'follow' });
-          if (candidate.ok) { response = candidate; break; }
-        } catch { /* try the next mirror */ }
-      }
-      if (response) {
-        const json = await response.json();
-        const list = (Array.isArray(json) ? json : [])
-          .filter((c) => c && typeof c.uri === 'string' && /taifood/.test(c.uri))
-          .map((c) => {
-            /* '[Embed] Sky Sports F1 HD' → name 'Sky Sports F1 HD', lang ''. '[Embed] Apple TV (F1TV)
-               [English]' → lang 'english'. The leading [Embed] tag is not a language. */
-            /* '[Embed] Apple TV (F1TV) [English]' → name 'Apple TV (F1TV)', lang 'english'. The bare
-               '[Embed] Sky Sports F1 HD' entries carry no language at all, and 'embed' is not one. */
-            const bare = String(c.title || '').replace(/^\[Embed\]\s*/i, '');
-            const lang = (bare.match(/\[([^\]]+)\]/) || [])[1] || '';
-            const name = bare.replace(/^(?:HD|SD|4K)\s*\|\s*/, '').replace(/\s*\[[^\]]+\]/, '').trim();
-            return { id: String(c.id), name, lang: lang.toLowerCase(), uri: c.uri, status: String(c.status || '').toLowerCase(), updatedAt: c.updated_at || '' };
+      let builtFromPpv = false;
+      try {
+        const ppvRes = await fetchWithTimeout(PPV_STREAMS, { headers: { Accept: 'application/json' }, redirect: 'follow' });
+        if (ppvRes.ok) {
+          const ppvJson = await ppvRes.json();
+          const nowSec = Math.floor(Date.now() / 1000);
+          const groups = Array.isArray(ppvJson?.streams) ? ppvJson.streams : [];
+          const f1Events = [];
+          for (const group of groups) {
+            const entries = Array.isArray(group?.streams) ? group.streams : (group && typeof group === 'object' ? [group] : []);
+            for (const stream of entries) {
+              if (!stream || typeof stream !== 'object') continue;
+              const uri = String(stream.iframe || stream.uri || '');
+              const tagAndTitle = `${stream.tag || ''} ${stream.name || ''}`;
+              if (!/formula[\s-]?1|\bf1\b/i.test(String(stream.tag || '')) && PPV_NON_F1_SERIES.test(tagAndTitle)) continue;
+              const haystack = [stream.name, stream.tag, stream.source_tag, stream.category_name, stream.uri_name, uri].join(' ');
+              if (!PPV_F1_PATTERNS.some((pattern) => pattern.test(haystack))) continue;
+              f1Events.push(stream);
+            }
+          }
+          const scoreEvent = (ev) => {
+            const s = Number(ev.starts_at) || 0;
+            const e = Number(ev.ends_at) || 0;
+            if (!s && !e) return [1, 0];
+            if (s - 1800 <= nowSec && (e ? nowSec <= e + 1800 : nowSec <= s + 10800)) return [0, s];
+            if (s > nowSec) return [1, s];
+            return [2, -(e || s)];
+          };
+          f1Events.sort((a, b) => {
+            const [ra, ta] = scoreEvent(a);
+            const [rb, tb] = scoreEvent(b);
+            return ra !== rb ? ra - rb : ta - tb;
           });
-        const key = {};
-        for (const entry of list) {
-          const slug = keyWord(entry.name);
-          if (slug) (key[slug] ||= []).push(entry);
+          const list = [];
+          const key = {};
+          const seen = new Set();
+          let mainPpv = '';
+          const addItem = (item) => {
+            if (isPpv540p(item)) return;
+            const uri = String(item.iframe || item.uri || '').trim();
+            if (!/^https:\/\/taifood-blog\.asia\/embed\//i.test(uri)) return;
+            if (/\/embed\/f1\//i.test(uri)) return;
+            const rawTag = String(item.source_tag || item.title || item.name || '');
+            const name = rawTag.replace(/^\[Embed\]\s*/i, '').replace(/^(?:HD|FHD|UHD|4K)\s*\|\s*/i, '').replace(/\s*\[[^\]]+\]/, '').trim();
+            const slug = keyWord(name);
+            if (!slug || seen.has(`${slug}:${uri}`)) return;
+            seen.add(`${slug}:${uri}`);
+            const entry = {
+              id: String(item.id || ''),
+              name,
+              lang: normalizePpvLang(item.locale || item.lang),
+              uri,
+              status: 'online'
+            };
+            list.push(entry);
+            (key[slug] ||= []).push(entry);
+          };
+          for (const ev of f1Events) {
+            const mainUri = String(ev.iframe || ev.uri || '').trim();
+            if (!isPpv540p(ev) && /^https:\/\/taifood-blog\.asia\/embed\//i.test(mainUri)) {
+              if (!mainPpv) mainPpv = mainUri;
+              addItem(ev);
+            }
+            for (const sub of Array.isArray(ev.substreams) ? ev.substreams : []) {
+              addItem(sub);
+            }
+          }
+          taifood.list = list;
+          taifood.key = key;
+          taifood.ppv = mainPpv;
+          taifood.at = Date.now();
+          builtFromPpv = true;
         }
-        taifood.list = list;
-        taifood.key = key;
-        taifood.at = Date.now();
+      } catch { /* fall through to fallback mirror if PPV is unreachable */ }
+
+      if (!builtFromPpv) {
+        let response = null;
+        for (const url of TAIFOOD_CHANNELS_FALLBACKS) {
+          try {
+            const candidate = await fetchWithTimeout(url, { headers: { Accept: 'application/json' }, redirect: 'follow' });
+            if (candidate.ok) { response = candidate; break; }
+          } catch { /* try the next mirror */ }
+        }
+        if (response) {
+          const json = await response.json();
+          const list = (Array.isArray(json) ? json : [])
+            .filter((c) => c && typeof c.uri === 'string' && /taifood/.test(c.uri) && !isPpv540p(c))
+            .map((c) => {
+              const bare = String(c.title || '').replace(/^\[Embed\]\s*/i, '');
+              const lang = (bare.match(/\[([^\]]+)\]/) || [])[1] || '';
+              const name = bare.replace(/^(?:HD|FHD|UHD|4K)\s*\|\s*/i, '').replace(/\s*\[[^\]]+\]/, '').trim();
+              return { id: String(c.id), name, lang: normalizePpvLang(lang), uri: c.uri, status: String(c.status || '').toLowerCase(), updatedAt: c.updated_at || '' };
+            });
+          const key = {};
+          for (const entry of list) {
+            const slug = keyWord(entry.name);
+            if (slug) (key[slug] ||= []).push(entry);
+          }
+          taifood.list = list;
+          taifood.key = key;
+          taifood.at = Date.now();
+        }
       }
     } catch (_) { /* keep the last good list */ }
     return taifood;
@@ -527,11 +641,11 @@ function createStreamResolver({ log = console } = {}) {
 
   /* 'Apple TV (F1TV)' → 'apple', 'Sky Sport F1' → 'sky', 'V Sport Motor' → 'v'. A quality prefix
      ('HD | Apple TV …') and a leading '[Embed]' tag are not broadcaster names, so both are stripped
-     first — without that, every 'HD | …' row bucketbed under 'hd' and the chips never saw it. */
+     first — without that, every 'HD | …' row bucketed under 'hd' and the chips never saw it. */
   function keyWord(name) {
     const cleaned = String(name || '')
       .replace(/^\[Embed\]\s*/i, '')
-      .replace(/^(?:HD|SD|4K)\s*\|\s*/i, '')
+      .replace(/^(?:HD|FHD|UHD|4K|SD)\s*\|\s*/i, '')
       .replace(/\(.*?\)/g, ' ')
       .trim();
     const first = cleaned.toLowerCase().split(/\s+/)[0];

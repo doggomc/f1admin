@@ -268,6 +268,63 @@ function nextConfigEvent(reader) {
     });
     check('source settings can be changed by an authenticated admin', sourceChange.response.status === 200 && sourceChange.body.disabled.includes('dazn'));
 
+    const ppvSources = (sourceChange.body.sources || []).filter(item => item.provider === 'ppv');
+    check('all 9 PPV sources are labelled with (PPV) and grouped under provider ppv',
+      ppvSources.length === 9 && ppvSources.every(item => /\(PPV\)$/.test(item.label)) &&
+      !(sourceChange.body.sources || []).some(item => item.provider === 'taifood'));
+    const ppvBulkOff = await request('/admin/api/stream/sources/bulk', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv', action: 'disable' })
+    });
+    check('bulk PPV group toggle disables all 9 PPV sources', ppvBulkOff.response.status === 200 && ppvBulkOff.body.touched === 9);
+    await request('/admin/api/stream/sources/bulk', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv', action: 'enable' })
+    });
+
+    const { createStreamResolver } = require('../stream-resolver');
+    const mockResolver = createStreamResolver({
+      fetchImpl: async (url) => {
+        if (String(url).includes('api.ppv.st/api/streams')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              streams: [{
+                category: 'Motorsports',
+                streams: [{
+                  id: 31852,
+                  name: 'São Paulo Grand Prix - Qualifying',
+                  tag: 'Formula 1',
+                  source_tag: 'HD | Sky Sports F1',
+                  uri_name: 'f1/2026/brazil/qualifying',
+                  locale: 'en-gb',
+                  iframe: 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying',
+                  substreams: [
+                    { id: 1031852, source_tag: 'SD | Sky Sports F1', locale: 'en-gb', iframe: 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying_540p' },
+                    { id: 31854, source_tag: 'HD | Apple TV (F1TV)', locale: 'en-us', iframe: 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31854' },
+                    { id: 1031854, source_tag: 'SD | Apple TV (F1TV)', locale: 'en-us', iframe: 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31854_540p' },
+                    { id: 31858, source_tag: 'HD | Sky Sport F1', locale: 'it', iframe: 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31858' },
+                    { id: 31857, source_tag: 'HD | Sky Sport F1', locale: 'de', iframe: 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31857' }
+                  ]
+                }]
+              }]
+            })
+          };
+        }
+        return { ok: false, status: 503, json: async () => ({}), text: async () => '' };
+      }
+    });
+    const ppvCatalog = await mockResolver.taifoodChannels();
+    const chipRows = await mockResolver.chipAddresses();
+    const chipById = new Map(chipRows.map(row => [row.id, row]));
+    check('stream-resolver builds PPV channels from api.ppv.st/api/streams and drops all 540p variants',
+      ppvCatalog.ppv === 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying' &&
+      ppvCatalog.list.length === 3 &&
+      ppvCatalog.list.every(item => !/540p/i.test(item.uri)) &&
+      chipById.get('ppv')?.current === 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying' &&
+      chipById.get('appletv')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31854' &&
+      chipById.get('sky-italia')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31858' &&
+      chipById.get('sky-de')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31857');
+
     const badOverride = await request('/admin/api/stream/override', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ url: 'http://insecure.example/video.mp4' })
     });
