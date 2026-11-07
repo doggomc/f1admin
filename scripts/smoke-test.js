@@ -209,11 +209,20 @@ function nextConfigEvent(reader) {
     });
     check('Home cannot be disabled through Page Control', invalidPage.response.status === 400);
     const pageOutage = await request('/admin/api/pages', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['standings'] })
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['standings', 'help'] })
     });
     check('authenticated admin can set Standings to Partial Outage', pageOutage.response.status === 200 && pageOutage.body.pages?.disabled?.includes('standings'));
     const pushedPageOutage = await readNextConfigEvent();
-    check('Page Control outage is broadcast immediately to open public tabs', pushedPageOutage.pages?.disabled?.includes('standings'));
+    check('Page Control outage is broadcast immediately to open public tabs',
+      pushedPageOutage.pages?.disabled?.includes('standings') && pushedPageOutage.pages?.disabled?.includes('help'));
+    const pausedHelpConfig = await request('/api/help/config', { headers: { Origin: 'https://freef1.netlify.app' } });
+    const pausedHelpCreate = await request('/api/help/tickets', {
+      method: 'POST',
+      headers: { Origin: 'https://freef1.netlify.app', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Tester', category: 'website', message: 'Testing paused help desk.' })
+    });
+    check('disabling Help in Page Control pauses /api/help/config and blocks ticket creation with 503',
+      pausedHelpConfig.body.available === false && pausedHelpConfig.body.pausedByAdmin === true && pausedHelpCreate.response.status === 503);
     const restorePages = await request('/admin/api/pages', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: [] })
     });

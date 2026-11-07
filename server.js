@@ -898,11 +898,17 @@ app.get('/api/site/updates', async (_req, res) => {
   sendSiteConfigEvent(res);
 });
 
+function isHelpPausedByAdmin() {
+  return Boolean(state.maintenance?.active) || state.pages.disabled.includes('help');
+}
+
 app.get('/api/help/config', async (_req, res) => {
   await helpTicketService.ready;
+  const pausedByAdmin = isHelpPausedByAdmin();
   res.setHeader('Cache-Control', 'no-store');
   res.json({
-    available: helpTicketService.availability().available,
+    available: !pausedByAdmin && helpTicketService.availability().available,
+    pausedByAdmin,
     categories: HELP_CATEGORIES,
     limits: { initialMessage: 4000, chatMessage: 2000, messagesPerMinute: 10 },
     uploadsEnabled: false,
@@ -910,6 +916,10 @@ app.get('/api/help/config', async (_req, res) => {
 });
 
 app.post('/api/help/tickets', async (req, res) => {
+  if (isHelpPausedByAdmin()) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(503).json({ error: 'The Help desk is temporarily paused by Race Control.' });
+  }
   try {
     const result = await helpTicketService.createTicket({
       token: helpTokenFromRequest(req),
@@ -944,6 +954,10 @@ app.get('/api/help/ticket', async (req, res) => {
 });
 
 app.post('/api/help/ticket/messages', async (req, res) => {
+  if (isHelpPausedByAdmin()) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(503).json({ error: 'The Help desk is temporarily paused by Race Control.' });
+  }
   try {
     const result = await helpTicketService.sendMessage({ token: helpTokenFromRequest(req), text: req.body?.text });
     res.setHeader('Cache-Control', 'no-store');
