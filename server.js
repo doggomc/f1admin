@@ -154,8 +154,8 @@ function normalizeOrigin(value) {
 
 function isPublicSiteOrigin(origin) {
   if (ALLOWED_ORIGINS.has(origin)) return true;
-  // Netlify deploy previews and branch deploys for this project share the production suffix.
-  if (/^https:\/\/[a-z0-9-]+--freef1\.netlify\.app$/i.test(origin)) return true;
+  // Production + mirror Netlify projects (freef1..freef9) and their deploy previews / branch deploys.
+  if (/^https:\/\/(?:[a-z0-9-]+--)?freef[1-9]\.netlify\.app$/i.test(origin)) return true;
   if (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin)) {
     return true;
   }

@@ -369,11 +369,16 @@ function nextConfigEvent(reader) {
       keyRelay.body.length === 16 &&
       chipById.get('weelo-stripped-skyweelo')?.wouldUse === '/api/stream/weellz-embed?stream=dflgjhacdfahpgchehacbdacoekfacieee');
     const previewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-42--freef1.netlify.app' } });
+    const mirrorPreviewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-8--freef2.netlify.app' } });
+    const rogueNetlify = await request('/api/site/config', { headers: { Origin: 'https://random-other-site.netlify.app' } });
     const badWeellzEmbed = await request('/api/stream/weellz-embed?stream=bad$id');
     const badWeellzKey = await request('/api/stream/weellz-key/testkid?t=badtoken', { headers: { Origin: 'null' } });
     check('Netlify deploy previews and sandboxed weellz relay CORS headers are accepted',
       previewConfig.response.status === 200 &&
       previewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-42--freef1.netlify.app' &&
+      mirrorPreviewConfig.response.status === 200 &&
+      mirrorPreviewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-8--freef2.netlify.app' &&
+      rogueNetlify.response.status === 403 &&
       badWeellzEmbed.response.status === 400 &&
       badWeellzKey.response.status === 400 &&
       badWeellzKey.response.headers.get('access-control-allow-origin') === '*' &&
