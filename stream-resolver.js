@@ -23,26 +23,43 @@ const EMBDLOL_EMBED = 'https://embdlol.st/embed/';
    channel is matched by shape, never by a fixed name — a fixed name is what made the 4K chip
    report "not upstream" while a 4K channel was sitting in the directory. */
 const UHD_CHANNEL_NAME = 'f1friuhd';                 // kept for the summary output
-const UHD_PATTERN = /^f1[a-z]*uhd$/;
-const isUhdChannel = (name) => UHD_PATTERN.test(String(name || '').trim().toLowerCase());
 
-/* F1 channel names, normalised to the feed they carry, whichever event prefix they use. */
-/* Longest first, and the short codes ('ita', 'deu') are included: embdlol renames its F1 channels
-   for every race, and Mexico published f1mexicosatita / f1mexicosatdeu rather than the long names.
-   Matched against a feed key, these aliases are what a chip's key is compared to. */
-const FEED_SUFFIXES = ['fullhd1', 'fullhd3', 'italian', 'spanish', 'german', 'skyit', 'skyde',
-  'apple', 'world', 'dazn', 'sky', 'esp', 'ita', 'deu', 'uhd'];
-const FEED_PATTERN = new RegExp(`^f1[a-z]*?(${FEED_SUFFIXES.join('|')})$`);
-/* The short codes embdlol uses today and the long key a chip uses. Without this, today's
-   f1mexicosatita never matches the 'italian' chip and the whole EMB block reads "no channel". */
-const FEED_ALIASES = { esp: 'spanish', ita: 'italian', deu: 'german', skyit: 'skyit', skyde: 'skyde' };
+/* F1 channel names, normalised to the feed they carry, whichever event prefix or separator they use
+   (e.g. 'f1mexicosatuhd' OR 'F1 - Sao Paulo - Saturday - UHD' / 'ATV' / 'Sky' / 'DAZN' / 'SkyIT' / 'SkyDE'). */
+const FEED_SUFFIXES = [
+  'fullhd1', 'fullhd2', 'fullhd3',
+  'italian', 'spanish', 'german',
+  'skyita', 'skydeu', 'skyit', 'skyde', 'skyuk',
+  'appletv', 'apple', 'f1tv', 'world', 'dazn',
+  'atv', 'sky', 'esp', 'ita', 'deu', 'uhd', '4k'
+];
+const FEED_PATTERN = new RegExp(`^f1[a-z0-9]*?(${FEED_SUFFIXES.join('|')})$`);
+const FEED_ALIASES = {
+  fullhd2: 'fullhd3',
+  skyuk: 'sky',
+  atv: 'apple',
+  appletv: 'apple',
+  f1tv: 'apple',
+  skyita: 'skyit',
+  skydeu: 'skyde',
+  esp: 'spanish',
+  ita: 'italian',
+  deu: 'german',
+  skyit: 'skyit',
+  skyde: 'skyde',
+  '4k': 'uhd'
+};
 function feedKey(name) {
-  /* Some entries are bare ('german', 'fullhd3'), others carry the race prefix ('f1frigerman'). */
-  const flat = String(name || '').trim().toLowerCase().replace(/[\s_]/g, '');
-  if (FEED_SUFFIXES.includes(flat)) return flat;
+  const raw = String(name || '').trim().toLowerCase();
+  if (!raw || /(?:360|480|540)p\b/.test(raw)) return '';
+  if (/^(?:f[234]\b|formula\s*[234e]\b)/.test(raw)) return '';
+  const flat = raw.replace(/^formula[\s_-]*1\b/, 'f1').replace(/[\s_-]+/g, '');
+  if (!/^[a-z0-9]+$/.test(flat)) return '';
+  if (FEED_SUFFIXES.includes(flat)) return FEED_ALIASES[flat] || flat;
   const match = flat.match(FEED_PATTERN);
   return match ? (FEED_ALIASES[match[1]] || match[1]) : '';
 }
+const isUhdChannel = (name) => feedKey(name) === 'uhd';
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
 /* How long the published channel list is trusted. This used to be 30 minutes, which is far too
@@ -438,12 +455,29 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         seen.set(key, true);
         next.set(key, String(channel.id));
       }
+      /* When embdlol names its two English HD feeds 'Sky' and 'ATV'/'Apple' rather than
+         'fullhd1'/'fullhd3', map them onto the two English HD chips. */
+      if (next.has('sky') && !next.has('fullhd1')) next.set('fullhd1', next.get('sky'));
+      if (next.has('apple') && !next.has('fullhd3')) next.set('fullhd3', next.get('apple'));
       catalogueChannels = next;
       catalogueAt = Date.now();
     } catch (_) {
       /* Directory unreachable: report unknown rather than claiming a channel is missing. */
     }
     return catalogueChannels;
+  }
+
+  /* Public EMB channel map for browser fallback when api.embdlol.st/struct is unreachable directly.
+     Excludes 'uhd' so 4K stays behind /api/stream/uhd. */
+  async function embdlolPublicChannels() {
+    const map = await embdlolChannels();
+    const channels = {};
+    if (map instanceof Map) {
+      for (const [key, id] of map.entries()) {
+        if (key && key !== 'uhd' && id) channels[key] = id;
+      }
+    }
+    return { channels, at: catalogueAt || null };
   }
 
   /* weelo publishes its own status map, and that map is the only trustworthy word on whether an
@@ -716,8 +750,6 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         if (!/f1|formula/i.test(name)) continue;
         out[name] = { status: channel?.status === 'online' ? 'live' : 'offline', source: 'catalogue' };
       }
-      catalogueChannels = out;
-      catalogueAt = Date.now();
       return out;
     } catch (_) {
       return {};
@@ -766,7 +798,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
 
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own
      origin), so it is relayed from here. */
-  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState, taifoodChannels, chipAddresses };
+  return { resolveUhdUrl, resolveDynamic, getHealth, summary, listSources, mirrorsFor, weeloState, taifoodChannels, embdlolPublicChannels, chipAddresses };
 }
 
 module.exports = { createStreamResolver, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

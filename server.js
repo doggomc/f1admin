@@ -844,6 +844,18 @@ app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
   }
 });
 
+/* EMB F1 channel map relay (excludes UHD, backs up direct api.embdlol.st/struct browser fetches). */
+app.get('/api/stream/embdlol', async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  try {
+    const { channels, at } = await streamResolver.embdlolPublicChannels();
+    return res.json({ channels, count: Object.keys(channels).length, updatedAt: at });
+  } catch (error) {
+    console.error('[streams] embdlol list failed:', error?.message || error);
+    return res.status(503).json({ error: 'Channel list unavailable.', code: 'unavailable' });
+  }
+});
+
 app.get('/api/stream/weelo', async (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=15');
   try {

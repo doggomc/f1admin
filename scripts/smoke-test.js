@@ -283,6 +283,25 @@ function nextConfigEvent(reader) {
     const { createStreamResolver } = require('../stream-resolver');
     const mockResolver = createStreamResolver({
       fetchImpl: async (url) => {
+        if (String(url).includes('api.embdlol.st/struct')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              code: 200,
+              channels: [
+                { id: '01a1b4d1-abab-728d-aedb-b4334056751d', channelname: 'Moto3/2/GP - Qatar - Saturday - DAZN' },
+                { id: '01a1b624-6a06-75eb-8927-bcfc1c37791e', channelname: 'F1 - Sao Paulo - Saturday - Sky' },
+                { id: '01a1b624-c0dd-7119-9596-76d79e8b5b9a', channelname: 'F1 - Sao Paulo - Saturday - UHD' },
+                { id: '01a1b625-3629-7451-a024-99b4b0b14854', channelname: 'F1 - Sao Paulo - Saturday - ATV' },
+                { id: '01a1b626-1295-72f0-9a1a-3d168ccd10f2', channelname: 'F1 - Sao Paulo - Saturday - 540p' },
+                { id: '01a1b627-f5e0-71bd-bc45-f66b79cfeea5', channelname: 'F1 - Sao Paulo - Saturday - DAZN' },
+                { id: '01a1b628-a900-70e8-b24e-79cb9c2f8a99', channelname: 'F1 - Sao Paulo - Saturday - SkyIT' },
+                { id: '01a1b62b-689c-768f-86c0-f804724b0497', channelname: 'F1 - Sao Paulo - Saturday - SkyDE' }
+              ]
+            })
+          };
+        }
         if (String(url).includes('api.ppv.st/api/streams')) {
           return {
             ok: true,
@@ -324,6 +343,13 @@ function nextConfigEvent(reader) {
       chipById.get('appletv')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31854' &&
       chipById.get('sky-italia')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31858' &&
       chipById.get('sky-de')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31857');
+    check('stream-resolver resolves hyphenated EMB F1 channels (Sky, ATV, UHD, DAZN, SkyIT, SkyDE) and drops 540p/MotoGP',
+      chipById.get('emb-fullhd1')?.current === 'https://embdlol.st/embed/01a1b624-6a06-75eb-8927-bcfc1c37791e' &&
+      chipById.get('emb-fullhd3')?.current === 'https://embdlol.st/embed/01a1b625-3629-7451-a024-99b4b0b14854' &&
+      chipById.get('emb-uhd')?.current === 'https://embdlol.st/embed/01a1b624-c0dd-7119-9596-76d79e8b5b9a' &&
+      chipById.get('emb-dazn')?.current === 'https://embdlol.st/embed/01a1b627-f5e0-71bd-bc45-f66b79cfeea5' &&
+      chipById.get('emb-skyit')?.current === 'https://embdlol.st/embed/01a1b628-a900-70e8-b24e-79cb9c2f8a99' &&
+      chipById.get('emb-skyde')?.current === 'https://embdlol.st/embed/01a1b62b-689c-768f-86c0-f804724b0497');
 
     const badOverride = await request('/admin/api/stream/override', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ url: 'http://insecure.example/video.mp4' })
