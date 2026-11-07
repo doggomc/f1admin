@@ -192,6 +192,12 @@ class HelpTicketService {
     return Object.values(this.state.tickets).find(ticket => ticket.status === 'open' && ticket.channelId === String(channelId)) || null;
   }
 
+  openChannelIds() {
+    return Object.values(this.state.tickets)
+      .filter(ticket => ticket && ticket.status === 'open' && /^\d{17,20}$/.test(String(ticket.channelId || '')))
+      .map(ticket => String(ticket.channelId));
+  }
+
   requireTicket(token) {
     const hash = tokenHash(token);
     if (!hash) throw new HelpTicketError(401, 'This browser does not have a valid support key.');

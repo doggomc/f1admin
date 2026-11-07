@@ -67,6 +67,14 @@ check('session-alert scheduler deduplicates across overlapping instances and edi
   /store\.load\(\{\s*refresh:\s*true\s*\}\)/.test(bot) &&
   /channel\.messages\.edit\(soonMsgId/.test(bot) &&
   /10008/.test(bot));
+const { _test: botTest } = require('../bot/discord-bot');
+check('ticket staff role 1566540793794134226 is granted access on new and existing ticket channels',
+  Array.isArray(botTest.DEFAULT_TICKET_STAFF_ROLE_IDS) &&
+  botTest.DEFAULT_TICKET_STAFF_ROLE_IDS.includes('1566540793794134226') &&
+  botTest.parseTicketStaffRoleIds('').includes('1566540793794134226') &&
+  botTest.parseTicketStaffRoleIds('1566540793794134226, 222222222222222222').length === 2 &&
+  /for \(const roleId of ticketStaffRoleIds\)/.test(bot) &&
+  /syncTicketChannelPermissions/.test(bot));
 check('bot invite permissions now include Manage Channels',
   /permissions=1342262352/.test(fs.readFileSync(path.join(root, 'bot', 'README.md'), 'utf8')));
 

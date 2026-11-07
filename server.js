@@ -1364,6 +1364,10 @@ if (process.env.DISCORD_BOT_TOKEN) {
       ticketsEnabled: HELP_TICKETS_ENABLED,
       ticketCategoryId: process.env.DISCORD_TICKET_CATEGORY_ID || '',
       ticketStaffRoleId: process.env.DISCORD_TICKET_STAFF_ROLE_ID || '',
+      getOpenTicketChannelIds: async () => {
+        await helpTicketService.ready;
+        return helpTicketService.openChannelIds();
+      },
       onTicketReply: message => helpTicketService.handleStaffReply(message),
       readLocalJson,
       writeLocalJson,

@@ -63,6 +63,17 @@ const FREEF1_GREEN = 0x00D57E;
 const FREEF1_AMBER = 0xFFB020;
 const ROLE_NAME_RE = /^(\d{1,2}) \| ([A-Z]{3})$/;
 const SITE_LABEL = 'freef1.netlify.app';
+const DEFAULT_TICKET_STAFF_ROLE_IDS = Object.freeze(['1566540793794134226']);
+
+function parseTicketStaffRoleIds(raw) {
+  const extra = Array.isArray(raw) ? raw : String(raw || '').split(/[\s,]+/);
+  const out = [];
+  for (const candidate of [...DEFAULT_TICKET_STAFF_ROLE_IDS, ...extra]) {
+    const id = String(candidate || '').trim();
+    if (/^\d{17,20}$/.test(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
 
 /* Realistic session lengths (minutes) — the schedule carries start times
    only, and the ENDED state needs an end. Deliberately generous: a session
@@ -443,10 +454,38 @@ function start(deps) {
     PermissionFlagsBits.ReadMessageHistory,
     PermissionFlagsBits.EmbedLinks,
   ];
+  const ticketStaffRoleIds = parseTicketStaffRoleIds(deps.ticketStaffRoleIds ?? deps.ticketStaffRoleId);
 
   async function ticketGuild() {
     if (!ticketFeatureEnabled || !client.isReady()) throw new Error('Help tickets are not enabled or the bot is offline.');
     return client.guilds.cache.get(String(deps.guildId)) || client.guilds.fetch(String(deps.guildId));
+  }
+
+  async function syncTicketChannelPermissions(channelIds = []) {
+    if (!ticketFeatureEnabled || !ticketStaffRoleIds.length || !Array.isArray(channelIds) || !channelIds.length) return 0;
+    let updated = 0;
+    for (const rawChannelId of channelIds) {
+      const channelId = String(rawChannelId || '').trim();
+      if (!/^\d{17,20}$/.test(channelId)) continue;
+      try {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.permissionOverwrites?.edit) continue;
+        for (const roleId of ticketStaffRoleIds) {
+          if (roleId === String(deps.guildId)) continue;
+          await channel.permissionOverwrites.edit(
+            roleId,
+            { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, EmbedLinks: true },
+            { type: OverwriteType.Role, reason: 'Grant FreeF1 ticket staff role access' },
+          );
+        }
+        updated++;
+      } catch (error) {
+        if (Number(error?.code) !== 10003 && Number(error?.status) !== 404) {
+          log(`ticket role sync skipped (${channelId}):`, error.message);
+        }
+      }
+    }
+    return updated;
   }
 
   async function createTicketChannel({ ticketId, name, category, message, diagnostics, createdAt }) {
@@ -457,8 +496,11 @@ function start(deps) {
       { id: client.user.id, type: OverwriteType.Member, allow: ticketPermissions },
       { id: OWNER_ID, type: OverwriteType.Member, allow: ticketPermissions },
     ];
-    const staffRoleId = String(deps.ticketStaffRoleId || '').trim();
-    if (staffRoleId) overwrites.push({ id: staffRoleId, type: OverwriteType.Role, allow: ticketPermissions });
+    for (const roleId of ticketStaffRoleIds) {
+      if (roleId !== guild.id) {
+        overwrites.push({ id: roleId, type: OverwriteType.Role, allow: ticketPermissions });
+      }
+    }
 
     const options = {
       name: ticketId,
@@ -1056,6 +1098,16 @@ function start(deps) {
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 
+    if (ticketFeatureEnabled && typeof deps.getOpenTicketChannelIds === 'function') {
+      try {
+        const openChannelIds = await deps.getOpenTicketChannelIds();
+        const synced = await syncTicketChannelPermissions(openChannelIds);
+        if (synced > 0) log(`tickets: synced staff role overwrites on ${synced} open channel(s)`);
+      } catch (e) {
+        log('ticket role sync failed:', e.message);
+      }
+    }
+
     if (!schedulerStarted) {
       schedulerStarted = true;
       tickTimer = setInterval(() => { tick().catch(e => log('tick failed:', e.message)); }, TICK_MS);
@@ -1093,6 +1145,7 @@ function start(deps) {
     ticketsEnabled: ticketFeatureEnabled,
     isReady: () => client.isReady(),
     createTicketChannel,
+    syncTicketChannelPermissions,
     sendTicketMessage,
     fetchTicketMessages,
     deleteTicketChannel,
@@ -1110,6 +1163,7 @@ module.exports = {
     driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
+    parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,
     TEAMS, ALL_DRIVERS, OWNER_ID, DEFAULT_SOON_MINUTES, SESSION_MIN,
   },
 };
