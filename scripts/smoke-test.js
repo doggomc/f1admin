@@ -196,7 +196,23 @@ function nextConfigEvent(reader) {
       pushedMaintenance.maintenance?.active === true && pushedMaintenance.maintenance?.message === 'Pit stop');
     const snapshotFile = path.join(dataDir, 'race-control.json');
     const snapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
-    check('saved state remains a combined config snapshot', Boolean(snapshot.maintenance && Array.isArray(snapshot.news) && snapshot.sources && snapshot.streamOverride && snapshot.streamWindow && snapshot.experimental));
+    check('saved state remains a combined config snapshot', Boolean(snapshot.maintenance && snapshot.pages && Array.isArray(snapshot.news) && snapshot.sources && snapshot.streamOverride && snapshot.streamWindow && snapshot.experimental));
+
+    const invalidPage = await request('/admin/api/pages', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['home'] })
+    });
+    check('Home cannot be disabled through Page Control', invalidPage.response.status === 400);
+    const pageOutage = await request('/admin/api/pages', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['standings'] })
+    });
+    check('authenticated admin can set Standings to Partial Outage', pageOutage.response.status === 200 && pageOutage.body.pages?.disabled?.includes('standings'));
+    const pushedPageOutage = await readNextConfigEvent();
+    check('Page Control outage is broadcast immediately to open public tabs', pushedPageOutage.pages?.disabled?.includes('standings'));
+    const restorePages = await request('/admin/api/pages', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: [] })
+    });
+    check('authenticated admin can restore all categories online', restorePages.response.status === 200 && restorePages.body.pages?.disabled?.length === 0);
+    await readNextConfigEvent();
 
     const forceLive = await request('/admin/api/stream/window', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ active: true, reason: 'Smoke test red flag' })

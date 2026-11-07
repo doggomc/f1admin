@@ -1,257 +1,416 @@
-'use strict';
-
-/* Dashboard deliberately has no analytics client, visitor feed, heartbeat,
-   SSE connection, or recurring status/config polling. */
 const $ = (id) => document.getElementById(id);
-const app = $('app');
-const authScreen = $('authScreen');
-const loginForm = $('loginForm');
-const toast = $('toast');
-const API = '/admin/api';
+
+const DEFAULT_PAGE_LIST = [
+  { id: 'cockpit', label: 'Cockpit', path: '/cockpit.html', description: 'Live stream player, sources & multiviewer' },
+  { id: 'schedule', label: 'Schedule', path: '/schedule.html', description: 'Season calendar & weekend session times' },
+  { id: 'standings', label: 'Standings', path: '/standings.html', description: 'Drivers & Constructors championships' },
+  { id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' },
+  { id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' },
+  { id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' },
+  { id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' }
+];
+
+const PAGE_ICONS = {
+  cockpit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>',
+  schedule: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+  standings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
+  'live-timing': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M10 2h4"/></svg>',
+  drivers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  teams: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+
 let config = null;
 let editingNewsId = null;
 let sourceDraft = new Set();
-/* id -> { current, online, shipped[] } from /admin/api/stream/links */
+let customDraft = {};
 let linkReport = {};
-let linkReportAt = 0;
+let linkCheckedAt = 0;
 let sourceFilter = 'all';
 let sourceQuery = '';
+let pageSaving = false;
 let toastTimer = null;
-let forceLiveSaving = false;
-const adminNav = $('adminNav');
-const motionPreference = window.matchMedia?.('(prefers-reduced-motion: reduce)') || { matches: false };
-let navScrollFrame = 0;
 
-function syncMotionPreference() {
-  document.documentElement.classList.toggle('reduced-motion', motionPreference.matches);
+function showToast(message, tone = 'ok') {
+  const toast = $('toast');
+  toast.textContent = message;
+  toast.className = `toast show${tone === 'error' ? ' error' : ''}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3600);
 }
-syncMotionPreference();
-if (motionPreference.addEventListener) motionPreference.addEventListener('change', syncMotionPreference);
-else motionPreference.addListener?.(syncMotionPreference);
 
-function updateAdminNav() {
-  if (navScrollFrame) return;
-  navScrollFrame = requestAnimationFrame(() => {
-    navScrollFrame = 0;
-    adminNav?.classList.toggle('stuck', window.scrollY > 8);
-  });
+function setStatusLine(id, message, tone = '') {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = `status-line${tone ? ` ${tone}` : ''}`;
 }
-window.addEventListener('scroll', updateAdminNav, { passive: true });
-updateAdminNav();
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-  headers.set('Accept', 'application/json');
-  const response = await fetch(`${API}${path}`, {
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const response = await fetch(`/admin/api${path}`, {
     ...options,
-    headers,
     credentials: 'same-origin',
-    cache: 'no-store',
-    body: options.body === undefined ? undefined : JSON.stringify(options.body)
+    headers
   });
   let payload = {};
-  try { payload = await response.json(); } catch (_) {}
+  try {
+    payload = await response.json();
+  } catch (_) {}
+  if (response.status === 401 && path !== '/login' && path !== '/status') {
+    showAuth('Session expired. Sign in again.');
+    throw new Error(payload.error || 'Session expired.');
+  }
   if (!response.ok) {
-    if (response.status === 401 && path !== '/login' && path !== '/status') showLogin('Your session has ended. Please sign in again.');
-    throw new Error(payload.error || `Request failed (${response.status})`);
+    throw new Error(payload.error || `Request failed (${response.status}).`);
   }
   return payload;
 }
 
-function showLogin(message = '') {
-  app.classList.remove('open');
-  authScreen.classList.remove('hidden');
-  const error = $('authError');
-  error.textContent = message;
-  error.classList.toggle('visible', Boolean(message));
-  if (message) $('password').value = '';
+function showAuth(message = '') {
+  $('dashboard').hidden = true;
+  $('authScreen').hidden = false;
+  setStatusLine('loginError', message, message ? 'error' : '');
+  const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reducedMotion) window.scrollTo(0, 0);
+  ($('usernameInput').value ? $('passwordInput') : $('usernameInput')).focus();
 }
 
 function showDashboard() {
-  authScreen.classList.add('hidden');
-  app.classList.add('open');
-}
-
-function showToast(message, kind = '') {
-  toast.textContent = message;
-  toast.className = `toast show${kind ? ` ${kind}` : ''}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
-}
-
-function setMessage(id, message, kind = '') {
-  const element = $(id);
-  if (!element) return;
-  element.textContent = message;
-  element.className = `inline-message${kind ? ` ${kind}` : ''}`;
+  $('authScreen').hidden = true;
+  $('dashboard').hidden = false;
+  setStatusLine('loginError', '');
 }
 
 function safeDate(value) {
   const time = Number(value);
-  if (!Number.isFinite(time) || time <= 0) return '—';
-  try { return new Date(time).toLocaleString(); } catch (_) { return '—'; }
+  if (!Number.isFinite(time) || time <= 0) return 'Not set';
+  return new Date(time).toLocaleString();
+}
+
+function setPill(el, label, tone = '') {
+  if (!el) return;
+  el.textContent = label;
+  el.className = `pill${tone ? ` ${tone}` : ''}`;
+}
+
+function updateKpiStrip() {
+  const maintenanceActive = config?.maintenance?.active === true;
+  const pageList = Array.isArray(config?.pageList) && config.pageList.length ? config.pageList : DEFAULT_PAGE_LIST;
+  const disabledPages = Array.isArray(config?.pages?.disabled) ? config.pages.disabled : [];
+  const overrideActive = Boolean(config?.streamOverride?.active && config?.streamOverride?.url);
+  const windowActive = config?.streamWindow?.active === true;
+
+  $('kpiSiteDot').className = `dot${maintenanceActive ? ' amber' : ''}`;
+  $('kpiSiteVal').textContent = maintenanceActive ? 'Maintenance' : 'Online';
+  $('kpiSiteMeta').textContent = maintenanceActive
+    ? (config.maintenance.eta || 'Full-site gate active')
+    : 'Normal visitor access';
+
+  $('kpiPagesDot').className = `dot${disabledPages.length ? ' amber' : ''}`;
+  $('kpiPagesVal').textContent = disabledPages.length
+    ? `${disabledPages.length} in outage`
+    : `All ${pageList.length} online`;
+  $('kpiPagesMeta').textContent = disabledPages.length
+    ? `Paused: ${disabledPages.join(', ')}`
+    : 'No partial outages active';
+
+  $('kpiStreamDot').className = `dot${overrideActive ? ' red' : ' muted'}`;
+  $('kpiStreamVal').textContent = overrideActive ? 'Override live' : 'Normal sources';
+  $('kpiStreamMeta').textContent = overrideActive
+    ? String(config.streamOverride.url || 'Forced stream active')
+    : 'Viewer source picker active';
+
+  $('kpiWindowDot').className = `dot${windowActive ? '' : ' muted'}`;
+  $('kpiWindowVal').textContent = windowActive ? 'Forced live' : 'Auto schedule';
+  $('kpiWindowMeta').textContent = windowActive
+    ? (config.streamWindow.reason || 'Manual live window open')
+    : 'Follows F1 session calendar';
+
+  const serverDot = $('serverStatusDot');
+  const serverText = $('serverStatusText');
+  const serverPill = $('serverStatus');
+  if (maintenanceActive) {
+    serverDot.className = 'dot amber';
+    serverText.textContent = 'Maintenance on';
+    serverPill.className = 'pill is-warn';
+  } else if (disabledPages.length) {
+    serverDot.className = 'dot amber';
+    serverText.textContent = `Partial outage (${disabledPages.length})`;
+    serverPill.className = 'pill is-warn';
+  } else {
+    serverDot.className = 'dot';
+    serverText.textContent = 'Control ready';
+    serverPill.className = 'pill is-ok';
+  }
 }
 
 function updateStorage(storage = config?.storage) {
-  if (!storage) return;
-  const chip = $('storageStatus');
+  const pill = $('storageStatus');
   const detail = $('storageDetail');
-  const state = $('serverStatus');
-  const storeName = storage.store === 'upstash' ? 'Upstash Redis' : storage.store === 'local' ? 'Local file' : 'Memory only';
-  const durable = Boolean(storage.durable);
-  chip.className = `admin-chip ${durable ? 'ok' : 'warn'}`;
-  chip.querySelector('span').textContent = durable ? 'Durable storage' : 'Temporary storage';
-  detail.textContent = `${storeName}${storage.redisConfigured ? (durable ? ' · connected' : ' · configured but not confirmed') : ' · Upstash not configured'}`;
-  state.className = 'admin-chip ok';
-  state.querySelector('span').textContent = 'Control service connected';
-  if (!durable) {
-    $('storageCopy').textContent = storage.localWritable
-      ? 'Settings are saved to this instance, but a redeploy may reset them. Configure Upstash Redis (recommended) or a Render persistent disk for durable admin state. Public visitors do not create storage traffic.'
-      : 'Settings currently reside in memory and may be lost on restart. Configure Upstash Redis (recommended) or a Render persistent disk for durable admin state. Public visitors do not create storage traffic.';
+  if (!storage) {
+    setPill(pill, 'Storage unknown');
+    detail.textContent = 'Storage status has not been reported yet.';
+    return;
+  }
+  if (storage.durable) {
+    setPill(pill, 'Upstash durable', 'is-ok');
+    detail.textContent = 'Control changes persist in Upstash Redis and push immediately to open FreeF1 tabs.';
+  } else if (storage.store === 'local') {
+    setPill(pill, 'Local file store', 'is-warn');
+    detail.textContent = storage.redisConfigured
+      ? 'Upstash was unreachable on the last write; saved to local fallback storage.'
+      : 'Saved to local disk storage (set UPSTASH_REDIS_REST_URL and TOKEN for cloud durability).';
   } else {
-    $('storageCopy').textContent = 'Admin state is stored durably. Race Control serves configuration and admin actions only. The live page-connection count is handled separately by Cloudflare; this backend stores no visitor IDs or page history and runs no visitor analytics, background polling, or stream relay.';
+    setPill(pill, 'Memory only', 'is-alert');
+    detail.textContent = 'Running in memory without durable disk or Upstash persistence.';
   }
 }
 
-function acceptWrite(payload, successText) {
-  if (payload?.durable) {
-    if (config) config.storage = { ...(config.storage || {}), store: 'upstash', durable: true, redisConfigured: true };
-    updateStorage(config?.storage);
-    showToast(successText, 'success');
-  } else {
-    if (config) config.storage = {
+function acceptWrite(result, okMessage, statusId = '') {
+  if (config) {
+    config.storage = {
       ...(config.storage || {}),
-      store: payload?.store || (payload?.localSaved ? 'local' : 'memory'),
-      durable: false
+      durable: Boolean(result.durable),
+      store: result.store || config.storage?.store || 'memory'
     };
-    updateStorage(config?.storage);
-    showToast(`${successText} Saved locally, but not confirmed in durable storage.`, 'error');
+    updateStorage(config.storage);
+  }
+  const message = result.durable || !config?.storage?.redisConfigured
+    ? okMessage
+    : `${okMessage} Upstash did not confirm; saved locally.`;
+  const tone = result.durable || !config?.storage?.redisConfigured ? 'ok' : 'error';
+  if (statusId) setStatusLine(statusId, message, tone);
+  showToast(message, tone);
+}
+
+/* ── Page Control (Partial Outage per Category) ── */
+function renderPages() {
+  const listEl = $('pageControlList');
+  if (!listEl) return;
+  listEl.replaceChildren();
+
+  const pageList = Array.isArray(config?.pageList) && config.pageList.length ? config.pageList : DEFAULT_PAGE_LIST;
+  const disabledSet = new Set((config?.pages?.disabled || []).map((id) => String(id).toLowerCase()));
+  const count = disabledSet.size;
+
+  const badge = $('pageControlBadge');
+  const banner = $('pageControlStatus');
+  if (count > 0) {
+    setPill(badge, `Partial outage · ${count} off`, 'is-warn');
+    banner.className = 'state-banner is-active';
+    const labels = pageList.filter((p) => disabledSet.has(p.id)).map((p) => p.label);
+    $('pageControlStateLabel').textContent = `Partial outage on ${labels.join(', ')}`;
+    $('pageControlStateText').textContent = 'Visitors opening paused categories see "Partial Outage" with Home and Discord actions.';
+  } else {
+    setPill(badge, 'All online', 'is-ok');
+    banner.className = 'state-banner';
+    $('pageControlStateLabel').textContent = 'All categories online';
+    $('pageControlStateText').textContent = 'Every public section is serving normally. Home always remains reachable.';
+  }
+
+  $('enableAllPages').disabled = count === 0 || pageSaving;
+
+  for (const page of pageList) {
+    const enabled = !disabledSet.has(page.id);
+    const row = document.createElement('div');
+    row.className = `page-row${enabled ? '' : ' is-disabled'}`;
+    row.dataset.pageId = page.id;
+
+    const icon = document.createElement('span');
+    icon.className = 'page-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = PAGE_ICONS[page.id] || PAGE_ICONS.cockpit;
+
+    const meta = document.createElement('div');
+    meta.className = 'page-meta';
+    const name = document.createElement('div');
+    name.className = 'page-name';
+    name.textContent = page.label;
+    const pathSpan = document.createElement('span');
+    pathSpan.className = 'page-path';
+    pathSpan.textContent = page.path || `/${page.id}.html`;
+    name.append(pathSpan);
+
+    const desc = document.createElement('span');
+    desc.className = 'page-desc';
+    desc.textContent = page.description || '';
+    meta.append(name, desc);
+
+    const stateTag = document.createElement('span');
+    stateTag.className = 'page-badge';
+    stateTag.textContent = enabled ? 'Online' : 'Partial outage';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = `page-switch${enabled ? ' on' : ''}`;
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', String(enabled));
+    toggle.setAttribute('aria-label', `${enabled ? 'Disable' : 'Enable'} ${page.label}`);
+    toggle.disabled = pageSaving;
+    toggle.innerHTML = '<i aria-hidden="true"></i>';
+    toggle.addEventListener('click', () => {
+      const next = new Set((config?.pages?.disabled || []).map((id) => String(id).toLowerCase()));
+      if (next.has(page.id)) next.delete(page.id);
+      else next.add(page.id);
+      void savePageControl([...next], enabled ? `${page.label} switched to Partial Outage.` : `${page.label} restored online.`);
+    });
+
+    row.append(icon, meta, stateTag, toggle);
+    listEl.append(row);
   }
 }
 
+async function savePageControl(disabledIds, messageText) {
+  if (pageSaving) return;
+  pageSaving = true;
+  const previous = [...(config?.pages?.disabled || [])];
+  if (config) config.pages = { ...(config.pages || {}), disabled: disabledIds };
+  renderPages();
+  updateKpiStrip();
+  try {
+    const result = await api('/pages', {
+      method: 'POST',
+      body: JSON.stringify({ disabled: disabledIds })
+    });
+    config.pages = result.pages || { disabled: disabledIds, updatedAt: Date.now() };
+    if (Array.isArray(result.pageList)) config.pageList = result.pageList;
+    pageSaving = false;
+    renderPages();
+    updateKpiStrip();
+    acceptWrite(result, messageText, 'pageControlMessage');
+  } catch (error) {
+    pageSaving = false;
+    if (config) config.pages = { ...(config.pages || {}), disabled: previous };
+    renderPages();
+    updateKpiStrip();
+    setStatusLine('pageControlMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
+}
+
+/* ── Maintenance ── */
 function renderMaintenance() {
-  if (!config) return;
-  const maintenance = config.maintenance || {};
-  const active = maintenance.active === true;
-  $('maintenanceMessage').value = maintenance.message || "We'll be back before the race.";
-  $('maintenanceEta').value = maintenance.eta || 'Before lights out';
-  $('maintenanceStatus').className = `control-status ${active ? 'alert' : 'good'}`;
-  $('maintenanceStateLabel').textContent = active ? 'Maintenance mode enabled' : 'Public site is available';
-  $('maintenanceBadge').className = `panel-badge ${active ? 'live' : 'normal'}`;
-  $('maintenanceBadge').textContent = active ? 'Maintenance active' : 'Public site live';
+  const m = config?.maintenance || {};
+  const active = m.active === true;
+  $('maintenanceStatus').className = `state-banner${active ? ' is-active' : ''}`;
+  setPill($('maintenanceBadge'), active ? 'Maintenance on' : 'Live', active ? 'is-warn' : 'is-ok');
+  $('maintenanceStateLabel').textContent = active ? 'Maintenance mode is active' : 'Public site is live';
+  $('maintenanceStateText').textContent = active
+    ? `Started ${safeDate(m.startedAt)} · ETA: ${m.eta || 'Before lights out'}`
+    : 'Visitors can browse and watch normally.';
+  $('maintenanceMessage').value = m.message || "We'll be back before the race.";
+  $('maintenanceEta').value = m.eta || 'Before lights out';
   $('toggleMaintenance').textContent = active ? 'Disable maintenance' : 'Enable maintenance';
-  $('toggleMaintenance').classList.toggle('is-active', active);
-  $('maintenanceBanner').classList.toggle('active', active);
+  $('toggleMaintenance').className = active ? 'btn btn-primary' : 'btn btn-warn';
 }
 
+/* ── Stream Override ── */
 function renderOverride() {
-  if (!config) return;
-  const override = config.streamOverride || {};
+  const override = config?.streamOverride || {};
   const active = Boolean(override.active && override.url);
-  $('overrideStatus').className = `control-status ${active ? 'alert' : 'good'}`;
-  $('overrideStatus').querySelector('strong').textContent = active ? 'Race Control override is live' : 'Normal site feed';
-  $('overrideSub').textContent = active ? `${override.type || 'embed'} · started ${safeDate(override.startedAt)}` : 'No Race Control override is active.';
-  $('streamBadge').className = `panel-badge ${active ? 'live' : 'normal'}`;
-  $('streamBadge').textContent = active ? 'Override live' : 'Normal feed';
-  $('streamUrl').value = override.input || '';
+  $('overrideStatus').className = `state-banner${active ? ' is-live-override' : ''}`;
+  setPill($('overrideBadge'), active ? 'Override live' : 'Inactive', active ? 'is-alert' : '');
+  $('overrideStateLabel').textContent = active ? `Override active (${override.type || 'stream'})` : 'Normal feed list';
+  $('overrideStateUrl').textContent = active ? override.url : 'Viewers choose from the enabled Cockpit sources.';
   $('stopOverride').disabled = !active;
-  $('normalOverride').disabled = !active && !override.input;
 }
 
+/* ── Force Live Window ── */
 function renderForceLive() {
-  const force = config?.streamWindow || {};
-  const active = force.active === true;
-  $('forceLiveStatus').className = `control-status ${active ? 'alert' : 'good'}`;
-  $('forceLiveStateLabel').textContent = active ? 'Force Live is active' : 'Schedule window active';
-  $('forceLiveStateText').textContent = active
-    ? `Schedule checks are bypassed${force.reason ? ` · ${force.reason}` : ''}${force.startedAt ? ` · started ${safeDate(force.startedAt)}` : ''}.`
-    : 'Streams follow their scheduled availability windows.';
-  $('forceLiveBadge').className = `panel-badge ${active ? 'live' : 'normal'}`;
-  $('forceLiveBadge').textContent = active ? 'Forced live' : 'Schedule window';
-  $('forceLiveReason').value = active ? (force.reason || '') : $('forceLiveReason').value;
-  $('enableForceLive').disabled = active || forceLiveSaving;
-  $('disableForceLive').disabled = !active || forceLiveSaving;
+  const win = config?.streamWindow || {};
+  const active = win.active === true;
+  $('forceLiveStatus').className = `state-banner${active ? ' is-active' : ''}`;
+  setPill($('forceLiveBadge'), active ? 'Forced live' : 'Schedule', active ? 'is-ok' : '');
+  $('forceLiveStateLabel').textContent = active ? 'Force Live is active' : 'Following session schedule';
+  $('forceLiveStateDetail').textContent = active
+    ? `${win.reason ? `${win.reason} · ` : ''}Opened ${safeDate(win.startedAt)}`
+    : 'Streams unlock automatically during official race weekend windows.';
+  $('forceLiveReason').value = win.reason || '';
+  $('disableForceLive').disabled = !active;
 }
 
-/* What is typed in the custom fields, before it is saved. Seeded from the saved state each render. */
-let customDraft = {};
-
-/* ── whole-group actions ────────────────────────────────────────────────
-   One request per group: 'disable all EMB' used to mean toggling nine switches by
-   hand, and any of them failing left the group half-off. */
-const BULK_GROUPS = [
-  { key: 'emb', label: 'EMB' },
-  { key: 'weelo', label: 'weelo' },
-  { key: 'taifood', label: 'taifood' },
-  { key: 'strmfree', label: 'strmfree' },
-  { key: 'other', label: 'Other tab' },
-  { key: 'special', label: 'Onboards' },
-  { key: 'all', label: 'Everything' }
+/* ── Stream Sources ── */
+const FILTER_GROUPS = [
+  ['all', 'All', () => true],
+  ['on', 'Visible', (s) => !sourceDraft.has(s.id)],
+  ['off', 'Hidden', (s) => sourceDraft.has(s.id)],
+  ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online)],
+  ['emb', 'EMB', (s) => s.provider === 'embdlol'],
+  ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
+  ['taifood', 'Taifood', (s) => s.provider === 'taifood'],
+  ['other', 'Other langs', (s) => s.tab === 'other'],
+  ['special', 'Special', (s) => Boolean(s.special)]
 ];
 
+const BULK_GROUPS = [
+  ['emb', 'EMB'],
+  ['weelo', 'Weelo'],
+  ['taifood', 'Taifood'],
+  ['strmfree', 'StreamFree'],
+  ['other', 'Other langs'],
+  ['all', 'Every source']
+];
+
+function renderFilterChips() {
+  const bar = $('sourceFilters');
+  if (!bar) return;
+  bar.replaceChildren();
+  const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
+  for (const [key, label, match] of FILTER_GROUPS) {
+    const count = sources.filter(match).length;
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `filter-chip${sourceFilter === key ? ' is-active' : ''}`;
+    chip.innerHTML = `${label} <em>${count}</em>`;
+    chip.addEventListener('click', () => {
+      sourceFilter = key;
+      renderFilterChips();
+      renderSources();
+    });
+    bar.append(chip);
+  }
+}
+
 function renderBulkGroups() {
-  const host = $('bulkGroups');
-  if (!host) return;
-  host.replaceChildren();
-  for (const group of BULK_GROUPS) {
-    const wrap = document.createElement('div');
+  const bar = $('sourceBulk');
+  if (!bar) return;
+  bar.replaceChildren();
+  for (const [group, label] of BULK_GROUPS) {
+    const wrap = document.createElement('span');
     wrap.className = 'bulk-group';
-    const name = document.createElement('span');
-    name.className = 'bulk-name';
-    name.textContent = group.label;
-    const off = document.createElement('button');
-    off.type = 'button';
-    off.className = 'btn xs danger';
-    off.textContent = 'Disable';
-    off.addEventListener('click', () => bulkSources(group, 'disable', off));
+    const title = document.createElement('span');
+    title.textContent = label;
     const on = document.createElement('button');
     on.type = 'button';
-    on.className = 'btn xs';
-    on.textContent = 'Enable';
-    on.addEventListener('click', () => bulkSources(group, 'enable', on));
-    wrap.append(name, off, on);
-    host.append(wrap);
+    on.textContent = 'On';
+    on.title = `Enable all ${label} sources immediately`;
+    on.addEventListener('click', () => bulkGroup(group, 'enable', label));
+    const off = document.createElement('button');
+    off.type = 'button';
+    off.textContent = 'Off';
+    off.title = `Disable all ${label} sources immediately`;
+    off.addEventListener('click', () => bulkGroup(group, 'disable', label));
+    wrap.append(title, on, off);
+    bar.append(wrap);
   }
 }
 
-async function bulkSources(group, action, button) {
-  const message = $('sourceMessage');
-  const verb = action === 'disable' ? 'Disabling' : 'Enabling';
-  button.disabled = true;
-  if (message) message.textContent = `${verb} every ${group.label} source…`;
+async function bulkGroup(group, action, label) {
   try {
-    const result = await api('/stream/sources/bulk', { method: 'POST', body: { action, group: group.key } });
-    config.sources = { disabled: result.disabled || [], updatedAt: result.updatedAt || Date.now() };
-    sourceDraft = new Set((result.disabled || []).map(String));
-    renderSourcesFromDraft();
-    const total = result.touched ?? 0;
-    if (message) message.textContent = `${action === 'disable' ? 'Hidden' : 'Shown'} ${total} source${total === 1 ? '' : 's'} under ${group.label}. Live now.`;
-  } catch (error) {
-    if (message) message.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-/* ── live links ──────────────────────────────────────────────────────── */
-async function loadLinks({ quiet = false } = {}) {
-  const message = $('sourceMessage');
-  if (!quiet && message) message.textContent = 'Reading the current links…';
-  try {
-    const result = await api('/stream/links');
-    linkReport = {};
-    for (const row of result.streams || []) linkReport[row.id] = row;
-    linkReportAt = result.checkedAt || Date.now();
-    if (message) {
-      const live = Object.values(linkReport).filter((row) => row.online).length;
-      message.textContent = live
-        ? `${live} of ${Object.keys(linkReport).length} sources have an address right now.`
-        : 'No source has an address right now.';
-    }
+    const result = await api('/stream/sources/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ group, action })
+    });
+    config.sources.disabled = result.disabled || [];
+    sourceDraft = new Set(config.sources.disabled.map(String));
+    renderFilterChips();
     renderSources();
+    acceptWrite(result, `${label}: ${action === 'enable' ? 'enabled' : 'hidden'} (${result.touched}).`, 'sourcesMessage');
   } catch (error) {
-    if (message) message.textContent = error.message;
+    setStatusLine('sourcesMessage', error.message, 'error');
+    showToast(error.message, 'error');
   }
 }
 
@@ -261,12 +420,35 @@ const whenLabel = (at) => {
   return secs < 60 ? `${secs}s ago` : `${Math.round(secs / 60)}m ago`;
 };
 
+async function loadLinks({ quiet = false } = {}) {
+  if (!quiet) setStatusLine('sourcesMessage', 'Checking live provider links…');
+  try {
+    const report = await api('/stream/links');
+    linkReport = {};
+    for (const row of report.streams || []) linkReport[row.id] = row;
+    linkCheckedAt = Number(report.checkedAt) || Date.now();
+    renderFilterChips();
+    if (!quiet) {
+      const live = Object.values(linkReport).filter((r) => r.online).length;
+      setStatusLine(
+        'sourcesMessage',
+        live ? `${live} source${live === 1 ? '' : 's'} resolved a live link (${whenLabel(linkCheckedAt)}).` : 'No source reported a live address right now.',
+        live ? 'ok' : ''
+      );
+    }
+    renderSources();
+  } catch (error) {
+    if (!quiet) setStatusLine('sourcesMessage', error.message, 'error');
+  }
+}
+
 function renderSources() {
   const list = $('sourceList');
   list.replaceChildren();
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   sourceDraft = new Set((config?.sources?.disabled || []).map(String));
   customDraft = {};
+
   const visible = sources.filter((source) => {
     if (sourceQuery) {
       const needle = sourceQuery.toLowerCase();
@@ -282,6 +464,7 @@ function renderSources() {
       : sourceFilter === 'other' ? source.tab === 'other'
       : Boolean(source.special);
   });
+
   if (!visible.length) {
     const empty = document.createElement('p');
     empty.className = 'section-note';
@@ -289,13 +472,17 @@ function renderSources() {
     list.append(empty);
     return;
   }
+
   for (const source of visible) {
     const enabled = !sourceDraft.has(source.id);
     const row = document.createElement('div');
     row.className = `source-row${enabled ? '' : ' is-off'}`;
+    row.dataset.sourceId = source.id;
+    row.dataset.provider = source.provider || '';
+    row.dataset.tab = source.tab || '';
+
     const name = document.createElement('span');
     name.className = 'source-name';
-    /* The tab is shown next to the label so Race Control reads the row the way a visitor does. */
     name.textContent = source.label;
     if (source.tab === 'other' || source.special) {
       const tag = document.createElement('em');
@@ -303,13 +490,15 @@ function renderSources() {
       tag.textContent = source.special ? source.special : 'other';
       name.append(' ', tag);
     }
+
     const id = document.createElement('span');
     id.className = 'source-id';
     id.textContent = source.id;
+
     const status = document.createElement('span');
     status.className = 'source-state';
-    /* A weelo chip carries the provider's own state when it is known. */
     status.textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `source-switch${enabled ? ' on' : ''}`;
@@ -321,13 +510,9 @@ function renderSources() {
       else sourceDraft.add(source.id);
       renderSourcesFromDraft();
     });
-    /* The custom fields: what the chip says, and the address it opens. Both start as the shipped
-       value so Race Control can see at a glance what is live and what has been changed. */
+
     const custom = document.createElement('div');
     custom.className = 'source-custom';
-    row.dataset.sourceId = source.id;
-    row.dataset.provider = source.provider || '';
-    row.dataset.tab = source.tab || '';
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.maxLength = 40;
@@ -335,18 +520,19 @@ function renderSources() {
     nameInput.placeholder = `Name: ${source.baseLabel || source.label}`;
     nameInput.setAttribute('aria-label', `Custom name for ${source.label}`);
     nameInput.className = source.customLabel ? 'is-set' : '';
+
     const linkInput = document.createElement('input');
     linkInput.type = 'url';
     linkInput.value = source.customUrl || '';
     linkInput.placeholder = 'Link: shipped default';
     linkInput.setAttribute('aria-label', `Custom link for ${source.label}`);
     linkInput.className = source.customUrl ? 'is-set' : '';
+
     customDraft[source.id] = { label: source.customLabel || '', url: source.customUrl || '' };
     nameInput.addEventListener('input', () => { customDraft[source.id].label = nameInput.value; });
     linkInput.addEventListener('input', () => { customDraft[source.id].url = linkInput.value; });
     custom.append(nameInput, linkInput);
 
-    /* What this chip would open right now, and where that address came from. */
     const live = linkReport[source.id];
     const address = document.createElement('div');
     address.className = 'source-address';
@@ -362,10 +548,10 @@ function renderSources() {
       link.title = live.current;
       const from = document.createElement('em');
       from.className = 'addr-from';
-      from.textContent = live.customUrl ? 'custom' : (live.shipped[0]?.from || 'shipped');
+      from.textContent = live.customUrl ? 'custom' : (live.shipped?.[0]?.from || 'shipped');
       address.append(link, from);
     } else {
-      address.innerHTML = '<span class="addr-empty">No address right now</span>';
+      address.innerHTML = '<span class="addr-empty">No live address reported right now</span>';
     }
     if (live?.shipped?.length > 1) {
       const more = document.createElement('span');
@@ -384,7 +570,6 @@ function renderSourcesFromDraft() {
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   const list = $('sourceList');
   [...list.children].forEach((row) => {
-    /* Read the id off the row: the list is filtered, so its position no longer indexes sourceList. */
     const source = sources.find((entry) => entry.id === row.dataset.sourceId);
     if (!source) return;
     const enabled = !sourceDraft.has(source.id);
@@ -397,6 +582,7 @@ function renderSourcesFromDraft() {
   });
 }
 
+/* ── Public News ── */
 function renderNews() {
   const container = $('newsList');
   container.replaceChildren();
@@ -404,7 +590,7 @@ function renderNews() {
   if (!items.length) {
     const empty = document.createElement('p');
     empty.className = 'storage-copy';
-    empty.textContent = 'No public news items yet.';
+    empty.textContent = 'No public news items published yet.';
     container.append(empty);
     return;
   }
@@ -420,6 +606,7 @@ function renderNews() {
     meta.className = 'news-card-meta';
     meta.textContent = `${item.tag || 'Race Control'} · ${item.published ? 'Published' : 'Draft'} · ${safeDate(item.updatedAt)}`;
     content.append(title, meta);
+
     const actions = document.createElement('div');
     actions.className = 'news-card-actions';
     const edit = document.createElement('button');
@@ -432,6 +619,7 @@ function renderNews() {
     remove.textContent = 'Delete';
     remove.addEventListener('click', () => deleteNewsItem(item));
     actions.append(edit, remove);
+
     head.append(content, actions);
     const body = document.createElement('p');
     body.textContent = item.body;
@@ -440,13 +628,8 @@ function renderNews() {
   }
 }
 
-/* The link report is a separate, slow-ish call (it consults three providers), so it is loaded after
-   the dashboard is already on screen and never blocks the rest of the panel. */
-function primeLinks() {
-  if (!Object.keys(linkReport).length) void loadLinks({ quiet: true });
-}
-
 function renderConfig() {
+  renderPages();
   renderMaintenance();
   renderOverride();
   renderForceLive();
@@ -455,14 +638,16 @@ function renderConfig() {
   renderSources();
   renderNews();
   updateStorage();
-  primeLinks();
-  $('configTime').textContent = `Loaded once · ${new Date().toLocaleString()}`;
+  updateKpiStrip();
+  $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
 }
 
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
   config = {
     maintenance: payload.maintenance || {},
+    pages: payload.pages || { disabled: [] },
+    pageList: Array.isArray(payload.pageList) && payload.pageList.length ? payload.pageList : DEFAULT_PAGE_LIST,
     news: payload.news || [],
     sources: payload.sources || { disabled: [] },
     streamOverride: payload.streamOverride || {},
@@ -501,278 +686,284 @@ async function deleteNewsItem(item) {
   if (!window.confirm(`Delete “${item.title}”?`)) return;
   try {
     const result = await api(`/news/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-    config.adminNews = config.adminNews.filter(entry => entry.id !== item.id);
+    config.adminNews = config.adminNews.filter((entry) => entry.id !== item.id);
     renderNews();
-    acceptWrite(result, 'News item deleted.');
+    acceptWrite(result, 'News item deleted.', 'newsMessage');
   } catch (error) {
+    setStatusLine('newsMessage', error.message, 'error');
     showToast(error.message, 'error');
   }
 }
 
-async function initialize() {
+async function saveMaintenance(active) {
+  setStatusLine('maintenanceFeedback', '');
   try {
-    const status = await api('/status');
-    if (!status.authenticated) {
-      showLogin();
-      return;
-    }
-    showDashboard();
-    await loadConfig();
+    const result = await api('/maintenance', {
+      method: 'POST',
+      body: JSON.stringify({
+        active,
+        message: $('maintenanceMessage').value,
+        eta: $('maintenanceEta').value
+      })
+    });
+    config.maintenance = result.maintenance;
+    renderMaintenance();
+    updateKpiStrip();
+    acceptWrite(result, active ? 'Maintenance enabled.' : 'Maintenance disabled.', 'maintenanceFeedback');
   } catch (error) {
-    showLogin(error.message === 'Failed to fetch' ? 'Race Control is temporarily unavailable.' : error.message);
-    $('serverStatus').className = 'admin-chip bad';
-    $('serverStatus').querySelector('span').textContent = 'Control service offline';
+    setStatusLine('maintenanceFeedback', error.message, 'error');
+    showToast(error.message, 'error');
   }
 }
 
-loginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = $('loginBtn');
-  const error = $('authError');
-  error.textContent = '';
-  error.classList.remove('visible');
-  button.disabled = true;
-  button.textContent = 'Signing in…';
+async function saveForceLive(active) {
+  setStatusLine('forceLiveMessage', '');
   try {
-    await api('/login', { method: 'POST', body: { username: $('username').value.trim(), password: $('password').value } });
-    $('password').value = '';
+    const result = await api('/stream/window', {
+      method: 'POST',
+      body: JSON.stringify({
+        active,
+        reason: $('forceLiveReason').value
+      })
+    });
+    config.streamWindow = result.streamWindow;
+    renderForceLive();
+    updateKpiStrip();
+    acceptWrite(result, active ? 'Force Live enabled.' : 'Schedule window restored.', 'forceLiveMessage');
+  } catch (error) {
+    setStatusLine('forceLiveMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
+}
+
+/* ── Event Listeners ── */
+const nav = $('adminNav');
+if (nav) {
+  const syncStuck = () => nav.classList.toggle('stuck', window.scrollY > 8);
+  window.addEventListener('scroll', syncStuck, { passive: true });
+  syncStuck();
+}
+
+$('loginForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatusLine('loginError', '');
+  const button = $('loginBtn');
+  button.disabled = true;
+  try {
+    await api('/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: $('usernameInput').value.trim(),
+        password: $('passwordInput').value
+      })
+    });
+    $('passwordInput').value = '';
     showDashboard();
-    try {
-      await loadConfig();
-    } catch (loadError) {
-      showToast(`Signed in, but settings could not load: ${loadError.message}`, 'error');
-    }
-  } catch (exception) {
-    error.textContent = exception.message;
-    error.classList.add('visible');
+    await loadConfig();
+    showToast('Signed in to Race Control.');
+  } catch (error) {
+    setStatusLine('loginError', error.message, 'error');
   } finally {
     button.disabled = false;
-    button.textContent = 'Sign In';
   }
 });
 
 $('logoutBtn').addEventListener('click', async () => {
-  try { await api('/logout', { method: 'POST', body: {} }); } catch (_) {}
+  try {
+    await api('/logout', { method: 'POST' });
+  } catch (_) {}
   config = null;
-  showLogin('Signed out.');
+  showAuth('Signed out.');
 });
 
-$('saveMaintenance').addEventListener('click', async () => {
-  if (!config) return;
-  const button = $('saveMaintenance');
-  button.disabled = true;
+$('reloadConfig').addEventListener('click', async () => {
   try {
-    const result = await api('/maintenance', {
-      method: 'POST',
-      body: {
-        active: config.maintenance.active === true,
-        message: $('maintenanceMessage').value,
-        eta: $('maintenanceEta').value
-      }
-    });
-    config.maintenance = result.maintenance;
-    renderMaintenance();
-    setMessage('maintenanceNote', 'Maintenance text saved.', 'success');
-    acceptWrite(result, 'Maintenance text saved.');
+    await loadConfig();
+    showToast('Control snapshot reloaded.');
   } catch (error) {
-    setMessage('maintenanceNote', error.message, 'error');
-  } finally { button.disabled = false; }
+    showToast(error.message, 'error');
+  }
 });
 
-$('toggleMaintenance').addEventListener('click', async () => {
-  if (!config) return;
-  const button = $('toggleMaintenance');
-  button.disabled = true;
+$('enableAllPages').addEventListener('click', () => {
+  void savePageControl([], 'All page categories restored online.');
+});
+
+$('toggleMaintenance').addEventListener('click', () => {
+  saveMaintenance(!(config?.maintenance?.active === true));
+});
+
+$('saveMaintenanceCopy').addEventListener('click', () => {
+  saveMaintenance(config?.maintenance?.active === true);
+});
+
+$('overrideForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setStatusLine('overrideMessage', '');
+  const url = $('overrideInput').value.trim();
+  if (!url) {
+    setStatusLine('overrideMessage', 'Enter an HTTPS stream URL or iframe snippet first.', 'error');
+    return;
+  }
   try {
-    const result = await api('/maintenance', {
+    const result = await api('/stream/override', {
       method: 'POST',
-      body: {
-        active: config.maintenance.active !== true,
-        message: $('maintenanceMessage').value,
-        eta: $('maintenanceEta').value
-      }
+      body: JSON.stringify({ url })
     });
-    config.maintenance = result.maintenance;
-    renderMaintenance();
-    setMessage('maintenanceNote', result.maintenance.active
-      ? 'Maintenance enabled. Connected public tabs are moving to the pit lane now.'
-      : 'Maintenance disabled. Connected maintenance pages are returning to FreeF1.', 'success');
-    acceptWrite(result, result.maintenance.active ? 'Maintenance enabled.' : 'Maintenance disabled.');
-  } catch (error) {
-    setMessage('maintenanceNote', error.message, 'error');
-  } finally { button.disabled = false; }
-});
-
-$('playOverride').addEventListener('click', async () => {
-  const button = $('playOverride');
-  button.disabled = true;
-  setMessage('overrideMessage', 'Applying override…');
-  try {
-    const result = await api('/stream/override', { method: 'POST', body: { url: $('streamUrl').value.trim() } });
     config.streamOverride = result.override;
+    $('overrideInput').value = '';
     renderOverride();
-    setMessage('overrideMessage', 'Override enabled on connected public tabs.', 'success');
-    acceptWrite(result, 'Stream override enabled.');
+    updateKpiStrip();
+    acceptWrite(result, 'Stream override started.', 'overrideMessage');
   } catch (error) {
-    setMessage('overrideMessage', error.message, 'error');
-  } finally { button.disabled = false; }
+    setStatusLine('overrideMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
 });
 
 $('stopOverride').addEventListener('click', async () => {
+  setStatusLine('overrideMessage', '');
   try {
-    const result = await api('/stream/stop', { method: 'POST', body: {} });
+    const result = await api('/stream/normal', { method: 'POST' });
     config.streamOverride = result.override;
     renderOverride();
-    setMessage('overrideMessage', 'Override stopped; saved URL retained.', 'success');
-    acceptWrite(result, 'Override stopped.');
-  } catch (error) { setMessage('overrideMessage', error.message, 'error'); }
-});
-
-$('normalOverride').addEventListener('click', async () => {
-  try {
-    const result = await api('/stream/normal', { method: 'POST', body: {} });
-    config.streamOverride = result.override;
-    renderOverride();
-    setMessage('overrideMessage', 'Normal feed restored; saved URL cleared.', 'success');
-    acceptWrite(result, 'Normal stream restored.');
-  } catch (error) { setMessage('overrideMessage', error.message, 'error'); }
-});
-
-async function setForceLive(active) {
-  if (!config || forceLiveSaving) return;
-  forceLiveSaving = true;
-  renderForceLive();
-  try {
-    const result = await api('/stream/window', {
-      method: 'POST',
-      body: { active, reason: active ? $('forceLiveReason').value.trim() : '' }
-    });
-    config.streamWindow = result.streamWindow || { active, reason: active ? $('forceLiveReason').value.trim() : '', startedAt: active ? Date.now() : null };
-    renderForceLive();
-    setMessage('forceLiveMessage', active
-      ? 'Force Live enabled. Connected public tabs update immediately.'
-      : 'Force Live disabled. Connected public tabs restore the schedule immediately.', 'success');
-    acceptWrite(result, active ? 'Force Live enabled.' : 'Force Live disabled.');
+    updateKpiStrip();
+    acceptWrite(result, 'Returned to normal stream feeds.', 'overrideMessage');
   } catch (error) {
-    setMessage('forceLiveMessage', error.message, 'error');
-  } finally {
-    forceLiveSaving = false;
-    renderForceLive();
+    setStatusLine('overrideMessage', error.message, 'error');
+    showToast(error.message, 'error');
   }
-}
-
-$('enableForceLive').addEventListener('click', () => setForceLive(true));
-$('disableForceLive').addEventListener('click', () => setForceLive(false));
-
-/* ── filters ─────────────────────────────────────────────────────────── */
-const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'live', label: 'Has an address' },
-  { key: 'on', label: 'Shown' },
-  { key: 'off', label: 'Hidden' },
-  { key: 'emb', label: 'EMB' },
-  { key: 'weelo', label: 'weelo' },
-  { key: 'taifood', label: 'taifood' },
-  { key: 'other', label: 'Other tab' },
-  { key: 'special', label: 'Onboards' }
-];
-
-function renderFilterChips() {
-  const host = $('filterChips');
-  if (!host) return;
-  host.replaceChildren();
-  for (const filter of FILTERS) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `filter-chip${sourceFilter === filter.key ? ' active' : ''}`;
-    button.textContent = filter.label;
-    button.setAttribute('aria-pressed', String(sourceFilter === filter.key));
-    button.addEventListener('click', () => {
-      sourceFilter = filter.key;
-      renderFilterChips();
-      renderSources();
-    });
-    host.append(button);
-  }
-}
-
-$('sourceSearch')?.addEventListener('input', (event) => {
-  sourceQuery = event.target.value.trim();
-  renderSources();
 });
-$('refreshLinks')?.addEventListener('click', () => loadLinks());
+
+$('forceLiveForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  saveForceLive(true);
+});
+
+$('disableForceLive').addEventListener('click', () => {
+  saveForceLive(false);
+});
 
 $('saveSources').addEventListener('click', async () => {
-  const button = $('saveSources');
-  button.disabled = true;
+  setStatusLine('sourcesMessage', '');
   try {
-    const result = await api('/stream/sources', { method: 'POST', body: { disabled: [...sourceDraft] } });
-    config.sources = { disabled: result.disabled || [...sourceDraft], updatedAt: result.updatedAt || Date.now() };
-    /* Names and links are saved per chip, so one bad address only rejects its own row. */
-    const failures = [];
-    for (const source of (config.sourceList || [])) {
+    const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
+    const changed = sources.filter((source) => {
       const draft = customDraft[source.id];
-      if (!draft) continue;
-      const label = draft.label.trim();
-      const url = draft.url.trim();
-      if (label === (source.customLabel || '') && url === (source.customUrl || '')) continue;
-      try {
-        await api('/stream/chip', { method: 'POST', body: { id: source.id, label, url } });
-      } catch (error) {
-        failures.push(`${source.label}: ${error.message}`);
-      }
+      if (!draft) return false;
+      return draft.label.trim() !== (source.customLabel || '') || draft.url.trim() !== (source.customUrl || '');
+    });
+    for (const source of changed) {
+      const draft = customDraft[source.id];
+      const reply = await api('/stream/chip', {
+        method: 'POST',
+        body: JSON.stringify({ id: source.id, label: draft.label, url: draft.url })
+      });
+      if (Array.isArray(reply.sourceList)) config.sourceList = reply.sourceList;
+    }
+    const result = await api('/stream/sources', {
+      method: 'POST',
+      body: JSON.stringify({ disabled: [...sourceDraft] })
+    });
+    config.sources.disabled = result.disabled || [];
+    if (Array.isArray(result.sourceList)) config.sourceList = result.sourceList;
+    renderFilterChips();
+    renderSources();
+    acceptWrite(result, changed.length ? `Source settings saved (${changed.length} custom).` : 'Source settings saved.', 'sourcesMessage');
+  } catch (error) {
+    setStatusLine('sourcesMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
+});
+
+$('enableAllSources').addEventListener('click', () => {
+  sourceDraft = new Set();
+  renderSourcesFromDraft();
+  setStatusLine('sourcesMessage', 'All sources enabled in draft. Click Save source settings to publish.');
+});
+
+$('refreshLinks').addEventListener('click', () => {
+  void loadLinks({ quiet: false });
+});
+
+$('sourceSearch').addEventListener('input', (event) => {
+  sourceQuery = String(event.target.value || '').trim();
+  renderSources();
+});
+
+$('clearCustomSources').addEventListener('click', async () => {
+  const customised = (config?.sourceList || []).filter((s) => s.customLabel || s.customUrl);
+  if (!customised.length) {
+    setStatusLine('sourcesMessage', 'No custom names or links are set.');
+    return;
+  }
+  if (!window.confirm(`Clear custom names and links on ${customised.length} source${customised.length === 1 ? '' : 's'}?`)) return;
+  try {
+    let last = null;
+    for (const source of customised) {
+      last = await api('/stream/chip', { method: 'POST', body: JSON.stringify({ id: source.id, label: '', url: '' }) });
     }
     await loadConfig({ silent: true });
-    setMessage('sourceMessage', failures.length
-      ? `Saved, but ${failures.join(' · ')}`
-      : 'Source settings saved. Names and links are live.', failures.length ? 'error' : 'success');
-    acceptWrite(result, 'Source settings saved.');
-  } catch (error) { setMessage('sourceMessage', error.message, 'error'); }
-  finally { button.disabled = false; }
+    if (last) acceptWrite(last, 'Cleared custom names and links.', 'sourcesMessage');
+  } catch (error) {
+    setStatusLine('sourcesMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
 });
 
 $('resetAll').addEventListener('click', async () => {
-  if (!confirm('Reset everything to the shipped defaults? This clears source visibility, custom names and links, the forced stream, maintenance mode and all news.')) return;
-  const button = $('resetAll');
-  button.disabled = true;
+  if (!window.confirm('Reset Race Control to shipped defaults? This restores all pages, re-enables every stream source, clears custom labels/links, stops overrides, turns off maintenance, and clears news.')) return;
   try {
-    const result = await api('/reset-all', { method: 'POST', body: {} });
+    const result = await api('/reset-all', { method: 'POST' });
     await loadConfig({ silent: true });
-    setMessage('sourceMessage', 'Everything is back to the shipped defaults.', 'success');
-    acceptWrite(result, 'All settings reset.');
+    acceptWrite(result, 'Race Control reset to shipped defaults.');
   } catch (error) {
-    setMessage('sourceMessage', error.message, 'error');
-  } finally { button.disabled = false; }
+    showToast(error.message, 'error');
+  }
 });
 
 $('newsForm').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = $('saveNews');
-  button.disabled = true;
-  const wasEditing = Boolean(editingNewsId);
+  setStatusLine('newsMessage', '');
   const body = {
-    title: $('newsHeadline').value.trim(),
-    tag: $('newsTag').value.trim() || 'Race Control',
-    body: $('newsBody').value.trim(),
+    title: $('newsHeadline').value,
+    tag: $('newsTag').value,
+    body: $('newsBody').value,
     published: $('newsPublished').checked
   };
   try {
-    const result = wasEditing
-      ? await api(`/news/${encodeURIComponent(editingNewsId)}`, { method: 'PATCH', body })
-      : await api('/news', { method: 'POST', body });
-    const item = result.news;
-    const index = config.adminNews.findIndex(entry => entry.id === item.id);
-    if (index >= 0) config.adminNews[index] = item;
-    else config.adminNews.unshift(item);
-    config.adminNews.sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
-    renderNews();
+    const result = editingNewsId
+      ? await api(`/news/${encodeURIComponent(editingNewsId)}`, { method: 'PATCH', body: JSON.stringify(body) })
+      : await api('/news', { method: 'POST', body: JSON.stringify(body) });
+    if (editingNewsId) {
+      config.adminNews = config.adminNews.map((item) => item.id === editingNewsId ? result.news : item);
+    } else {
+      config.adminNews = [result.news, ...(config.adminNews || [])];
+    }
     resetNewsForm();
-    setMessage('newsMessage', wasEditing ? 'News item updated.' : 'News item saved.', 'success');
-    acceptWrite(result, wasEditing ? 'News item updated.' : 'News item published.');
-  } catch (error) { setMessage('newsMessage', error.message, 'error'); }
-  finally { button.disabled = false; }
+    renderNews();
+    acceptWrite(result, editingNewsId ? 'News item updated.' : 'News item published.', 'newsMessage');
+  } catch (error) {
+    setStatusLine('newsMessage', error.message, 'error');
+    showToast(error.message, 'error');
+  }
 });
 
-$('cancelNewsEdit').addEventListener('click', resetNewsForm);
+$('cancelNewsEdit').addEventListener('click', () => resetNewsForm());
+
+async function initialize() {
+  resetNewsForm();
+  try {
+    const status = await api('/status');
+    if (status.authenticated) {
+      showDashboard();
+      await loadConfig();
+    } else {
+      showAuth();
+    }
+  } catch (error) {
+    showAuth(error.message);
+  }
+}
 
 initialize();

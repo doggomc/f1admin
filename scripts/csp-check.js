@@ -85,14 +85,26 @@ function walk(dir) {
     ['https://f1admin.onrender.com', 'https://api.openf1.org', 'https://api.jolpi.ca'].every(host => directives.get('connect-src')?.includes(host)), directives.get('connect-src') || '');
   const counterOrigin = 'wss://freef1-viewer-counter.calvinbotha1julie.workers.dev';
   const counterEndpoint = `${counterOrigin}/ws`;
-  const indexHtml = fs.readFileSync(path.join(siteDir, 'index.html'), 'utf8');
+
+  /* The counter is part of the public header on every page: the logo sits left, the
+     menu and the open-page count sit right. Each page declares the deployed endpoint
+     and its entry imports the client, so a schedule page shows a real count too. */
   const viewerCounterJs = browserSource('viewer-counter');
-  check('site connect-src allows the exact deployed Cloudflare WebSocket host',
-    directives.get('connect-src')?.split(/\s+/).includes(counterOrigin), directives.get('connect-src') || '');
-  check('index configures and loads the matching live-count client',
-    indexHtml.includes(`name=\"freef1-viewer-counter-ws\" content=\"${counterEndpoint}\"`) &&
-    (modern ? /<script type="module"[^>]+src="\/bundles\/index-[^"]+\.js"/.test(indexHtml) :
-      /<script src=\"\/viewer-counter\.js\?v=[^\"]+\" defer><\/script>/.test(indexHtml)));
+  const counterPages = ['index.html', 'cockpit.html', 'schedule.html', 'standings.html', 'drivers.html', 'teams.html', 'live-timing.html'];
+  const entryFor = { 'index.html': 'src/pages/home.ts', 'cockpit.html': 'src/main.ts' };
+  const wired = counterPages.filter(page => {
+    const file = path.join(siteDir, page);
+    if (!fs.existsSync(file)) return false;
+    const html = fs.readFileSync(file, 'utf8');
+    if (!html.includes('name="freef1-viewer-counter-ws" content="' + counterEndpoint + '"')) return false;
+    if (!modern) return /viewer-counter\.js/.test(html);
+    /* siteDir is dist/ in modern mode; the page entries are source files. */
+    const entry = entryFor[page] || 'src/pages/' + page.replace('.html', '.ts');
+    const entryFile = path.join(sourceDir, entry);
+    return fs.existsSync(entryFile) && fs.readFileSync(entryFile, 'utf8').includes('viewer-counter');
+  });
+  check('every page wires the live-count client to the deployed endpoint',
+    wired.length === counterPages.length, 'wired on ' + wired.length + '/' + counterPages.length);
   check('live-count client sends no application messages or periodic heartbeats',
     !/\.send\s*\(|setInterval\s*\(/.test(viewerCounterJs));
   check('site framing and media allow HTTPS embeds directly from hosts', directives.get('frame-src')?.includes('https:') && directives.get('media-src')?.includes('https:'));

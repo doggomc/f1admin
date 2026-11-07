@@ -275,9 +275,11 @@ auditScript('admin', path.join(root, 'admin', 'admin.js'), {});
       /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]{0,260}?\.content-fade-target\s*\{[^}]*transition:\s*none!important/.test(siteCss) &&
       /reduceMotion/.test(siteJs),
     'shared data transitions should not animate layout and must honor reduced motion');
-  check('site: Grid and driver career updates crossfade',
-    /fadeSwapContent\(el,/.test(siteJs) && /fadeSwapContent\(box,/.test(siteJs),
-    'driver cards and career telemetry should use the common fade swap');
+  /* The Grid and driver-career sheet lived in the cockpit's championship chunk, which
+     was retired when /drivers and /standings became their own pages. Reinstate a
+     crossfade assertion here when that page grows its card grid; until then there
+     are no driver cards to animate, and asserting otherwise would just be checking
+     for deleted code. */
   check('site: Race Times crossfades on Grand Prix and timezone changes',
     /fadeSwapContent\(raceTimesList,/.test(siteJs) && /fadeSwapContent\(raceTimesTimezone,/.test(siteJs),
     'both session rows and the timezone note should transition together');

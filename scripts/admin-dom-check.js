@@ -24,8 +24,19 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
 /* The live list, straight from the resolver - the dashboard renders exactly the controls the
    backend serves, so this check cannot go stale. */
 const FEED_SOURCES = require('../stream-resolver').STREAM_SOURCES.map(({ id, label }) => ({ id, label }));
+const PAGE_LIST = [
+  { id: 'cockpit', label: 'Cockpit', path: '/cockpit.html', description: 'Live stream player, sources & multiviewer' },
+  { id: 'schedule', label: 'Schedule', path: '/schedule.html', description: 'Season calendar & weekend session times' },
+  { id: 'standings', label: 'Standings', path: '/standings.html', description: 'Drivers & Constructors championships' },
+  { id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' },
+  { id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' },
+  { id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' },
+  { id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' }
+];
 let snapshot = {
   maintenance: { active: false, message: "We'll be back before the race.", eta: 'Before lights out', startedAt: null },
+  pages: { disabled: [], updatedAt: null },
+  pageList: PAGE_LIST,
   news: [], sources: { disabled: [], updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
@@ -41,6 +52,12 @@ window.fetch = async (url, options = {}) => {
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   if (pathname.endsWith('/admin/api/status')) return reply({ authenticated: true, loginAt: Date.now() });
   if (pathname.endsWith('/admin/api/config')) return reply(structuredClone(snapshot));
+  if (pathname.endsWith('/admin/api/pages')) {
+    const body = calls.at(-1).body || {};
+    snapshot.pages = { disabled: Array.isArray(body.disabled) ? body.disabled : [], updatedAt: Date.now() };
+    writePayloads.push({ endpoint: 'pages', body });
+    return reply({ success: true, pages: snapshot.pages, pageList: PAGE_LIST, durable: true, store: 'upstash' });
+  }
   if (pathname.endsWith('/admin/api/maintenance')) {
     const body = calls.at(-1).body || {};
     snapshot.maintenance = { ...snapshot.maintenance, ...body, startedAt: body.active ? Date.now() : null };
@@ -102,7 +119,7 @@ window.fetch = async (url, options = {}) => {
   const references = [...source.matchAll(/\$\('([A-Za-z0-9_-]+)'\)/g)].map(match => match[1]);
   const missing = [...new Set(references)].filter(id => !ids.has(id));
   check('every admin.js ID reference exists in index.html', missing.length === 0, missing.join(', '));
-  check('authenticated dashboard opens and hides the login panel', $('app').classList.contains('open') && $('authScreen').classList.contains('hidden'));
+  check('authenticated dashboard opens and hides the login panel', $('dashboard').hidden === false && $('authScreen').hidden === true);
   check('initialization makes only status and one config request', calls.length === 2 && calls[0].pathname.endsWith('/status') && calls[1].pathname.endsWith('/config'), JSON.stringify(calls.map(call => call.pathname)));
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
@@ -111,6 +128,14 @@ window.fetch = async (url, options = {}) => {
 
   await new Promise(resolve => setTimeout(resolve, 120));
   check('idle dashboard does not poll or heartbeat', calls.length === 2, `${calls.length} request(s)`);
+
+  const standingsSwitch = $('pageControlList').querySelector('[data-page-id="standings"] .page-switch');
+  standingsSwitch.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('Page Control switch flips Standings to Partial Outage', snapshot.pages.disabled.includes('standings') && writePayloads.some(item => item.endpoint === 'pages'));
+  $('enableAllPages').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('Restore all pages clears Partial Outage state', snapshot.pages.disabled.length === 0);
 
   const toggle = $('sourceList').querySelector('.source-switch');
   toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -128,10 +153,10 @@ window.fetch = async (url, options = {}) => {
 
   $('toggleMaintenance').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise(resolve => setTimeout(resolve, 30));
-  check('maintenance button updates local dashboard state after save', snapshot.maintenance.active === true && $('maintenanceBanner').classList.contains('active'));
+  check('maintenance button updates local dashboard state after save', snapshot.maintenance.active === true && $('maintenanceStatus').classList.contains('is-active'));
 
-  $('streamUrl').value = 'https://youtu.be/abc123XYZ_0';
-  $('playOverride').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  $('overrideInput').value = 'https://youtu.be/abc123XYZ_0';
+  $('overrideForm').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await new Promise(resolve => setTimeout(resolve, 30));
   check('stream override is an explicit admin POST', snapshot.streamOverride.active === true && calls.at(-1).pathname.endsWith('/stream/override'));
 

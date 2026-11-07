@@ -291,11 +291,31 @@ function start(deps) {
      thing standing between a redeploy and a double-posted alert, so a
      SIGTERM must never race a pending save. server.js calls flush()
      during graceful shutdown as a belt-and-braces final write. */
+  const instanceId = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  const localClaims = new Set();
   let storeCache = null;
   let savePromise = null;
+
+  function mergeSentMarkers(target, incoming) {
+    if (!incoming || typeof incoming !== 'object' || !incoming.guilds) return target;
+    for (const [guildId, incomingGuild] of Object.entries(incoming.guilds)) {
+      if (!incomingGuild || typeof incomingGuild !== 'object') continue;
+      if (!target.guilds[guildId]) {
+        target.guilds[guildId] = incomingGuild;
+        continue;
+      }
+      const localGuild = target.guilds[guildId];
+      if (incomingGuild.sent && typeof incomingGuild.sent === 'object') {
+        localGuild.sent = { ...(incomingGuild.sent || {}), ...(localGuild.sent || {}) };
+      }
+      if (incomingGuild.alerts && !localGuild.alerts) localGuild.alerts = incomingGuild.alerts;
+    }
+    return target;
+  }
+
   const store = {
-    async load() {
-      if (storeCache) return storeCache;
+    async load({ refresh = false } = {}) {
+      if (storeCache && !refresh) return storeCache;
       // A failed or malformed read throws and is NOT cached. Caching an empty
       // store here let the next save write {guilds:{}} over the real state
       // (sent-markers, alert channels, roles). The next tick simply retries.
@@ -313,7 +333,7 @@ function start(deps) {
       if (!loaded || typeof loaded !== 'object' || !loaded.guilds || typeof loaded.guilds !== 'object') {
         throw new Error('stored bot state has no guilds map');
       }
-      storeCache = loaded;
+      storeCache = storeCache ? mergeSentMarkers(loaded, storeCache) : loaded;
       return storeCache;
     },
     async save() {
@@ -324,8 +344,19 @@ function start(deps) {
         // Nothing loaded yet: writing would replace the stored state with nothing.
         if (!storeCache) return;
         try {
-          if (deps.upstash) await deps.upstash(['SET', deps.redisKey, JSON.stringify(storeCache)]);
-          else deps.writeLocalJson(deps.fileKey, storeCache);
+          if (deps.upstash) {
+            // Pull any sent-markers written by an overlapping deploy container
+            // before writing so we never overwrite another container's messageId.
+            try {
+              const latest = await deps.upstash(['GET', deps.redisKey]);
+              if (latest && typeof latest.result === 'string') {
+                mergeSentMarkers(storeCache, JSON.parse(latest.result));
+              }
+            } catch (_) { /* best-effort merge before write */ }
+            await deps.upstash(['SET', deps.redisKey, JSON.stringify(storeCache)]);
+          } else {
+            deps.writeLocalJson(deps.fileKey, storeCache);
+          }
         } catch (e) { log('store save failed:', e.message); }
       };
       const prev = savePromise || Promise.resolve();
@@ -333,6 +364,36 @@ function start(deps) {
       return savePromise;
     },
     flush() { return this.save(); },
+    async claimAlert(guildId, stateKey) {
+      const claimId = `${guildId}:${stateKey}`;
+      if (localClaims.has(claimId)) return { acquired: false, release: async () => {} };
+      localClaims.add(claimId);
+      if (!deps.upstash) {
+        return {
+          acquired: true,
+          release: async () => { localClaims.delete(claimId); }
+        };
+      }
+      const redisClaimKey = `${deps.redisKey}:claim:${guildId}:${stateKey}`;
+      try {
+        const reply = await deps.upstash(['SET', redisClaimKey, instanceId, 'NX', 'EX', '172800']);
+        if (!reply || reply.result !== 'OK') {
+          localClaims.delete(claimId);
+          return { acquired: false, release: async () => {} };
+        }
+        return {
+          acquired: true,
+          release: async () => {
+            localClaims.delete(claimId);
+            try { await deps.upstash(['DEL', redisClaimKey]); } catch (_) {}
+          }
+        };
+      } catch (e) {
+        localClaims.delete(claimId);
+        log('alert claim check failed:', e.message);
+        return { acquired: false, release: async () => {} };
+      }
+    },
     async guild(guildId) {
       const s = await this.load();
       if (!s.guilds[guildId]) {
@@ -680,11 +741,13 @@ function start(deps) {
     const now = Date.now();
     await syncPresence(now);
     for (const guildId of Object.keys(s.guilds)) {
-      const st = s.guilds[guildId];
+      let st = s.guilds[guildId];
       if (!st.sent) st.sent = {};
       if (!st.alerts || !st.alerts.channelId) continue;
       const guild = client.guilds.cache.get(guildId);
-      const channel = guild && guild.channels.cache.get(st.alerts.channelId);
+      if (!guild) continue;
+      const channel = guild.channels.cache.get(st.alerts.channelId)
+        || await guild.channels.fetch(st.alerts.channelId).catch(() => null);
       if (!channel) continue;
       const soonMin = soonMinutesFor(st);
 
@@ -695,8 +758,22 @@ function start(deps) {
         const keySoon = `${base}:soon`;
         const keyLive = `${base}:live`;
         const keyEnded = `${base}:ended`;
+        const targetKey = state === 'soon' ? keySoon : state === 'live' ? keyLive : keyEnded;
+        if (st.sent[targetKey]) continue;
+
+        // Refresh from durable storage before acting so an overlapping Render
+        // container or second bot process sees any marker already persisted.
+        const refreshed = await store.load({ refresh: true });
+        st = refreshed.guilds[guildId] || st;
+        if (!st.sent) st.sent = {};
+        if (st.sent[targetKey]) continue;
 
         if (state === 'soon' && !st.sent[keySoon]) {
+          const claim = await store.claimAlert(guildId, keySoon);
+          if (!claim.acquired) {
+            await store.load({ refresh: true });
+            continue;
+          }
           try {
             const content = st.alerts.roleId ? `<@&${st.alerts.roleId}>` : '';
             const msg = await channel.send({
@@ -708,34 +785,68 @@ function start(deps) {
             st.sent[keySoon] = { messageId: msg.id, at: now };
             log(`soon alert: ${ev.slug}/${sess.slug}`);
             await store.save();
-          } catch (e) { log('soon alert failed:', e.message); }
+          } catch (e) {
+            await claim.release();
+            log('soon alert failed:', e.message);
+          }
         }
 
         if (state === 'live' && !st.sent[keyLive]) {
+          const claim = await store.claimAlert(guildId, keyLive);
+          if (!claim.acquired) {
+            await store.load({ refresh: true });
+            continue;
+          }
           try {
             const soonMsgId = st.sent[keySoon] && st.sent[keySoon].messageId;
-            let msg = null;
+            let liveMsgId = null;
             if (soonMsgId) {
               try {
-                msg = await channel.messages.fetch(soonMsgId);
-                await msg.edit({ embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)], components: [watchRow(deps.siteUrl)] });
-              } catch (_) { msg = null; }
+                // Edit directly by ID (no messages.fetch needed, so missing
+                // ReadMessageHistory never causes a duplicate live message).
+                const edited = await channel.messages.edit(soonMsgId, {
+                  embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)],
+                  components: [watchRow(deps.siteUrl)],
+                });
+                liveMsgId = (edited && edited.id) || soonMsgId;
+              } catch (editErr) {
+                // Only post a replacement if Discord confirms the soon message
+                // was deleted (10008 Unknown Message). Transient errors retry
+                // the in-place edit on the next tick instead of double-posting.
+                if (Number(editErr && editErr.code) !== 10008) throw editErr;
+              }
             }
-            if (!msg) msg = await channel.send({ embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)], components: [watchRow(deps.siteUrl)] });
-            st.sent[keyLive] = { messageId: msg.id, at: now };
+            if (!liveMsgId) {
+              const msg = await channel.send({
+                embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)],
+                components: [watchRow(deps.siteUrl)],
+              });
+              liveMsgId = msg.id;
+            }
+            st.sent[keyLive] = { messageId: liveMsgId, at: now };
             log(`live alert: ${ev.slug}/${sess.slug}`);
             await store.save();
-          } catch (e) { log('live alert failed:', e.message); }
+          } catch (e) {
+            await claim.release();
+            log('live alert failed:', e.message);
+          }
         }
 
         if (state === 'ended' && !st.sent[keyEnded]) {
-          // Record first so a failed edit never retry-spams the channel.
+          const claim = await store.claimAlert(guildId, keyEnded);
+          if (!claim.acquired) {
+            await store.load({ refresh: true });
+            continue;
+          }
+          // Record first so a deleted message never retry-spams the channel.
           const existingId = (st.sent[keyLive] && st.sent[keyLive].messageId) || (st.sent[keySoon] && st.sent[keySoon].messageId);
           st.sent[keyEnded] = { messageId: existingId || 'none', at: now };
-          if (existingId) {
+          if (existingId && existingId !== 'none') {
             try {
-              const msg = await channel.messages.fetch(existingId);
-              await msg.edit({ embeds: [sessionEmbed(ev, sess, 'ended', deps.siteUrl, soonMin)], components: [watchRow(deps.siteUrl, 'Results on FreeF1')] });
+              await channel.messages.edit(existingId, {
+                embeds: [sessionEmbed(ev, sess, 'ended', deps.siteUrl, soonMin)],
+                components: [watchRow(deps.siteUrl, 'Results on FreeF1')],
+              });
               log(`ended alert: ${ev.slug}/${sess.slug}`);
             } catch (e) { log('ended edit failed (message gone?):', e.message); }
           }

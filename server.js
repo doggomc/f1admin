@@ -99,6 +99,17 @@ const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) =>
 }));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
+const CONTROLLABLE_PAGES = Object.freeze([
+  Object.freeze({ id: 'cockpit', label: 'Cockpit', path: '/cockpit.html', description: 'Live stream player, sources & multiviewer' }),
+  Object.freeze({ id: 'schedule', label: 'Schedule', path: '/schedule.html', description: 'Season calendar & weekend session times' }),
+  Object.freeze({ id: 'standings', label: 'Standings', path: '/standings.html', description: 'Drivers & Constructors championships' }),
+  Object.freeze({ id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' }),
+  Object.freeze({ id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' }),
+  Object.freeze({ id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' }),
+  Object.freeze({ id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' })
+]);
+const CONTROLLABLE_PAGE_IDS = new Set(CONTROLLABLE_PAGES.map(page => page.id));
+
 const DEFAULT_MAINTENANCE = Object.freeze({
   active: false,
   message: "We'll be back before the race.",
@@ -109,6 +120,7 @@ const DEFAULT_MAINTENANCE = Object.freeze({
 
 const state = {
   maintenance: { ...DEFAULT_MAINTENANCE },
+  pages: { disabled: [], updatedAt: null },
   news: [],
   sources: { disabled: [], overrides: {}, updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: null },
@@ -218,6 +230,12 @@ function normalizeSources(raw = {}) {
   return { disabled: [...new Set(disabled)], overrides: normalizeOverrides(raw.overrides), updatedAt: Number(raw.updatedAt) || null };
 }
 
+function normalizePages(raw = {}) {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.disabled) ? raw.disabled : [];
+  const disabled = list.map(id => String(id).trim().toLowerCase()).filter(id => CONTROLLABLE_PAGE_IDS.has(id));
+  return { disabled: [...new Set(disabled)], updatedAt: Number(raw?.updatedAt) || null };
+}
+
 function httpsUrl(value) {
   try {
     const url = new URL(String(value || '').trim());
@@ -288,6 +306,7 @@ function normalizeExperimental(raw) {
 function applySnapshot(raw) {
   if (!raw || typeof raw !== 'object') return;
   if (raw.maintenance) state.maintenance = normalizeMaintenance(raw.maintenance);
+  if (raw.pages) state.pages = normalizePages(raw.pages);
   if (raw.news !== undefined) state.news = normalizeNews(raw.news);
   if (raw.sources) state.sources = normalizeSources(raw.sources);
   if (raw.streamOverride || raw.override) state.streamOverride = normalizeOverride(raw.streamOverride || raw.override);
@@ -298,6 +317,7 @@ function applySnapshot(raw) {
 function currentSnapshot() {
   return {
     maintenance: state.maintenance,
+    pages: state.pages,
     news: state.news,
     sources: state.sources,
     streamOverride: state.streamOverride,
@@ -629,9 +649,14 @@ function deleteNews(id) {
   return before !== state.news.length;
 }
 
+function publicPages() {
+  return { disabled: [...state.pages.disabled], updatedAt: state.pages.updatedAt };
+}
+
 function publicConfig() {
   return {
     maintenance: state.maintenance,
+    pages: publicPages(),
     news: PUBLIC_NEWS_ENABLED ? publicNews() : [],
     sources: publicSources(),
     streamOverride: publicOverride(),
@@ -1027,7 +1052,22 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
+  res.json({ ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
+});
+
+app.get('/admin/api/pages', async (_req, res) => {
+  await stateReady;
+  res.json({ pages: publicPages(), pageList: CONTROLLABLE_PAGES, ...storageSummary() });
+});
+app.post('/admin/api/pages', async (req, res) => {
+  await stateReady;
+  if (!Array.isArray(req.body?.disabled)) return res.status(400).json({ error: 'disabled must be an array of page IDs.' });
+  const cleaned = req.body.disabled.map(id => String(id).trim().toLowerCase());
+  const unknown = cleaned.filter(id => !CONTROLLABLE_PAGE_IDS.has(id));
+  if (unknown.length) return res.status(400).json({ error: `Unknown page ID(s): ${unknown.join(', ')}` });
+  state.pages = normalizePages({ disabled: cleaned, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, pages: publicPages(), pageList: CONTROLLABLE_PAGES, ...persisted });
 });
 
 app.get('/admin/api/maintenance', async (_req, res) => {
@@ -1110,7 +1150,7 @@ app.post('/admin/api/stream/sources', async (req, res) => {
   if (unknown.length) return res.status(400).json({ error: `Unknown source ID(s): ${unknown.join(', ')}` });
   state.sources = normalizeSources({ disabled: req.body.disabled, overrides: state.sources.overrides, updatedAt: Date.now() });
   const persisted = await persistState();
-  res.json({ success: true, sources: FEED_SOURCES, ...state.sources, ...persisted });
+  res.json({ success: true, sources: FEED_SOURCES, sourceList: adminSourceList(), ...state.sources, ...persisted });
 });
 
 /* Bulk availability: 'disable'/'enable' + a group (emb / weelo / taifood / strmfree / all …) or an
@@ -1206,13 +1246,14 @@ app.post('/admin/api/stream/chip', async (req, res) => {
 app.post('/admin/api/reset-all', async (_req, res) => {
   await stateReady;
   /* Everything Race Control can change goes back to the shipped default: nothing hidden, no custom
-     names or links, no forced stream, no maintenance, no news. Storage settings are left alone. */
+     names or links, no forced stream, no maintenance, no page outages, no news. Storage settings are left alone. */
   state.sources = normalizeSources({ disabled: [], overrides: {}, updatedAt: Date.now() });
+  state.pages = normalizePages({ disabled: [], updatedAt: Date.now() });
   state.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: Date.now() };
   state.maintenance = normalizeMaintenance({ active: false, updatedAt: Date.now() });
   state.news = [];
   const persisted = await persistState();
-  res.json({ success: true, ...publicConfig(), sourceList: adminSourceList(), adminNews: adminNews(), ...persisted });
+  res.json({ success: true, ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), ...persisted });
 });
 
 app.get('/admin/api/news', async (_req, res) => {

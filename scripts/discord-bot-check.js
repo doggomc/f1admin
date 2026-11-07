@@ -60,6 +60,13 @@ check('Help API has no upload endpoint and documents required ticket storage and
   /uploadsEnabled:\s*false/.test(server) && /DISCORD_TICKET_CATEGORY_ID/.test(envExample) &&
   /DISCORD_TICKET_STAFF_ROLE_ID/.test(envExample) && /Message Content Intent/.test(fs.readFileSync(path.join(root, 'bot', 'README.md'), 'utf8')) &&
   /persistent disk/.test(fs.readFileSync(path.join(root, 'RENDER.md'), 'utf8')));
+check('session-alert scheduler deduplicates across overlapping instances and edits in place by ID',
+  /claimAlert\(guildId,\s*keySoon\)/.test(bot) &&
+  /claimAlert\(guildId,\s*keyLive\)/.test(bot) &&
+  /'NX',\s*'EX'/.test(bot) &&
+  /store\.load\(\{\s*refresh:\s*true\s*\}\)/.test(bot) &&
+  /channel\.messages\.edit\(soonMsgId/.test(bot) &&
+  /10008/.test(bot));
 check('bot invite permissions now include Manage Channels',
   /permissions=1342262352/.test(fs.readFileSync(path.join(root, 'bot', 'README.md'), 'utf8')));
 

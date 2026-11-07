@@ -1,278 +1,328 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0A0A0B">
-  <meta name="color-scheme" content="dark">
-  <meta name="description" content="FreeF1 Race Control administration.">
-  <title>FreeF1 — Race Control</title>
-  <link rel="icon" href="/admin/favicon.svg" type="image/svg+xml">
-  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Inter-latin.woff2" crossorigin>
-  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Archivo-latin.woff2" crossorigin>
-  <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/JetBrainsMono-latin.woff2" crossorigin>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Race Control — FreeF1</title>
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="theme-color" content="#0e0f11">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23E10600'/%3E%3Cpath d='M5 22L10.5 10H27L24.8 14.5H13.6L12.5 17H22.6L20.5 21.2H10.6L10.2 22H5Z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/admin/fonts.css">
   <link rel="stylesheet" href="/admin/admin.css">
-  <style>
-    [hidden] { display: none !important; }
-    .admin-main { padding: 110px clamp(16px, 4vw, 44px) 48px; max-width: 1440px; margin: 0 auto; }
-    .admin-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin-bottom:22px; }
-    .admin-heading h1 { font:900 italic clamp(2rem, 5vw, 3.2rem)/.95 'Archivo',sans-serif; text-transform:uppercase; letter-spacing:-.05em; margin:4px 0 8px; }
-    .admin-heading p { color:var(--muted); max-width:680px; margin:0; font-size:.88rem; line-height:1.55; }
-    .admin-kicker { font:700 .62rem 'JetBrains Mono',monospace; color:var(--red); letter-spacing:.25em; text-transform:uppercase; }
-    .admin-meta { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-    .admin-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border:1px solid var(--line); border-radius:99px; background:rgba(255,255,255,.035); color:var(--muted); font:700 .61rem 'JetBrains Mono',monospace; letter-spacing:.05em; text-transform:uppercase; }
-    .admin-chip i { width:7px;height:7px;border-radius:50%;background:var(--dim); }
-    .admin-chip.ok i { background:var(--green);box-shadow:0 0 9px var(--green); }
-    .admin-chip.warn i { background:var(--amber); }
-    .admin-chip.bad i { background:var(--red); }
-    .admin-columns { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:18px; align-items:start; }
-    .admin-stack { display:flex; flex-direction:column; gap:18px; min-width:0; }
-    .admin-section { padding:18px 20px 20px; }
-    .admin-section .section-note { margin:0 0 15px; color:var(--muted); font-size:.76rem; line-height:1.55; }
-    .admin-section .form-group { margin-bottom:13px; }
-    .admin-section .form-group label { display:block; margin:0 0 7px; color:var(--muted); font:700 .6rem 'JetBrains Mono',monospace; letter-spacing:.14em; text-transform:uppercase; }
-    .admin-section input:not([type=checkbox]), .admin-section textarea, .admin-section select {
-      display:block; width:100%; padding:10px 12px; color:var(--text); background:rgba(0,0,0,.34);
-      border:1px solid var(--line); border-radius:var(--r-sm); font: .78rem 'Inter',sans-serif;
-    }
-    .admin-section textarea { min-height:94px; resize:vertical; line-height:1.5; }
-    .admin-section input:focus, .admin-section textarea:focus, .admin-section select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(225,6,0,.14); }
-    .field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .btn-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    .control-status { display:flex; align-items:center; gap:11px; padding:12px 13px; border:1px solid var(--line); border-radius:var(--r-sm); background:rgba(255,255,255,.025); margin-bottom:15px; }
-    .control-status .led { width:9px;height:9px;flex:0 0 auto;border-radius:50%;background:var(--dim); }
-    .control-status.good .led { background:var(--green);box-shadow:0 0 10px var(--green); }
-    .control-status.alert .led { background:var(--red);box-shadow:0 0 10px var(--red); }
-    .control-status strong { display:block; font-size:.8rem; }
-    .control-status small { display:block; margin-top:3px; color:var(--muted); font-size:.68rem; line-height:1.4; }
-    .source-list { display:flex; flex-direction:column; gap:7px; }
-    .source-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r-sm); background:rgba(255,255,255,.025); }
-    .source-row.is-off { opacity:.62; }
-    .source-name { font-weight:700; font-size:.76rem; }
-    .source-id { color:var(--dim); font: .58rem 'JetBrains Mono',monospace; text-transform:uppercase; }
-    .source-state { color:var(--green); font:700 .57rem 'JetBrains Mono',monospace; text-transform:uppercase; }
-    .source-row.is-off .source-state { color:var(--amber); }
-    .source-switch { width:38px;height:20px;padding:2px;cursor:pointer;border:1px solid var(--line);border-radius:99px;background:var(--surface); }
-    .source-switch i { display:block;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform .18s,background .18s; }
-    .source-switch.on { border-color:rgba(0,213,126,.5);background:rgba(0,213,126,.18); }
-    .source-switch.on i { transform:translateX(17px);background:var(--green); }
-    .source-switch:focus-visible { outline:2px solid var(--green);outline-offset:2px; }
-    .source-custom { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr); gap:8px; grid-column:1/-1; margin-top:2px; }
-    .source-custom input { width:100%; font:inherit; font-size:.72rem; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm); padding:6px 8px; }
-    .source-custom input::placeholder { color:var(--dim); }
-    .source-custom input:focus-visible { outline:2px solid var(--green); outline-offset:1px; }
-    .source-custom .is-set { border-color:rgba(0,213,126,.55); }
-    .news-list { display:flex;flex-direction:column;gap:9px; }
-    .news-card { border:1px solid var(--line);border-radius:var(--r-sm);background:rgba(255,255,255,.025);padding:12px; }
-    .news-card-head { display:flex;justify-content:space-between;gap:12px;align-items:flex-start; }
-    .news-card h3 { font-size:.83rem;margin:0 0 5px;line-height:1.35; }
-    .news-card p { margin:0;color:var(--muted);font-size:.71rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere; }
-    .news-card-meta { color:var(--dim);font: .57rem 'JetBrains Mono',monospace;text-transform:uppercase; }
-    .news-card-actions { display:flex;gap:6px;flex:0 0 auto; }
-    .news-card-actions button { padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--muted);font:700 .56rem 'JetBrains Mono',monospace;text-transform:uppercase;cursor:pointer; }
-    .news-card-actions button:hover { color:var(--text);border-color:var(--line-2); }
-    .news-card-actions .delete-news:hover { color:#ff6b62;border-color:rgba(225,6,0,.45); }
-    .inline-message { min-height:1.1em;margin:8px 0 0;color:var(--muted);font: .62rem 'JetBrains Mono',monospace; }
-    .inline-message.error { color:#ff8a84; }
-    .inline-message.success { color:var(--green); }
-    .storage-copy { color:var(--muted);font-size:.72rem;line-height:1.55; }
-    .storage-copy strong { color:var(--text); }
-    .brand-admin { font:700 .56rem 'JetBrains Mono',monospace;letter-spacing:.23em;color:var(--muted);margin-left:8px; }
-    .toast { position:fixed;z-index:9000;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:12px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:#14161b;color:var(--text);box-shadow:var(--shadow);font-size:.78rem;opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .2s,transform .2s; }
-    .toast.show { opacity:1;transform:none; }
-    .toast.error { border-color:rgba(225,6,0,.42); }
-    .toast.success { border-color:rgba(0,213,126,.38); }
-    .maintenance-banner { display:none; margin:0 0 16px;padding:10px 13px;border:1px solid rgba(225,6,0,.28);border-radius:var(--r-sm);background:rgba(225,6,0,.07);color:#ff8a84;font-size:.74rem;line-height:1.5; }
-    .maintenance-banner.active { display:block; }
-    .checkbox-row { display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.72rem; }
-    .checkbox-row input { accent-color:var(--red); }
-    @media(max-width:920px) { .admin-columns { grid-template-columns:1fr; } }
-    /* Bulk groups + filters */
-    .bulk-bar { margin:4px 0 12px; }
-    .bulk-label { display:block; font-size:.62rem; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
-    .bulk-groups { display:flex; flex-wrap:wrap; gap:7px; }
-    .bulk-group { display:flex; align-items:center; gap:0; border:1px solid var(--line); border-radius:999px; overflow:hidden; background:rgba(255,255,255,.03); }
-    .bulk-name { padding:0 9px 0 11px; font-size:.68rem; font-weight:600; color:var(--text); }
-    .bulk-group .btn { border:0; border-radius:0; padding:6px 9px; font-size:.64rem; }
-    /* .btn paints a skewed brand stripe on ::before at z-index:-1, which leaks out of these narrow
-       pill buttons as a red wedge. There is no room for the flourish here. */
-    .bulk-group .btn::before, .bulk-group .btn::after { display:none; }
-    .bulk-group .btn + .btn { border-left:1px solid var(--line); }
-    .source-filters { display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin:0 0 12px; }
-    .source-search { flex:0 0 auto; width:100%; min-width:0; font:inherit; font-size:.74rem; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm); padding:7px 10px; }
-    .filter-chips { display:flex; flex-wrap:wrap; gap:6px; }
-    .filter-chip { font-size:.66rem; padding:5px 10px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; }
-    .filter-chip.active { color:#fff; border-color:rgba(0,213,126,.55); background:rgba(0,213,126,.14); }
-    .filter-chip:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
-    /* The live address for each chip */
-    .source-address { grid-column:1/-1; display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
-    .source-address .addr-url { font-size:.68rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--green); text-decoration:none; overflow-wrap:anywhere; min-width:0; }
-    .source-address .addr-url:hover { text-decoration:underline; }
-    .source-address .addr-from { font-style:normal; font-size:.6rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-    .source-address .addr-more { font-size:.62rem; color:var(--muted); }
-    .source-address .addr-empty { font-size:.68rem; color:var(--amber); }
-    .btn.xs { padding:5px 9px; font-size:.66rem; }
-    @media(max-width:580px) {
-      .field-row { grid-template-columns:1fr;gap:0; }
-      .admin-section { padding:15px; }
-      /* One column on a phone: name, id and the switch on the first line, everything else stacked. */
-      .source-row { grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:11px 12px; }
-      .source-id { grid-column:1; font-size:.64rem; overflow-wrap:anywhere; }
-      .source-state { display:none; }
-      .source-custom { grid-template-columns:1fr; }
-      /* 16px stops iOS zooming the page when a field is focused. */
-      .source-custom input, .source-search { font-size:16px; }
-      .source-custom input { padding:9px 10px; }
-      /* Bulk and filter controls get a full-width, thumb-sized layout. */
-      .bulk-groups { display:grid; grid-template-columns:1fr; gap:8px; }
-      .bulk-group { justify-content:space-between; border-radius:var(--r-sm); }
-      .bulk-group .btn { padding:10px 14px; min-height:40px; font-size:.72rem; }
-      .source-filters { flex-direction:column; align-items:stretch; }
-      .source-search { flex:none; }
-      .filter-chips { overflow-x:auto; flex-wrap:nowrap; padding-bottom:2px; -webkit-overflow-scrolling:touch; }
-      .filter-chip { white-space:nowrap; min-height:34px; padding:7px 12px; }
-      .source-address { flex-direction:column; align-items:flex-start; gap:5px; }
-      .source-address .addr-url { font-size:.66rem; }
-    }
-  </style>
 </head>
 <body>
-  <div class="progress" id="progress"></div>
-  <div class="scanlines" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div><div class="grain" aria-hidden="true"></div>
-
-  <div id="authScreen">
-    <div class="auth-card">
-      <div class="auth-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 9.5c-2.33 0-4.31 1.46-5.11 3.5h10.22c-.8-2.04-2.78-3.5-5.11-3.5z"/></svg></div>
-      <h1>Admin Access</h1>
-      <p class="sub">FreeF1 Race Control · authenticated personnel only</p>
-      <div class="auth-error" id="authError" role="alert"></div>
-      <form id="loginForm" autocomplete="on">
-        <div class="form-group"><label for="username">Username</label><input type="text" id="username" name="username" autocomplete="username" required></div>
-        <div class="form-group"><label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password" required></div>
-        <button class="btn primary" id="loginBtn" type="submit">Sign In</button>
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card inset-hl">
+      <div class="auth-brand">
+        <a class="brand" href="https://freef1.netlify.app/" target="_blank" rel="noopener noreferrer">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M5 22L10.5 10H27L24.8 14.5H13.6L12.5 17H22.6L20.5 21.2H10.6L10.2 22H5Z" fill="#fff"/></svg>
+          </span>
+          <span>FreeF1</span>
+        </a>
+        <span class="brand-tag">Race Control</span>
+      </div>
+      <h1>Sign in to Race Control</h1>
+      <p class="auth-copy">Manage page availability, live stream feeds, schedule windows, and maintenance state.</p>
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <label class="field">
+          <span>Username</span>
+          <input id="usernameInput" type="text" autocomplete="username" placeholder="Admin username" required>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Admin password" required>
+        </label>
+        <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">Sign in</button>
       </form>
+      <p class="status-line" id="loginError" role="alert"></p>
+      <div class="auth-footer">
+        <span>Zero-polling control plane</span>
+        <a href="https://freef1.netlify.app/" target="_blank" rel="noopener noreferrer">Open FreeF1 ↗</a>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div id="app">
-    <nav class="nav" id="adminNav">
-      <a class="brand" href="/admin/" aria-label="FreeF1 Race Control">
-        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 17.5 7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg></span>
-        <span class="brand-text"><b>FreeF1</b><span class="brand-admin">RACE CONTROL</span></span>
-      </a>
-      <div class="nav-right">
-        <span class="admin-chip" id="serverStatus"><i></i><span>Checking service</span></span>
-        <button class="btn sm" id="logoutBtn" type="button">Logout</button>
+  <div id="dashboard" hidden>
+    <header class="nav" id="adminNav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="#top">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M5 22L10.5 10H27L24.8 14.5H13.6L12.5 17H22.6L20.5 21.2H10.6L10.2 22H5Z" fill="#fff"/></svg>
+          </span>
+          <span>FreeF1</span>
+          <span class="brand-tag">Race Control</span>
+        </a>
+
+        <nav class="nav-links" aria-label="Control sections">
+          <a href="#pageControlSection">Page control</a>
+          <a href="#streamSection">Streams</a>
+          <a href="#sourcesSection">Sources</a>
+          <a href="#newsSection">News</a>
+          <a href="#maintenanceSection">Maintenance</a>
+        </nav>
+
+        <div class="nav-right">
+          <span class="pill is-ok" id="serverStatus">
+            <span class="dot" id="serverStatusDot"></span>
+            <span id="serverStatusText">Control ready</span>
+          </span>
+          <a class="btn btn-ghost btn-sm" href="https://freef1.netlify.app/" target="_blank" rel="noopener noreferrer">Public site ↗</a>
+          <button class="btn btn-sm" id="logoutBtn" type="button">Sign out</button>
+        </div>
       </div>
-    </nav>
+    </header>
 
-    <main class="admin-main">
-      <div class="admin-heading">
-        <div><div class="admin-kicker">Race Control</div><h1>Control room</h1><p>Manage public site settings. The static site continues serving streams and cached data independently of this service.</p></div>
-        <div class="admin-meta"><span class="admin-chip" id="storageStatus"><i></i><span>Checking storage</span></span><a class="btn sm" href="https://freef1.netlify.app/" target="_blank" rel="noopener noreferrer">Open public site ↗</a></div>
-      </div>
-
-      <div class="maintenance-banner" id="maintenanceBanner" role="status">Maintenance mode is active. The public site will show its maintenance screen to visitors with a fresh Race Control configuration.</div>
-
-      <div class="admin-columns">
-        <div class="admin-stack">
-          <section class="panel" aria-labelledby="streamTitle">
-            <div class="panel-head"><div class="panel-title" id="streamTitle">Stream override</div><span class="panel-badge normal" id="streamBadge">Normal feed</span></div>
-            <div class="admin-section">
-              <div class="control-status good" id="overrideStatus"><span class="led"></span><div><strong>Normal site feed</strong><small id="overrideSub">No Race Control override is active.</small></div></div>
-              <div class="form-group"><label for="streamUrl">Override video URL</label><input id="streamUrl" inputmode="url" placeholder="https://www.youtube.com/watch?v=… or https://…/video.mp4"><small class="url-hint">HTTPS only · YouTube, MP4, WebM, or a public embed URL</small></div>
-              <div class="btn-row"><button class="btn sm primary" id="playOverride" type="button">▶ Play override</button><button class="btn sm" id="stopOverride" type="button">■ Stop</button><button class="btn sm" id="normalOverride" type="button">↩ Return to normal</button></div>
-              <p class="inline-message" id="overrideMessage" role="status"></p>
+    <main class="admin-main" id="top">
+      <header class="page-head">
+        <div class="wrap">
+          <div class="page-head-row">
+            <div>
+              <div class="eyebrow"><span class="swatch"></span>Race Control</div>
+              <h1>Site &amp; stream operations</h1>
+              <p class="page-sub">Changes publish immediately to open FreeF1 tabs over SSE with zero background polling.</p>
             </div>
+            <div class="head-actions">
+              <span class="pill" id="storageStatus">Checking storage…</span>
+              <button class="btn btn-sm" id="reloadConfig" type="button">Reload snapshot</button>
+            </div>
+          </div>
+
+          <div class="kpi-strip" aria-label="System overview">
+            <div class="kpi-card inset-hl">
+              <span class="kpi-label">Public site</span>
+              <div class="kpi-val"><span class="dot" id="kpiSiteDot"></span><span id="kpiSiteVal">Online</span></div>
+              <span class="kpi-meta" id="kpiSiteMeta">Normal visitor access</span>
+            </div>
+            <div class="kpi-card inset-hl">
+              <span class="kpi-label">Page control</span>
+              <div class="kpi-val"><span class="dot" id="kpiPagesDot"></span><span id="kpiPagesVal">All 7 online</span></div>
+              <span class="kpi-meta" id="kpiPagesMeta">No partial outages active</span>
+            </div>
+            <div class="kpi-card inset-hl">
+              <span class="kpi-label">Stream feed</span>
+              <div class="kpi-val"><span class="dot muted" id="kpiStreamDot"></span><span id="kpiStreamVal">Normal sources</span></div>
+              <span class="kpi-meta" id="kpiStreamMeta">No forced override active</span>
+            </div>
+            <div class="kpi-card inset-hl">
+              <span class="kpi-label">Schedule window</span>
+              <div class="kpi-val"><span class="dot muted" id="kpiWindowDot"></span><span id="kpiWindowVal">Auto schedule</span></div>
+              <span class="kpi-meta" id="kpiWindowMeta">Follows F1 session calendar</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="wrap control-grid">
+        <div class="control-col">
+          <!-- Stream Override -->
+          <section class="panel-card inset-hl" id="streamSection" aria-labelledby="overrideHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Broadcast override</span>
+                <h2 id="overrideHeading">Stream override</h2>
+              </div>
+              <span class="pill" id="overrideBadge">Inactive</span>
+            </div>
+            <p class="section-note">Force a specific stream URL across all open Cockpit players. Accepts direct <code>.m3u8</code>, <code>.mp4</code>, <code>https://</code> embed pages, or <code>&lt;iframe src="..."&gt;</code> snippets.</p>
+            <div class="state-banner" id="overrideStatus">
+              <span class="state-led" aria-hidden="true"></span>
+              <div>
+                <strong id="overrideStateLabel">Normal feed list</strong>
+                <small id="overrideStateUrl">Viewers choose from the enabled Cockpit sources.</small>
+              </div>
+            </div>
+            <form id="overrideForm">
+              <label class="field">
+                <span>Override URL or iframe</span>
+                <input id="overrideInput" type="text" maxlength="1000" placeholder="https://example.com/live/master.m3u8 or embed URL" autocomplete="off">
+              </label>
+              <div class="action-row">
+                <button class="btn btn-primary" id="startOverride" type="submit">Start override</button>
+                <button class="btn btn-danger" id="stopOverride" type="button">Stop override</button>
+              </div>
+            </form>
+            <p class="status-line" id="overrideMessage" role="status"></p>
           </section>
 
-          <section class="panel" aria-labelledby="forceLiveTitle">
-            <div class="panel-head"><div class="panel-title" id="forceLiveTitle">Force Live</div><span class="panel-badge normal" id="forceLiveBadge">Schedule window</span></div>
-            <div class="admin-section">
-              <div class="control-status good" id="forceLiveStatus"><span class="led"></span><div><strong id="forceLiveStateLabel">Schedule window active</strong><small id="forceLiveStateText">Streams follow their scheduled availability windows.</small></div></div>
-              <div class="form-group"><label for="forceLiveReason">Reason (optional)</label><input id="forceLiveReason" maxlength="120" placeholder="e.g. Red flag delay or race overtime"></div>
-              <div class="btn-row"><button class="btn sm primary" id="enableForceLive" type="button">Force live on</button><button class="btn sm" id="disableForceLive" type="button" disabled>Restore schedule</button></div>
-              <p class="inline-message" id="forceLiveMessage" role="status"></p>
-              <p class="section-note">Forces the selected session to appear live outside its normal schedule window. Connected public tabs receive the change immediately; hidden tabs catch up when they return. Playback still goes directly from the browser to the stream host.</p>
+          <!-- Force Live Window -->
+          <section class="panel-card inset-hl" aria-labelledby="forceLiveHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Session gate</span>
+                <h2 id="forceLiveHeading">Force live window</h2>
+              </div>
+              <span class="pill" id="forceLiveBadge">Schedule</span>
             </div>
+            <p class="section-note">Open the Cockpit player outside scheduled Formula 1 sessions for testing, replays, or pre-show broadcasts.</p>
+            <div class="state-banner" id="forceLiveStatus">
+              <span class="state-led" aria-hidden="true"></span>
+              <div>
+                <strong id="forceLiveStateLabel">Following session schedule</strong>
+                <small id="forceLiveStateDetail">Streams unlock automatically during official race weekend windows.</small>
+              </div>
+            </div>
+            <form id="forceLiveForm">
+              <label class="field">
+                <span>Note for Race Control (optional)</span>
+                <input id="forceLiveReason" type="text" maxlength="120" placeholder="Pre-race stream check, replay test..." autocomplete="off">
+              </label>
+              <div class="action-row">
+                <button class="btn btn-primary" id="enableForceLive" type="submit">Force live on</button>
+                <button class="btn" id="disableForceLive" type="button">Return to schedule</button>
+              </div>
+            </form>
+            <p class="status-line" id="forceLiveMessage" role="status"></p>
           </section>
 
-          <section class="panel" aria-labelledby="sourceTitle">
-            <div class="panel-head"><div class="panel-title" id="sourceTitle">Stream source availability</div><span class="panel-badge normal">Site-local playback</span></div>
-            <div class="admin-section">
-              <p class="section-note">Toggle a source to hide it, give it a <strong>custom name</strong> or a <strong>custom link</strong>, then save. Names and links go live to every open tab immediately; an empty field means "use the shipped value". Playback embeds are served directly by the browser; no stream bytes pass through Render.</p>
-              <!-- Bulk actions: one request per group, so a group toggle cannot half-apply. -->
-              <div class="bulk-bar" id="bulkBar" role="group" aria-label="Bulk source actions">
-                <span class="bulk-label">Whole groups</span>
-                <div class="bulk-groups" id="bulkGroups"></div>
+          <!-- Stream Source Availability -->
+          <section class="panel-card inset-hl" id="sourcesSection" aria-labelledby="sourcesHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Player feeds</span>
+                <h2 id="sourcesHeading">Stream source availability</h2>
               </div>
-
-              <!-- Filters: what to show in the list below. -->
-              <div class="source-filters" id="sourceFilters" role="group" aria-label="Filter sources">
-                <input class="source-search" id="sourceSearch" type="search" placeholder="Filter by name or id…" aria-label="Filter sources by name or id">
-                <div class="filter-chips" id="filterChips"></div>
-              </div>
-
-              <div class="source-list" id="sourceList" aria-live="polite"></div>
-              <div class="btn-row" style="margin-top:14px">
-                <button class="btn sm primary" id="saveSources" type="button">Save source settings</button>
-                <button class="btn sm" id="refreshLinks" type="button">Refresh live links</button>
-                <button class="btn sm danger" id="resetAll" type="button">Reset all</button>
-              </div>
-              <p class="section-note" id="linksNote">Each row shows the address that chip would open <strong>right now</strong>, resolved the same way the player resolves it. Refresh after a session change.</p>
-              <p class="inline-message" id="sourceMessage" role="status"></p>
+              <button class="btn btn-sm" id="refreshLinks" type="button">Refresh live links</button>
             </div>
+            <p class="section-note">Toggle the sources you want visible to viewers, customize chip names or links if needed, then click Save source settings to publish.</p>
+            <div class="source-toolbar">
+              <input id="sourceSearch" class="source-search" type="search" placeholder="Filter by label, source ID, or provider…" autocomplete="off" aria-label="Filter stream sources">
+              <div id="sourceFilters" class="source-filters" role="group" aria-label="Filter sources"></div>
+            </div>
+            <div id="sourceBulk" class="source-bulk" role="group" aria-label="Bulk provider actions"></div>
+            <div id="sourceList" class="source-list" aria-live="polite"></div>
+            <div class="action-row">
+              <button class="btn btn-primary" id="saveSources" type="button">Save source settings</button>
+              <button class="btn" id="enableAllSources" type="button">Enable all</button>
+              <button class="btn btn-ghost" id="clearCustomSources" type="button">Clear custom names &amp; links</button>
+            </div>
+            <p class="status-line" id="sourcesMessage" role="status"></p>
           </section>
 
-          <section class="panel" aria-labelledby="newsTitle">
-            <div class="panel-head"><div class="panel-title" id="newsTitle">Public news</div><span class="panel-badge normal">Cached snapshot</span></div>
-            <div class="admin-section">
-              <p class="section-note">News is included in the compact public config stream and updates connected site tabs immediately.</p>
-              <form id="newsForm">
-                <div class="form-group"><label for="newsHeadline">Headline</label><input id="newsHeadline" maxlength="100" required></div>
-                <div class="field-row">
-                  <div class="form-group"><label for="newsTag">Tag</label><input id="newsTag" maxlength="32" value="Race Control"></div>
-                  <div class="form-group"><label>&nbsp;</label><label class="checkbox-row"><input type="checkbox" id="newsPublished" checked> Published on public site</label></div>
-                </div>
-                <div class="form-group"><label for="newsBody">Update</label><textarea id="newsBody" maxlength="600" required></textarea></div>
-                <div class="btn-row"><button class="btn sm primary" id="saveNews" type="submit">Publish update</button><button class="btn sm" id="cancelNewsEdit" type="button" hidden>Cancel edit</button></div>
-              </form>
-              <p class="inline-message" id="newsMessage" role="status"></p>
-              <div class="news-list" id="newsList"></div>
+          <!-- Public News -->
+          <section class="panel-card inset-hl" id="newsSection" aria-labelledby="newsHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Announcements</span>
+                <h2 id="newsHeading">Public news &amp; notices</h2>
+              </div>
             </div>
+            <p class="section-note">Short updates stored with the site configuration snapshot.</p>
+            <form id="newsForm">
+              <div class="field-grid">
+                <label class="field">
+                  <span>Headline</span>
+                  <input id="newsHeadline" type="text" maxlength="100" placeholder="Qualifying feed updated" required>
+                </label>
+                <label class="field">
+                  <span>Tag</span>
+                  <input id="newsTag" type="text" maxlength="32" value="Race Control" placeholder="Race Control">
+                </label>
+              </div>
+              <label class="field">
+                <span>Update body</span>
+                <textarea id="newsBody" maxlength="600" placeholder="Share concise status notes for viewers…" required></textarea>
+              </label>
+              <label class="check-row">
+                <input id="newsPublished" type="checkbox" checked>
+                <span>Published publicly</span>
+              </label>
+              <div class="action-row">
+                <button class="btn btn-primary" id="saveNews" type="submit">Publish update</button>
+                <button class="btn btn-ghost" id="cancelNewsEdit" type="button" hidden>Cancel edit</button>
+              </div>
+            </form>
+            <p class="status-line" id="newsMessage" role="status"></p>
+            <div id="newsList" class="news-list"></div>
           </section>
         </div>
 
-        <div class="admin-stack">
-          <section class="panel" aria-labelledby="maintenanceTitle">
-            <div class="panel-head"><div class="panel-title" id="maintenanceTitle">Website maintenance</div><span class="panel-badge normal" id="maintenanceBadge">Public site live</span></div>
-            <div class="admin-section">
-              <div class="control-status good" id="maintenanceStatus"><span class="led"></span><div><strong id="maintenanceStateLabel">Public site is available</strong><small>Visitors only see maintenance mode when a fresh Race Control response enables it.</small></div></div>
-              <div class="form-group"><label for="maintenanceMessage">Maintenance message</label><input id="maintenanceMessage" maxlength="180" value="We'll be back before the race."></div>
-              <div class="form-group"><label for="maintenanceEta">Estimated return</label><input id="maintenanceEta" maxlength="60" value="Before lights out"></div>
-              <div class="btn-row"><button class="btn sm primary" id="saveMaintenance" type="button">Save message</button><button class="btn sm btn-maintenance" id="toggleMaintenance" type="button">Enable maintenance</button></div>
-              <p class="inline-message" id="maintenanceNote" role="status"></p>
+        <div class="control-col">
+          <!-- NEW: Page Control (Partial Outage per Category) -->
+          <section class="panel-card inset-hl" id="pageControlSection" aria-labelledby="pageControlHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Category availability</span>
+                <h2 id="pageControlHeading">Page control</h2>
+              </div>
+              <span class="pill is-ok" id="pageControlBadge">All online</span>
             </div>
+            <p class="section-note">Flip any category off to place that section in <strong>Partial Outage</strong> mode. Visitors opening a disabled category see the Partial Outage screen with <strong>Home</strong> and <strong>Discord</strong> buttons while the rest of FreeF1 stays live.</p>
+            <div class="state-banner" id="pageControlStatus">
+              <span class="state-led" aria-hidden="true"></span>
+              <div>
+                <strong id="pageControlStateLabel">All categories online</strong>
+                <small id="pageControlStateText">Every public section is serving normally. Home always remains reachable.</small>
+              </div>
+            </div>
+            <div id="pageControlList" class="page-control-list" role="group" aria-label="Controllable site categories"></div>
+            <div class="action-row">
+              <button class="btn btn-sm" id="enableAllPages" type="button" disabled>Restore all pages</button>
+            </div>
+            <p class="status-line" id="pageControlMessage" role="status"></p>
           </section>
 
-          <section class="panel" aria-labelledby="storageTitle">
-            <div class="panel-head"><div class="panel-title" id="storageTitle">Service & storage</div><span class="panel-badge normal">Low traffic</span></div>
-            <div class="admin-section">
-              <p class="storage-copy" id="storageCopy">Race Control handles public configuration and admin actions. The live page-connection count is served separately by Cloudflare; this backend stores no visitor IDs or page history and runs no visitor heartbeats, analytics, or stream relays.</p>
-              <p class="storage-copy" style="margin-top:12px"><strong>Backend:</strong> <span id="backendAddress">https://f1admin.onrender.com</span></p>
-              <p class="storage-copy" style="margin-top:8px"><strong>Storage:</strong> <span id="storageDetail">Checking state</span></p>
-              <p class="storage-copy" style="margin-top:8px"><strong>Site configuration:</strong> one request per browser cache window; last cached site settings remain usable during an outage.</p>
-              <p class="inline-message" id="configTime" role="status"></p>
+          <!-- Full Website Maintenance -->
+          <section class="panel-card inset-hl" id="maintenanceSection" aria-labelledby="maintenanceHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Site-wide gate</span>
+                <h2 id="maintenanceHeading">Website maintenance</h2>
+              </div>
+              <span class="pill is-ok" id="maintenanceBadge">Live</span>
+            </div>
+            <p class="section-note">Redirects all public pages (including Home) to the full-site maintenance screen.</p>
+            <div class="state-banner" id="maintenanceStatus">
+              <span class="state-led" aria-hidden="true"></span>
+              <div>
+                <strong id="maintenanceStateLabel">Public site is live</strong>
+                <small id="maintenanceStateText">Visitors can browse and watch normally.</small>
+              </div>
+            </div>
+            <label class="field">
+              <span>Maintenance message</span>
+              <input id="maintenanceMessage" type="text" maxlength="180" placeholder="We'll be back before the race.">
+            </label>
+            <label class="field">
+              <span>Estimated return (ETA)</span>
+              <input id="maintenanceEta" type="text" maxlength="60" placeholder="Before lights out">
+            </label>
+            <div class="action-row">
+              <button class="btn btn-warn" id="toggleMaintenance" type="button">Enable maintenance</button>
+              <button class="btn" id="saveMaintenanceCopy" type="button">Save copy</button>
+            </div>
+            <p class="status-line" id="maintenanceFeedback" role="status"></p>
+          </section>
+
+          <!-- Storage & Reset -->
+          <section class="panel-card inset-hl" aria-labelledby="storageHeading">
+            <div class="card-head">
+              <div>
+                <span class="card-kicker">Durability &amp; recovery</span>
+                <h2 id="storageHeading">Service &amp; storage</h2>
+              </div>
+            </div>
+            <p class="storage-copy" id="storageDetail">Checking storage configuration…</p>
+            <p class="storage-copy tnum" id="configTime">Not loaded yet.</p>
+            <hr class="divider">
+            <p class="section-note">Need a clean slate? Resetting restores all pages, re-enables every stream source, clears custom labels/links, stops overrides, and turns off maintenance.</p>
+            <div class="action-row">
+              <button class="btn btn-danger btn-sm" id="resetAll" type="button">Reset all to shipped defaults</button>
             </div>
           </section>
         </div>
       </div>
-      <footer style="margin-top:32px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font: .59rem 'JetBrains Mono',monospace;letter-spacing:.08em">FREEF1 RACE CONTROL · PUBLIC SITE AND STREAM PLAYBACK ARE INDEPENDENT OF THIS SERVICE</footer>
     </main>
+
+    <footer class="admin-footer">
+      <div class="wrap admin-footer-inner">
+        <span>FreeF1 Race Control · Event-driven admin console</span>
+        <span>Changes push instantly via <code>/api/site/updates</code></span>
+      </div>
+    </footer>
   </div>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/admin/admin.js" defer></script>
 </body>
 </html>
