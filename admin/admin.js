@@ -873,9 +873,11 @@ $('saveSources').addEventListener('click', async () => {
       });
       if (Array.isArray(reply.sourceList)) config.sourceList = reply.sourceList;
     }
+    const knownIds = new Set((config.sourceList || []).map((s) => String(s.id)));
+    const disabledPayload = [...sourceDraft].filter((id) => !knownIds.size || knownIds.has(id));
     const result = await api('/stream/sources', {
       method: 'POST',
-      body: JSON.stringify({ disabled: [...sourceDraft] })
+      body: JSON.stringify({ disabled: disabledPayload })
     });
     config.sources.disabled = result.disabled || [];
     if (Array.isArray(result.sourceList)) config.sourceList = result.sourceList;

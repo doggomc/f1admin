@@ -264,9 +264,14 @@ function nextConfigEvent(reader) {
     });
     check('removed source IDs cannot be re-enabled through the API', invalidSource.response.status === 400);
     const sourceChange = await request('/admin/api/stream/sources', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['dazn'] })
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['dazn', 'sky-uhd'] })
     });
-    check('source settings can be changed by an authenticated admin', sourceChange.response.status === 200 && sourceChange.body.disabled.includes('dazn'));
+    const adminCfgAfterSave = await request('/admin/api/config', { headers: { Origin: origin, Cookie: cookie } });
+    check('source settings can be changed by an authenticated admin without leaking retired sky-uhd into admin config',
+      sourceChange.response.status === 200 &&
+      sourceChange.body.disabled.includes('dazn') &&
+      !sourceChange.body.disabled.includes('sky-uhd') &&
+      !adminCfgAfterSave.body.sources?.disabled?.includes('sky-uhd'));
 
     const ppvSources = (sourceChange.body.sources || []).filter(item => item.provider === 'ppv');
     check('all 9 PPV sources are labelled with (PPV) and grouped under provider ppv',
@@ -282,7 +287,7 @@ function nextConfigEvent(reader) {
 
     const { createStreamResolver } = require('../stream-resolver');
     const mockResolver = createStreamResolver({
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, options) => {
         if (String(url).includes('api.embdlol.st/struct')) {
           return {
             ok: true,
@@ -330,6 +335,10 @@ function nextConfigEvent(reader) {
           };
         }
         if (String(url).includes('strmfree.st/embed/racing/skyf11080p')) {
+          const hdrs = options?.headers || {};
+          if (hdrs.Referer || hdrs.referer) {
+            return { ok: false, status: 403, text: async () => '{"detail":"Violation"}' };
+          }
           return {
             ok: true,
             status: 200,

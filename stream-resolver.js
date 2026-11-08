@@ -1083,10 +1083,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
       for (const candidateHost of candidates) {
         try {
           const upstreamUrl = `https://${candidateHost}/embed/racing/${cleanVariant}`;
+          /* Do NOT send a self-Referer on /embed/racing/* — strmfree's nginx blocks self-referred
+             embed requests with 403 {"detail":"Violation..."} while answering 200 without Referer. */
           const response = await fetchWithTimeout(upstreamUrl, {
             headers: {
-              Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-              Referer: `https://${candidateHost}/`
+              Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'
             }
           });
           if (!response.ok) throw new Error(`${candidateHost} responded ${response.status}`);

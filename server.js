@@ -589,9 +589,15 @@ function storageSummary() {
   };
 }
 
+const RETIRED_COMPAT_SOURCE_IDS = new Set(['sky-uhd']);
+
+function adminSourcesState() {
+  return { disabled: [...state.sources.disabled], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+}
+
 function publicSources() {
   /* Keep retired 'sky-uhd' listed in public disabled so already-deployed clients hide it cleanly. */
-  return { disabled: [...new Set([...state.sources.disabled, 'sky-uhd'])], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+  return { disabled: [...new Set([...state.sources.disabled, ...RETIRED_COMPAT_SOURCE_IDS])], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
 }
 
 /* Race Control sees the chip as a visitor will: the custom name and link when there is one. */
@@ -944,6 +950,9 @@ const STRMFREE_EMBED_CSP = [
 ].join('; ');
 
 app.get('/api/stream/strmfree-embed', async (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', STRMFREE_EMBED_CSP);
   const variant = String(req.query.variant || 'skyf11080p').trim();
   const host = String(req.query.host || 'strmfree.st').trim();
   if (/2160p|540p/i.test(variant) || !/^(?:skyf11080p|skyf1)$/i.test(variant)) {
@@ -953,11 +962,12 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
   const result = await streamResolver.strmfreeStrippedHtml(variant, host);
   if (!result.ok) {
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(result.status || 503).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
+    const status = result.status || 503;
+    if (req.accepts(['json', 'html']) === 'html') {
+      return res.status(status).type('html').send('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#000;color:rgba(255,255,255,.72);font:500 14px/1.4 system-ui,sans-serif}</style><body><div>Feed temporarily unavailable — switching mirror…</div></body>');
+    }
+    return res.status(status).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
   }
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', STRMFREE_EMBED_CSP);
   res.setHeader('Cache-Control', 'public, max-age=30');
   return res.type('html').send(result.html);
 });
@@ -973,20 +983,23 @@ app.get('/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8', async (req, res) 
 });
 
 app.get('/api/stream/embdlol-embed', (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', EMBDLOL_EMBED_CSP);
   const id = String(req.query.id || '').trim();
   const result = streamResolver.embdlolStrippedHtml(id);
   if (!result.ok) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(result.status || 400).json({ error: result.error || 'A valid EMB channel id is required.', code: 'bad-request' });
   }
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', EMBDLOL_EMBED_CSP);
   res.setHeader('Cache-Control', 'public, max-age=60');
   return res.type('html').send(result.html);
 });
 
 app.get('/api/stream/weellz-embed', async (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
   const stream = String(req.query.stream || '').trim();
   if (!/^[A-Za-z0-9_-]{4,160}$/.test(stream)) {
     res.setHeader('Cache-Control', 'no-store');
@@ -994,14 +1007,14 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   }
   try {
     const { html } = await streamResolver.weellzStrippedHtml();
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
     res.setHeader('Cache-Control', 'public, max-age=60');
     res.type('html').send(html);
   } catch (error) {
     console.error('[streams] weellz stripped embed failed:', error?.message || error);
     res.setHeader('Cache-Control', 'no-store');
+    if (req.accepts(['json', 'html']) === 'html') {
+      return res.status(503).type('html').send('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#000;color:rgba(255,255,255,.72);font:500 14px/1.4 system-ui,sans-serif}</style><body><div>Feed temporarily unavailable.</div></body>');
+    }
     return res.status(503).json({ error: 'Stripped player unavailable right now.', code: 'unavailable' });
   }
 });
@@ -1234,7 +1247,7 @@ app.post('/admin/api/logout', (req, res) => {
 
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
+  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/pages', async (_req, res) => {
@@ -1328,9 +1341,10 @@ app.get('/admin/api/stream/sources', async (_req, res) => {
 app.post('/admin/api/stream/sources', async (req, res) => {
   await stateReady;
   if (!Array.isArray(req.body?.disabled)) return res.status(400).json({ error: 'disabled must be an array of source IDs.' });
-  const unknown = req.body.disabled.map(String).filter(id => !FEED_SOURCE_IDS.has(id));
+  const cleanedDisabled = req.body.disabled.map(String).filter(id => !RETIRED_COMPAT_SOURCE_IDS.has(id));
+  const unknown = cleanedDisabled.filter(id => !FEED_SOURCE_IDS.has(id));
   if (unknown.length) return res.status(400).json({ error: `Unknown source ID(s): ${unknown.join(', ')}` });
-  state.sources = normalizeSources({ disabled: req.body.disabled, overrides: state.sources.overrides, updatedAt: Date.now() });
+  state.sources = normalizeSources({ disabled: cleanedDisabled, overrides: state.sources.overrides, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: FEED_SOURCES, sourceList: adminSourceList(), ...state.sources, ...persisted });
 });
