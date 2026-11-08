@@ -26,7 +26,16 @@ let sourceDraft = new Set();
 let customDraft = {};
 let linkReport = {};
 let linkCheckedAt = 0;
+let linkSiteUrl = 'https://freef1.netlify.app';
 let sourceFilter = 'all';
+
+function fullStreamUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('/')) return `${String(linkSiteUrl || 'https://freef1.netlify.app').replace(/\/+$/, '')}${value}`;
+  return value;
+}
 let sourceQuery = '';
 let pageSaving = false;
 let toastTimer = null;
@@ -430,6 +439,7 @@ async function loadLinks({ quiet = false } = {}) {
   if (!quiet) setStatusLine('sourcesMessage', 'Checking live provider links…');
   try {
     const report = await api('/stream/links');
+    if (report.siteUrl) linkSiteUrl = report.siteUrl;
     linkReport = {};
     for (const row of report.streams || []) linkReport[row.id] = row;
     linkCheckedAt = Number(report.checkedAt) || Date.now();
@@ -551,22 +561,27 @@ function renderSources() {
     const live = linkReport[source.id];
     const address = document.createElement('div');
     address.className = 'source-address';
-    if (!live) {
-      address.innerHTML = '<span class="addr-empty">Address not read yet — press “Refresh live links”.</span>';
-    } else if (live.online && live.current) {
+    const resolvedUrl = (live?.online && live?.current)
+      ? live.current
+      : (live?.wouldUse || source.customUrl || source.defaultUrl || '');
+    const resolvedFrom = (live?.online && live?.current)
+      ? (live.customUrl ? 'custom' : (live.shipped?.[0]?.from || 'shipped'))
+      : (source.customUrl ? 'custom' : (live?.state || (resolvedUrl ? 'standby' : '')));
+    if (resolvedUrl) {
+      const fullUrl = fullStreamUrl(resolvedUrl);
       const link = document.createElement('a');
-      link.href = live.current.startsWith('http') ? live.current : '#';
+      link.href = /^https?:\/\//i.test(fullUrl) ? fullUrl : '#';
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.className = 'addr-url';
-      link.textContent = live.current;
-      link.title = live.current;
+      link.textContent = fullUrl;
+      link.title = fullUrl;
       const from = document.createElement('em');
       from.className = 'addr-from';
-      from.textContent = live.customUrl ? 'custom' : (live.shipped?.[0]?.from || 'shipped');
+      from.textContent = resolvedFrom;
       address.append(link, from);
     } else {
-      address.innerHTML = '<span class="addr-empty">No live address reported right now</span>';
+      address.innerHTML = '<span class="addr-empty">No live address reported right now — press “Refresh live links” during a session.</span>';
     }
     if (live?.shipped?.length > 1) {
       const more = document.createElement('span');
@@ -659,6 +674,12 @@ function renderConfig() {
 
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
+  if (payload.linkReport?.siteUrl) linkSiteUrl = payload.linkReport.siteUrl;
+  if (Array.isArray(payload.linkReport?.streams)) {
+    linkReport = {};
+    for (const row of payload.linkReport.streams) linkReport[row.id] = row;
+    linkCheckedAt = Number(payload.linkReport.checkedAt) || Date.now();
+  }
   config = {
     maintenance: payload.maintenance || {},
     pages: payload.pages || { disabled: [] },

@@ -68,6 +68,14 @@ check('session-alert scheduler deduplicates across overlapping instances and edi
   /channel\.messages\.edit\(soonMsgId/.test(bot) &&
   /10008/.test(bot));
 const { _test: botTest } = require('../bot/discord-bot');
+const sampleWebsiteEmbed = botTest.websiteEmbed('https://freef1.netlify.app');
+check('/website embed has clickable blue FreeF1 title, tagline, link, hero image, and no footer',
+  sampleWebsiteEmbed.title === 'FreeF1' &&
+  sampleWebsiteEmbed.url === 'https://freef1.netlify.app' &&
+  sampleWebsiteEmbed.description === 'One Cockpit, Every Session, All for Free.\n\n**[freef1.netlify.app](https://freef1.netlify.app)**' &&
+  !sampleWebsiteEmbed.footer &&
+  !sampleWebsiteEmbed.fields &&
+  sampleWebsiteEmbed.image?.url === 'https://freef1.netlify.app/assets/hero-freef1.jpg');
 check('ticket staff role 1566540793794134226 is granted access on new and existing ticket channels',
   Array.isArray(botTest.DEFAULT_TICKET_STAFF_ROLE_IDS) &&
   botTest.DEFAULT_TICKET_STAFF_ROLE_IDS.includes('1566540793794134226') &&

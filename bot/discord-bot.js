@@ -169,21 +169,18 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
   };
 }
 
-function websiteEmbed(siteUrl, inviteUrl) {
+function websiteEmbed(siteUrl) {
+  const cleanUrl = String(siteUrl || `https://${SITE_LABEL}`).replace(/\/+$/, '');
   return {
     color: FREEF1_RED,
-    title: 'FreeF1 — the free F1 stream hub',
+    title: 'FreeF1',
+    url: cleanUrl,
     description:
-      'Every session of the 2026 season in one cockpit.\n' +
-      'Direct browser playback, live race-control\n' +
-      'data, standings, Help tickets and a pit-stop-fast interface.',
-    fields: [
-      { name: 'Streams', value: 'WeStream F1, Sky HD, F1TV, AppleTV, DAZN, WikiSport', inline: false },
-      { name: 'Race control', value: 'Live timing windows, radio feed, standings and results', inline: false },
-      { name: 'Community', value: 'Session alerts and supporter roles for the FreeF1 community', inline: false },
-    ],
-    footer: { text: 'Independent fan project · No affiliation with Formula 1 or the FIA' },
-    url: siteUrl,
+      `One Cockpit, Every Session, All for Free.\n\n` +
+      `**[${SITE_LABEL}](${cleanUrl})**`,
+    image: {
+      url: `${cleanUrl}/assets/hero-freef1.jpg`,
+    },
   };
 }
 

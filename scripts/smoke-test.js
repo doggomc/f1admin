@@ -474,14 +474,34 @@ function nextConfigEvent(reader) {
     const mirrorPreviewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-8--freef2.netlify.app' } });
     const rogueNetlify = await request('/api/site/config', { headers: { Origin: 'https://random-other-site.netlify.app' } });
     const badWeellzEmbed = await request('/api/stream/weellz-embed?stream=bad$id');
+    const directWeellzEmbed = await request('/api/stream/weellz-embed?stream=gebdacefgfacieee&autoplay=1&mute=1', {
+      headers: { 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate' }
+    });
+    const directWeeloState = await request('/api/stream/weelo', {
+      headers: { 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate' }
+    });
+    const allowedWeeloState = await request('/api/stream/weelo', {
+      headers: {
+        Origin: 'https://freef1.netlify.app',
+        Referer: 'https://freef1.netlify.app/cockpit.html',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'X-FreeF1-Client': 'cockpit'
+      }
+    });
     const badWeellzKey = await request('/api/stream/weellz-key/testkid?t=badtoken', { headers: { Origin: 'null' } });
-    check('Netlify deploy previews and sandboxed weellz relay CORS headers are accepted',
+    check('Netlify deploy previews, weelo/weellz direct-access blocks, and sandboxed weellz relay CORS headers work',
       previewConfig.response.status === 200 &&
       previewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-42--freef1.netlify.app' &&
       mirrorPreviewConfig.response.status === 200 &&
       mirrorPreviewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-8--freef2.netlify.app' &&
       rogueNetlify.response.status === 403 &&
       badWeellzEmbed.response.status === 400 &&
+      directWeellzEmbed.response.status === 403 &&
+      directWeeloState.response.status === 403 &&
+      (allowedWeeloState.response.status === 200 || allowedWeeloState.response.status === 503) &&
+      Array.isArray(dashboardConfig.body.linkReport?.streams) &&
+      dashboardConfig.body.linkReport.streams.some(item => item.id === 'sky-uk' && item.current.includes('/api/stream/strmfree-embed')) &&
       badWeellzKey.response.status === 400 &&
       badWeellzKey.response.headers.get('access-control-allow-origin') === '*' &&
       badWeellzKey.response.headers.get('access-control-expose-headers') === 'Date, Retry-After');

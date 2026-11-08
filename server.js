@@ -87,10 +87,21 @@ const LEGACY_LOCAL_FILES_TO_DELETE = ['unique-visitors.json', 'analytics.json', 
    the same list the player draws and GET /api/stream/sources publishes — so the admin, the API and
    the site can never drift apart. Add a source there and it appears here, in the player and in
    "which sources are live" without a second edit. */
+function staticChipUrl(source) {
+  if (source.weelo) {
+    return source.stripped
+      ? `/api/stream/weellz-embed?stream=${source.weelo}`
+      : `https://weellz.live/beta?stream=${source.weelo}`;
+  }
+  const first = (source.links || []).find((entry) => entry && entry.url);
+  return first?.url || '';
+}
+
 const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) => ({
   id: source.id,
   label: source.label,
   provider: source.provider,
+  defaultUrl: staticChipUrl(source),
   ...(source.main ? { main: true } : {}),
   /* Carried so Race Control can group rows (all EMB, all weelo, all taifood …) without parsing ids. */
   tab: source.tab || 'en',
@@ -772,7 +783,7 @@ app.use((req, res, next) => {
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', req.path.startsWith('/api/stream/') ? 'Content-Type, Authorization, X-FreeF1-Client' : 'Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', isWeellzRelay ? 'Date, Retry-After' : 'Retry-After');
   } else if (rawOrigin === 'null' && isStrippedEmbedRelay) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -812,13 +823,33 @@ function setNoStore(res) {
   res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
 }
 
-function setNetlifyEdgeCache(res, sMaxAge, { swr = 0, varyQuery = null } = {}) {
+function setNetlifyEdgeCache(res, sMaxAge, { swr = 0, varyQuery = null, varyHeader = null } = {}) {
   const directives = [`public`, `s-maxage=${sMaxAge}`];
   if (swr > 0) directives.push(`stale-while-revalidate=${swr}`);
   res.setHeader('Netlify-CDN-Cache-Control', directives.join(', '));
-  if (typeof varyQuery === 'string' && varyQuery) {
-    res.setHeader('Netlify-Vary', `query=${varyQuery}`);
-  }
+  const varyParts = [];
+  if (typeof varyQuery === 'string' && varyQuery) varyParts.push(`query=${varyQuery}`);
+  if (typeof varyHeader === 'string' && varyHeader) varyParts.push(`header=${varyHeader}`);
+  if (varyParts.length) res.setHeader('Netlify-Vary', varyParts.join(','));
+}
+
+function isTrustedStreamClientRequest(req) {
+  const clientHeader = String(req.headers['x-freef1-client'] || '').trim().toLowerCase();
+  if (clientHeader !== 'cockpit') return false;
+  const secDest = String(req.headers['sec-fetch-dest'] || '').trim().toLowerCase();
+  const secMode = String(req.headers['sec-fetch-mode'] || '').trim().toLowerCase();
+  if (secDest === 'document' || secDest === 'iframe' || secMode === 'navigate') return false;
+  const reqOrigin = normalizeOrigin(req.headers.origin || req.headers.referer || '');
+  if (!reqOrigin) return false;
+  return isPublicSiteOrigin(reqOrigin) || (!PRODUCTION && reqOrigin === selfOrigin(req));
+}
+
+function isTrustedStreamEmbedRequest(req) {
+  const secDest = String(req.headers['sec-fetch-dest'] || '').trim().toLowerCase();
+  if (secDest !== 'iframe') return false;
+  const refererOrigin = normalizeOrigin(req.headers.referer || '');
+  if (!refererOrigin) return false;
+  return isPublicSiteOrigin(refererOrigin) || (!PRODUCTION && refererOrigin === selfOrigin(req));
 }
 
 app.get('/api/stream/resolve', async (req, res) => {
@@ -902,11 +933,16 @@ app.get('/api/stream/embdlol', async (_req, res) => {
   }
 });
 
-app.get('/api/stream/weelo', async (_req, res) => {
+app.get('/api/stream/weelo', async (req, res) => {
+  res.append('Vary', 'X-FreeF1-Client, Sec-Fetch-Dest, Referer');
+  if (!isTrustedStreamClientRequest(req)) {
+    setNoStore(res);
+    return res.status(403).json({ error: 'Direct access is not permitted.', code: 'forbidden' });
+  }
   try {
     const state = await streamResolver.weeloState();
-    res.setHeader('Cache-Control', 'public, max-age=15');
-    setNetlifyEdgeCache(res, 15, { swr: 15 });
+    res.setHeader('Cache-Control', 'private, max-age=15');
+    setNetlifyEdgeCache(res, 15, { swr: 15, varyHeader: 'x-freef1-client|sec-fetch-dest' });
     return res.json({ state, count: Object.keys(state).length });
   } catch (error) {
     setNoStore(res);
@@ -1086,15 +1122,20 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
+  res.append('Vary', 'Sec-Fetch-Dest, Referer');
   const stream = String(req.query.stream || '').trim();
   if (!/^[A-Za-z0-9_-]{4,160}$/.test(stream)) {
     setNoStore(res);
     return res.status(400).json({ error: 'A valid stream id is required.', code: 'bad-request' });
   }
+  if (!isTrustedStreamEmbedRequest(req)) {
+    setNoStore(res);
+    return res.status(403).json({ error: 'Direct embed access is not permitted.', code: 'forbidden' });
+  }
   try {
     const { html } = await streamResolver.weellzStrippedHtml();
-    res.setHeader('Cache-Control', 'public, max-age=60');
-    setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'stream|autoplay|mute|tile' });
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'stream|autoplay|mute|tile', varyHeader: 'sec-fetch-dest|referer' });
     res.type('html').send(html);
   } catch (error) {
     console.error('[streams] weellz stripped embed failed:', error?.message || error);
@@ -1337,9 +1378,52 @@ app.post('/admin/api/logout', (req, res) => {
   res.json({ success: true });
 });
 
+async function buildAdminLinkReport({ fast = false } = {}) {
+  let rows = null;
+  if (!(fast && process.env.NODE_ENV === 'test')) {
+    try {
+      rows = fast
+        ? await Promise.race([
+            streamResolver.chipAddresses(),
+            new Promise((resolve) => setTimeout(() => resolve(null), 2200))
+          ])
+        : await streamResolver.chipAddresses();
+    } catch (error) {
+      if (!fast) throw error;
+      rows = null;
+    }
+  }
+  const byId = rows ? new Map(rows.map((row) => [row.id, row])) : null;
+  const streams = adminSourceList().map((source) => {
+    const live = byId ? (byId.get(source.id) || { addresses: [], current: '', wouldUse: '', state: '', online: false }) : null;
+    const fallbackUrl = source.defaultUrl || '';
+    const shipped = live
+      ? live.addresses.map((entry) => ({ url: entry.url, quality: entry.quality, from: entry.from }))
+      : (fallbackUrl ? [{ url: fallbackUrl, quality: 1080, from: 'configured' }] : []);
+    const current = source.customUrl || (live ? (live.current || '') : fallbackUrl);
+    const wouldUse = (live ? live.wouldUse : '') || fallbackUrl || '';
+    return {
+      id: source.id,
+      label: source.label,
+      provider: source.provider,
+      tab: source.tab,
+      disabled: state.sources.disabled.includes(source.id),
+      /* A chip Race Control typed an address for shows BOTH: the typed one wins in the player. */
+      customUrl: source.customUrl || '',
+      shipped,
+      current,
+      wouldUse,
+      state: live?.state || '',
+      online: Boolean(source.customUrl) || (live ? Boolean(live.online) : Boolean(fallbackUrl))
+    };
+  });
+  return { checkedAt: Date.now(), siteUrl: SITE_URL, streams };
+}
+
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
-  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
+  const linkReport = await buildAdminLinkReport({ fast: true });
+  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/pages', async (_req, res) => {
@@ -1478,24 +1562,7 @@ app.post('/admin/api/stream/sources/bulk', async (req, res) => {
 app.get('/admin/api/stream/links', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const rows = await streamResolver.chipAddresses();
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const list = adminSourceList().map((source) => {
-      const live = byId.get(source.id) || { addresses: [], current: '', online: false };
-      return {
-        id: source.id,
-        label: source.label,
-        provider: source.provider,
-        tab: source.tab,
-        disabled: state.sources.disabled.includes(source.id),
-        /* A chip Race Control typed an address for shows BOTH: the typed one wins in the player. */
-        customUrl: source.customUrl || '',
-        shipped: live.addresses.map((entry) => ({ url: entry.url, quality: entry.quality, from: entry.from })),
-        current: source.customUrl || live.current || '',
-        online: Boolean(source.customUrl) || live.online
-      };
-    });
-    return res.json({ checkedAt: Date.now(), streams: list });
+    return res.json(await buildAdminLinkReport({ fast: false }));
   } catch (error) {
     console.error('[streams] link report failed:', error?.message || error);
     return res.status(503).json({ error: 'Could not read the current links.' });
