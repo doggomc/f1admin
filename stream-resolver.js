@@ -17,7 +17,26 @@
 
 const crypto = require('crypto');
 const path = require('path');
+const zlib = require('zlib');
 const { Worker } = require('worker_threads');
+
+function packTextPayload(text, prevPack = null, { brotliQuality = 6, gzipLevel = 9 } = {}) {
+  const str = String(text || '');
+  if (prevPack && prevPack.text === str) return prevPack;
+  const raw = Buffer.from(str, 'utf8');
+  const seqMatch = str.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m);
+  const hash = crypto.createHash('sha1').update(raw).digest('base64url').slice(0, 14);
+  const etag = seqMatch ? `"s${seqMatch[1]}-${hash.slice(0, 8)}"` : `"${hash}"`;
+  const gzip = zlib.gzipSync(raw, { level: gzipLevel });
+  const br = zlib.brotliCompressSync(raw, {
+    params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: brotliQuality,
+      [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+      [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length
+    }
+  });
+  return { text: str, raw, gzip, br, etag };
+}
 
 const EMBDLOL_STRUCT = 'https://api.embdlol.st/struct';
 const EMBDLOL_EMBED = 'https://embdlol.st/embed/';
@@ -175,7 +194,7 @@ const PPV_DEFAULT_HOST = 'taifood-blog.asia';
 const PPV_ALLOWED_HOSTS = new Set([PPV_DEFAULT_HOST]);
 const PPV_MASTER_TTL_MS = 8 * 60_000;
 const PPV_MASTER_M3U8_TTL_MS = 30_000;
-const PPV_M3U8_TTL_MS = 2_500;
+const PPV_M3U8_TTL_MS = 2_200;
 const PPV_WORKER_IDLE_MS = 10 * 60_000;
 
 let sharedImpit = null;
@@ -189,9 +208,9 @@ function getPpvBrowserClient(timeoutMs = 8_000) {
 const STRMFREE_HOSTS = ['strmfree.st', 'streamfree.top'];
 const STRMFREE_VARIANTS = ['skyf11080p', 'skyf1'];
 const STRMFREE_MODES = new Set(['live', 'live-cdn', 'live-externalcdn']);
-const STRMFREE_HTML_TTL_MS = 45_000;
-const STRMFREE_M3U8_TTL_MS = 2_000;
-const WEELLZ_HTML_TTL_MS = 5 * 60_000;
+const STRMFREE_HTML_TTL_MS = 10 * 60_000;
+const STRMFREE_M3U8_TTL_MS = 2_800;
+const WEELLZ_HTML_TTL_MS = 15 * 60_000;
 const WEELLZ_KEY_TTL_MS = 2 * 60 * 60_000;
 const WEELLZ_KEY_MAX_ENTRIES = 500;
 
@@ -252,6 +271,9 @@ function buildPpvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     '<meta name="referrer" content="no-referrer">',
+    '<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>',
+    '<link rel="preconnect" href="https://p16-common-sign.tiktokcdn.com" crossorigin>',
+    `<script>try{fetch(window.location.origin+${safePathJson},{credentials:"omit"}).catch(function(){});}catch(_){}</script>`,
     '<title>FreeF1 Live Feed</title>',
     '<style>',
     'html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}',
@@ -264,7 +286,7 @@ function buildPpvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
     '<script>(function(){',
     'window.open=function(){return null;};',
     'var video=document.getElementById("player");',
-    'var params=new URLSearchParams(window.location.search);',
+    'var params=new URLSearchParams(window.location.search||window.location.hash.slice(1));',
     "var startMuted=params.get('mute')==='1'||params.get('tile')==='side';",
     'video.muted=startMuted;',
     'function setErr(msg){var el=document.getElementById("err");if(el){el.textContent=msg;el.style.display="flex";}}',
@@ -291,7 +313,7 @@ function buildPpvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
     'return BaseLoader.prototype.load.call(this,context,config,callbacks);',
     '};',
     'var netRetries=0,mediaRetries=0;',
-    'var hls=new window.Hls({fLoader:TsSyncLoader,enableWorker:true,lowLatencyMode:false,backBufferLength:30,maxBufferLength:30});',
+    'var hls=new window.Hls({fLoader:TsSyncLoader,enableWorker:true,lowLatencyMode:false,startFragPrefetch:true,liveSyncDurationCount:2,liveMaxLatencyDurationCount:5,backBufferLength:8,maxBufferLength:12,maxMaxBufferLength:20});',
     'hls.loadSource(src);',
     'hls.attachMedia(video);',
     'hls.on(window.Hls.Events.MANIFEST_PARSED,function(){applyMute(startMuted);tryPlay();});',
@@ -432,7 +454,7 @@ function stripStrmfreeHtml(rawHtml, { host = 'strmfree.st' } = {}) {
   html = html.replace(/const\s+AUTOSTART\s*=\s*getAutostartFromURL\(\);/g, 'const AUTOSTART = true;');
   html = html.replace(/mute:\s*false\s*,/g, "mute: new URLSearchParams(window.location.search).get('mute') === '1',");
 
-  const headShim = `<base href="https://${safeHost}/"><meta name="referrer" content="no-referrer">`;
+  const headShim = `<base href="https://${safeHost}/"><meta name="referrer" content="no-referrer"><link rel="preconnect" href="https://p16-common-sign.tiktokcdn.com" crossorigin>`;
   html = html.replace(/<head\b[^>]*>/i, (m) => `${m}${headShim}`);
 
   const bodyShim = [
@@ -469,6 +491,10 @@ function buildEmbdlolStrippedHtml(watchId) {
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     '<meta name="referrer" content="no-referrer">',
+    '<link rel="preconnect" href="https://api.embdlol.st" crossorigin>',
+    '<link rel="preconnect" href="https://embdlol.st" crossorigin>',
+    '<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>',
+    `<script>window.__f1WatchReq=fetch("https://api.embdlol.st/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({watchId:${safeIdJson}})});</script>`,
     '<title>FreeF1 Live Feed</title>',
     '<style>',
     'html,body,#player{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}',
@@ -481,14 +507,14 @@ function buildEmbdlolStrippedHtml(watchId) {
     '<script src="https://cdn.jsdelivr.net/npm/@swarmcloud/hls@2.18.0/hls.min.js"></script>',
     '<script>(function(){',
     'window.open=function(){return null;};',
-    'var params=new URLSearchParams(window.location.search);',
+    'var params=new URLSearchParams(window.location.search||window.location.hash.slice(1));',
     "var startMuted=params.get('mute')==='1'||params.get('tile')==='side';",
     'var pInstance=null;',
     'function setErr(msg){var el=document.getElementById("err");if(el){el.textContent=msg;el.style.display="flex";}}',
     'function applyMute(m){startMuted=Boolean(m);try{if(pInstance&&typeof pInstance.setMute==="function")pInstance.setMute(startMuted);}catch(_){}document.querySelectorAll("video").forEach(function(v){v.muted=startMuted;});}',
     'window.addEventListener("message",function(ev){try{var d=typeof ev.data==="string"?JSON.parse(ev.data):ev.data;if(!d)return;if(d.type==="freef1-audio"){applyMute(Boolean(d.muted));}else if(d.source==="pitsport-host"&&d.command==="tile"){applyMute(d.tile==="side");}}catch(_){}});',
     '(async function(){try{',
-    `var res=await fetch("https://api.embdlol.st/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({watchId:${safeIdJson}})});`,
+    `var res=await (window.__f1WatchReq||fetch("https://api.embdlol.st/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({watchId:${safeIdJson}})}));`,
     'if(!res.ok)throw new Error("Upstream feed returned "+res.status);',
     'var data=await res.json();',
     'if(!data||!data.url)throw new Error("Channel is currently offline");',
@@ -527,7 +553,9 @@ function stripWeellzHtml(rawHtml) {
   const shim = [
     '<base href="https://weellz.live/">',
     '<meta name="referrer" content="no-referrer">',
+    '<link rel="preconnect" href="https://weelo.live" crossorigin>',
     '<script>(function(){',
+    "if(window.location.hash.length>1&&window.location.search.indexOf('stream=')===-1){try{history.replaceState(null,'',window.location.pathname+'?'+window.location.hash.slice(1));}catch(_){}}",
     "var keyBase=window.location.origin+window.location.pathname.replace(/\\/weellz-embed\\/?$/,'/weellz-key/');",
     'var origOpen=XMLHttpRequest.prototype.open;',
     "XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string'&&u.indexOf('https://rewnd.live/k/')===0){arguments[1]=keyBase+u.slice(21);}return origOpen.apply(this,arguments);};",
@@ -1207,12 +1235,12 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
   }
 
   /* ── stripped weellz.live embed & 16-byte AES key relay ─────────────── */
-  const weellzShell = { html: '', at: 0, inFlight: null };
-  const weellzKeys = new Map(); // kid -> { body: Buffer, at: number }
+  const weellzShell = { html: '', pack: null, at: 0, inFlight: null };
+  const weellzKeys = new Map(); // kid -> { body: Buffer, date: string, at: number }
 
   async function weellzStrippedHtml() {
     if (weellzShell.html && Date.now() - weellzShell.at < WEELLZ_HTML_TTL_MS) {
-      return { html: weellzShell.html, cached: true };
+      return { html: weellzShell.html, pack: weellzShell.pack, cached: true };
     }
     if (weellzShell.inFlight) return weellzShell.inFlight;
     weellzShell.inFlight = (async () => {
@@ -1227,10 +1255,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
         }
         const stripped = stripWeellzHtml(raw);
         weellzShell.html = stripped;
+        weellzShell.pack = packTextPayload(stripped, weellzShell.pack, { brotliQuality: 11 });
         weellzShell.at = Date.now();
-        return { html: stripped, cached: false };
+        return { html: stripped, pack: weellzShell.pack, cached: false };
       } catch (error) {
-        if (weellzShell.html) return { html: weellzShell.html, cached: true, stale: true };
+        if (weellzShell.html) return { html: weellzShell.html, pack: weellzShell.pack, cached: true, stale: true };
         throw error;
       } finally {
         weellzShell.inFlight = null;
@@ -1250,7 +1279,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     }
     const cached = weellzKeys.get(cleanKid);
     if (cached && Date.now() - cached.at < WEELLZ_KEY_TTL_MS) {
-      return { ok: true, status: 200, body: cached.body, date: new Date().toUTCString(), cached: true };
+      return { ok: true, status: 200, body: cached.body, date: cached.date || new Date().toUTCString(), cached: true };
     }
     try {
       const target = `${REWND_KEY_BASE}${encodeURIComponent(cleanKid)}?t=${encodeURIComponent(cleanToken)}`;
@@ -1272,7 +1301,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
           const oldest = weellzKeys.keys().next().value;
           if (oldest !== undefined) weellzKeys.delete(oldest);
         }
-        weellzKeys.set(cleanKid, { body, at: Date.now() });
+        weellzKeys.set(cleanKid, { body, date: dateHeader, at: Date.now() });
       }
       return { ok: true, status: 200, body, date: dateHeader, cached: false };
     } catch (error) {
@@ -1292,16 +1321,32 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     };
   }
 
+  const embdlolShells = new Map(); // cleanId -> { html, pack }
   function embdlolStrippedHtml(watchId) {
-    const html = buildEmbdlolStrippedHtml(watchId);
+    const cleanId = extractEmbdlolId(watchId);
+    if (!cleanId) return { ok: false, status: 400, error: 'A valid EMB channel id is required.' };
+    const memo = embdlolShells.get(cleanId);
+    if (memo) return { ok: true, status: 200, html: memo.html, pack: memo.pack };
+    const html = buildEmbdlolStrippedHtml(cleanId);
     if (!html) return { ok: false, status: 400, error: 'A valid EMB channel id is required.' };
-    return { ok: true, status: 200, html };
+    const pack = packTextPayload(html, null, { brotliQuality: 11 });
+    if (embdlolShells.size >= 120) embdlolShells.delete(embdlolShells.keys().next().value);
+    embdlolShells.set(cleanId, { html, pack });
+    return { ok: true, status: 200, html, pack };
   }
 
   /* ── stripped strmfree embed & lightweight .m3u8 playlist relay ────── */
-  const strmfreeShells = new Map(); // `${host}:${variant}` -> { html, tokens, activeHost, at }
+  const strmfreeShells = new Map(); // `${host}:${variant}` -> { html, pack, tokens, activeHost, at }
   const strmfreeShellInFlight = new Map();
-  const strmfreePlaylists = new Map(); // `${host}:${mode}:${variant}` -> { body, at }
+  const strmfreePlaylists = new Map(); // `${host}:${mode}:${variant}` -> { body, pack, at }
+  const strmfreePlInFlight = new Map();
+
+  function strmfreeTokensFresh(tokens) {
+    if (!tokens || typeof tokens !== 'object') return true;
+    const tok = tokens['1080p'] || tokens['720p'];
+    if (!tok || !tok._e) return true;
+    return Number(tok._e) * 1000 - Date.now() > 120_000;
+  }
 
   async function fetchStrmfreeShell(variant, preferredHost, { forceRefresh = false } = {}) {
     const cleanVariant = normalizeStrmfreeVariant(variant || 'skyf11080p');
@@ -1309,7 +1354,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     const host = normalizeStrmfreeHost(preferredHost);
     const cacheKey = `${host}:${cleanVariant}`;
     const cached = strmfreeShells.get(cacheKey);
-    if (!forceRefresh && cached && Date.now() - cached.at < STRMFREE_HTML_TTL_MS) {
+    if (!forceRefresh && cached && Date.now() - cached.at < STRMFREE_HTML_TTL_MS && strmfreeTokensFresh(cached.tokens)) {
       return { ok: true, status: 200, ...cached, cached: true };
     }
     if (!forceRefresh && strmfreeShellInFlight.has(cacheKey)) {
@@ -1335,7 +1380,8 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
           }
           const tokens = parseStrmfreeTokens(raw);
           const html = stripStrmfreeHtml(raw, { host: candidateHost });
-          const entry = { html, tokens, activeHost: candidateHost, variant: cleanVariant, at: Date.now() };
+          const pack = packTextPayload(html, cached?.pack, { brotliQuality: 9 });
+          const entry = { html, pack, tokens, activeHost: candidateHost, variant: cleanVariant, at: Date.now() };
           strmfreeShells.set(cacheKey, entry);
           strmfreeShells.set(`${candidateHost}:${cleanVariant}`, entry);
           return { ok: true, status: 200, ...entry, cached: false };
@@ -1356,7 +1402,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
   }
 
   async function strmfreeStrippedHtml(variant = 'skyf11080p', host = 'strmfree.st') {
-    return fetchStrmfreeShell(variant, host);
+    const res = await fetchStrmfreeShell(variant, host);
+    if (res.ok && fetchImpl === fetch) {
+      void strmfreePlaylist('live-externalcdn', variant, res.activeHost || host).catch(() => {});
+    }
+    return res;
   }
 
   async function strmfreePlaylist(mode, variant, preferredHost = 'strmfree.st') {
@@ -1369,58 +1419,74 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     const plKey = `${host}:${cleanMode}:${cleanVariant}`;
     const cachedPl = strmfreePlaylists.get(plKey);
     if (cachedPl && Date.now() - cachedPl.at < STRMFREE_M3U8_TTL_MS) {
-      return { ok: true, status: 200, body: cachedPl.body, cached: true };
+      return { ok: true, status: 200, body: cachedPl.body, pack: cachedPl.pack, cached: true };
     }
+    if (strmfreePlInFlight.has(plKey)) return strmfreePlInFlight.get(plKey);
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const shell = await fetchStrmfreeShell(cleanVariant, host, { forceRefresh: attempt > 0 });
-      if (!shell.ok) return { ok: false, status: shell.status || 503, error: shell.error || 'Playlist unavailable.' };
-      const activeHost = shell.activeHost || host;
-      const qualityKey = cleanVariant.includes('720p') ? '720p' : '1080p';
-      const tok = shell.tokens && (shell.tokens[qualityKey] || shell.tokens['1080p']);
-      const qs = tok && tok._t && tok._e && tok._n
-        ? `?_t=${encodeURIComponent(tok._t)}&_e=${encodeURIComponent(tok._e)}&_n=${encodeURIComponent(tok._n)}`
-        : '';
-      const upstreamM3u8 = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8${qs}`;
-      try {
-        const res = await fetchWithTimeout(upstreamM3u8, {
-          headers: {
-            Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
-            Origin: `https://${activeHost}`,
-            Referer: `https://${activeHost}/embed/racing/${cleanVariant}`
+    const task = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const shell = await fetchStrmfreeShell(cleanVariant, host, { forceRefresh: attempt > 0 });
+        if (!shell.ok) return { ok: false, status: shell.status || 503, error: shell.error || 'Playlist unavailable.' };
+        const activeHost = shell.activeHost || host;
+        const qualityKey = cleanVariant.includes('720p') ? '720p' : '1080p';
+        const tok = shell.tokens && (shell.tokens[qualityKey] || shell.tokens['1080p']);
+        const qs = tok && tok._t && tok._e && tok._n
+          ? `?_t=${encodeURIComponent(tok._t)}&_e=${encodeURIComponent(tok._e)}&_n=${encodeURIComponent(tok._n)}`
+          : '';
+        const upstreamM3u8 = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8${qs}`;
+        try {
+          const res = await fetchWithTimeout(upstreamM3u8, {
+            headers: {
+              Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+              Origin: `https://${activeHost}`,
+              Referer: `https://${activeHost}/embed/racing/${cleanVariant}`
+            }
+          });
+          if (res.status === 403 && attempt === 0) continue; // refresh expired _0x token once
+          if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream playlist unavailable.' };
+          const rawText = await res.text();
+          if (!rawText.includes('#EXTM3U')) {
+            return { ok: false, status: 502, error: 'Invalid upstream playlist.' };
           }
-        });
-        if (res.status === 403 && attempt === 0) continue; // refresh expired _0x token once
-        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream playlist unavailable.' };
-        const rawText = await res.text();
-        if (!rawText.includes('#EXTM3U')) {
-          return { ok: false, status: 502, error: 'Invalid upstream playlist.' };
+          const basePlaylistUrl = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8`;
+          const rewritten = rawText
+            .split(/\r?\n/)
+            .filter((line) => {
+              const t = line.trim();
+              return t && !t.startsWith('##') && !/^#EXT-X-PROGRAM-DATE-TIME:/i.test(t);
+            })
+            .map((line) => {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('#')) return trimmed;
+              if (/^https?:\/\//i.test(trimmed)) return trimmed;
+              try { return new URL(trimmed, basePlaylistUrl).href; } catch (_) { return trimmed; }
+            })
+            .join('\n');
+          const pack = packTextPayload(rewritten, cachedPl?.pack, { brotliQuality: 6 });
+          strmfreePlaylists.set(plKey, { body: rewritten, pack, at: Date.now() });
+          return { ok: true, status: 200, body: rewritten, pack, cached: false };
+        } catch (err) {
+          if (attempt === 0) continue;
+          log.warn?.('[streams] strmfree playlist relay failed:', err?.message || err);
+          return { ok: false, status: 502, error: 'Upstream playlist unreachable.' };
         }
-        const basePlaylistUrl = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8`;
-        const rewritten = rawText
-          .split(/\r?\n/)
-          .map((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#')) return line;
-            if (/^https?:\/\//i.test(trimmed)) return trimmed;
-            try { return new URL(trimmed, basePlaylistUrl).href; } catch (_) { return line; }
-          })
-          .join('\n');
-        strmfreePlaylists.set(plKey, { body: rewritten, at: Date.now() });
-        return { ok: true, status: 200, body: rewritten, cached: false };
-      } catch (err) {
-        if (attempt === 0) continue;
-        log.warn?.('[streams] strmfree playlist relay failed:', err?.message || err);
-        return { ok: false, status: 502, error: 'Upstream playlist unreachable.' };
       }
+      return { ok: false, status: 502, error: 'Upstream playlist unavailable.' };
+    })();
+    strmfreePlInFlight.set(plKey, task);
+    try {
+      return await task;
+    } finally {
+      strmfreePlInFlight.delete(plKey);
     }
-    return { ok: false, status: 502, error: 'Upstream playlist unavailable.' };
   }
 
   /* ── stripped PPV (taifood-blog.asia -> indianservers.st -> tiktokcdn) ─ */
   const ppvMasters = new Map();     // `${host}:${slug}` -> { masterUrl, host, expiresAt, at }
   const ppvMastersInFlight = new Map();
-  const ppvPlaylists = new Map();   // `${host}:${slug}:${sub}` -> { body, at }
+  const ppvPlaylists = new Map();   // `${host}:${slug}:${sub}` -> { body, pack, at }
+  const ppvPlInFlight = new Map();
+  const ppvShells = new Map();      // `${host}:${slug}` -> { html, pack }
 
   function ppvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
     const cleanSlug = normalizePpvSlug(rawSlug);
@@ -1429,9 +1495,19 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
       ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
       : PPV_DEFAULT_HOST;
     if (!cleanHost) return { ok: false, status: 400, error: 'Unsupported PPV embed host.' };
+    const shellKey = `${cleanHost}:${cleanSlug}`;
+    const memo = ppvShells.get(shellKey);
+    if (memo) {
+      if (fetchImpl === fetch && ppvResolveImpl === null) void ppvMasterPlaylist(cleanSlug, cleanHost).catch(() => {});
+      return { ok: true, status: 200, html: memo.html, pack: memo.pack };
+    }
     const html = buildPpvStrippedHtml(cleanSlug, cleanHost);
     if (!html) return { ok: false, status: 400, error: 'A valid HD PPV stream slug is required.' };
-    return { ok: true, status: 200, html };
+    const pack = packTextPayload(html, null, { brotliQuality: 11 });
+    if (ppvShells.size >= 120) ppvShells.delete(ppvShells.keys().next().value);
+    ppvShells.set(shellKey, { html, pack });
+    if (fetchImpl === fetch && ppvResolveImpl === null) void ppvMasterPlaylist(cleanSlug, cleanHost).catch(() => {});
+    return { ok: true, status: 200, html, pack };
   }
 
   async function resolvePpvMasterUrl(rawSlug, rawHost = PPV_DEFAULT_HOST, { forceRefresh = false } = {}) {
@@ -1516,54 +1592,73 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     const plKey = `${host}:${slug}:master`;
     const cachedPl = ppvPlaylists.get(plKey);
     if (cachedPl && Date.now() - cachedPl.at < PPV_MASTER_M3U8_TTL_MS) {
-      return { ok: true, status: 200, body: cachedPl.body, cached: true };
-    }
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
-      if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
-      try {
-        const res = await fetchPpvPlaylistUpstream(resolved.masterUrl, host);
-        if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
-        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV playlist unavailable.' };
-        const rawText = await res.text();
-        if (!rawText.includes('#EXTM3U')) {
-          if (attempt === 0) continue;
-          return { ok: false, status: 502, error: 'Invalid upstream PPV playlist.' };
-        }
-        const masterBase = new URL('.', resolved.masterUrl).href;
-        const rewritten = rawText
-          .split(/\r?\n/)
-          .map((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#')) return line;
-            if (/\.m3u8(?:\?.*)?$/i.test(trimmed)) {
-              let subRel = trimmed;
-              if (/^https?:\/\//i.test(trimmed)) {
-                try {
-                  const u = new URL(trimmed);
-                  if (u.href.startsWith(masterBase)) subRel = u.href.slice(masterBase.length);
-                  else return trimmed;
-                } catch (_) { return line; }
-              }
-              subRel = subRel.replace(/^\.?\//, '').split('?')[0];
-              if (/^[A-Za-z0-9._/-]{1,160}\.m3u8$/.test(subRel) && !subRel.includes('..')) {
-                return `sub.m3u8?slug=${encodeURIComponent(slug)}&host=${encodeURIComponent(host)}&sub=${encodeURIComponent(subRel)}`;
-              }
-            }
-            if (/^https?:\/\//i.test(trimmed)) return trimmed;
-            try { return new URL(trimmed, resolved.masterUrl).href; } catch (_) { return line; }
-          })
-          .join('\n');
-        ppvPlaylists.set(plKey, { body: rewritten, at: Date.now() });
-        return { ok: true, status: 200, body: rewritten, cached: false };
-      } catch (err) {
-        if (attempt === 0) continue;
-        log.warn?.('[streams] PPV master playlist relay failed:', err?.message || err);
-        return { ok: false, status: 502, error: 'Upstream PPV playlist unreachable.' };
+      if (cachedPl.firstSub && fetchImpl === fetch && ppvResolveImpl === null) {
+        void ppvSubPlaylist(slug, cachedPl.firstSub, host).catch(() => {});
       }
+      return { ok: true, status: 200, body: cachedPl.body, pack: cachedPl.pack, cached: true };
     }
-    return { ok: false, status: 502, error: 'Upstream PPV playlist unavailable.' };
+    if (ppvPlInFlight.has(plKey)) return ppvPlInFlight.get(plKey);
+
+    const task = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
+        if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
+        try {
+          const res = await fetchPpvPlaylistUpstream(resolved.masterUrl, host);
+          if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
+          if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV playlist unavailable.' };
+          const rawText = await res.text();
+          if (!rawText.includes('#EXTM3U')) {
+            if (attempt === 0) continue;
+            return { ok: false, status: 502, error: 'Invalid upstream PPV playlist.' };
+          }
+          const masterBase = new URL('.', resolved.masterUrl).href;
+          let firstSub = '';
+          const rewritten = rawText
+            .split(/\r?\n/)
+            .filter((line) => line.trim() && !line.trim().startsWith('##'))
+            .map((line) => {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('#')) return trimmed;
+              if (/\.m3u8(?:\?.*)?$/i.test(trimmed)) {
+                let subRel = trimmed;
+                if (/^https?:\/\//i.test(trimmed)) {
+                  try {
+                    const u = new URL(trimmed);
+                    if (u.href.startsWith(masterBase)) subRel = u.href.slice(masterBase.length);
+                    else return trimmed;
+                  } catch (_) { return trimmed; }
+                }
+                subRel = subRel.replace(/^\.?\//, '').split('?')[0];
+                if (/^[A-Za-z0-9._/-]{1,160}\.m3u8$/.test(subRel) && !subRel.includes('..')) {
+                  if (!firstSub) firstSub = subRel;
+                  return `sub.m3u8?slug=${encodeURIComponent(slug)}&host=${encodeURIComponent(host)}&sub=${encodeURIComponent(subRel)}`;
+                }
+              }
+              if (/^https?:\/\//i.test(trimmed)) return trimmed;
+              try { return new URL(trimmed, resolved.masterUrl).href; } catch (_) { return trimmed; }
+            })
+            .join('\n');
+          const pack = packTextPayload(rewritten, cachedPl?.pack, { brotliQuality: 9 });
+          ppvPlaylists.set(plKey, { body: rewritten, pack, firstSub, at: Date.now() });
+          if (firstSub && fetchImpl === fetch && ppvResolveImpl === null) {
+            void ppvSubPlaylist(slug, firstSub, host).catch(() => {});
+          }
+          return { ok: true, status: 200, body: rewritten, pack, cached: false };
+        } catch (err) {
+          if (attempt === 0) continue;
+          log.warn?.('[streams] PPV master playlist relay failed:', err?.message || err);
+          return { ok: false, status: 502, error: 'Upstream PPV playlist unreachable.' };
+        }
+      }
+      return { ok: false, status: 502, error: 'Upstream PPV playlist unavailable.' };
+    })();
+    ppvPlInFlight.set(plKey, task);
+    try {
+      return await task;
+    } finally {
+      ppvPlInFlight.delete(plKey);
+    }
   }
 
   async function ppvSubPlaylist(rawSlug, rawSub, rawHost = PPV_DEFAULT_HOST) {
@@ -1580,45 +1675,59 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     const plKey = `${host}:${slug}:${cleanSub}`;
     const cachedPl = ppvPlaylists.get(plKey);
     if (cachedPl && Date.now() - cachedPl.at < PPV_M3U8_TTL_MS) {
-      return { ok: true, status: 200, body: cachedPl.body, cached: true };
+      return { ok: true, status: 200, body: cachedPl.body, pack: cachedPl.pack, cached: true };
     }
+    if (ppvPlInFlight.has(plKey)) return ppvPlInFlight.get(plKey);
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
-      if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
-      let subUrl;
-      try {
-        subUrl = new URL(cleanSub, resolved.masterUrl).href;
-      } catch (_) {
-        return { ok: false, status: 400, error: 'Invalid PPV sub-playlist URL.' };
-      }
-      try {
-        const res = await fetchPpvPlaylistUpstream(subUrl, host);
-        if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
-        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV media playlist unavailable.' };
-        const rawText = await res.text();
-        if (!rawText.includes('#EXTM3U')) {
-          if (attempt === 0) continue;
-          return { ok: false, status: 502, error: 'Invalid upstream PPV media playlist.' };
+    const task = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
+        if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
+        let subUrl;
+        try {
+          subUrl = new URL(cleanSub, resolved.masterUrl).href;
+        } catch (_) {
+          return { ok: false, status: 400, error: 'Invalid PPV sub-playlist URL.' };
         }
-        const rewritten = rawText
-          .split(/\r?\n/)
-          .map((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#')) return line;
-            if (/^https?:\/\//i.test(trimmed)) return trimmed;
-            try { return new URL(trimmed, subUrl).href; } catch (_) { return line; }
-          })
-          .join('\n');
-        ppvPlaylists.set(plKey, { body: rewritten, at: Date.now() });
-        return { ok: true, status: 200, body: rewritten, cached: false };
-      } catch (err) {
-        if (attempt === 0) continue;
-        log.warn?.('[streams] PPV media playlist relay failed:', err?.message || err);
-        return { ok: false, status: 502, error: 'Upstream PPV media playlist unreachable.' };
+        try {
+          const res = await fetchPpvPlaylistUpstream(subUrl, host);
+          if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
+          if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV media playlist unavailable.' };
+          const rawText = await res.text();
+          if (!rawText.includes('#EXTM3U')) {
+            if (attempt === 0) continue;
+            return { ok: false, status: 502, error: 'Invalid upstream PPV media playlist.' };
+          }
+          const rewritten = rawText
+            .split(/\r?\n/)
+            .filter((line) => {
+              const t = line.trim();
+              return t && !t.startsWith('##') && !/^#EXT-X-PROGRAM-DATE-TIME:/i.test(t);
+            })
+            .map((line) => {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('#')) return trimmed;
+              if (/^https?:\/\//i.test(trimmed)) return trimmed;
+              try { return new URL(trimmed, subUrl).href; } catch (_) { return trimmed; }
+            })
+            .join('\n');
+          const pack = packTextPayload(rewritten, cachedPl?.pack, { brotliQuality: 6 });
+          ppvPlaylists.set(plKey, { body: rewritten, pack, at: Date.now() });
+          return { ok: true, status: 200, body: rewritten, pack, cached: false };
+        } catch (err) {
+          if (attempt === 0) continue;
+          log.warn?.('[streams] PPV media playlist relay failed:', err?.message || err);
+          return { ok: false, status: 502, error: 'Upstream PPV media playlist unreachable.' };
+        }
       }
+      return { ok: false, status: 502, error: 'Upstream PPV media playlist unavailable.' };
+    })();
+    ppvPlInFlight.set(plKey, task);
+    try {
+      return await task;
+    } finally {
+      ppvPlInFlight.delete(plKey);
     }
-    return { ok: false, status: 502, error: 'Upstream PPV media playlist unavailable.' };
   }
 
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own

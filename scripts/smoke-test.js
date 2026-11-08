@@ -472,7 +472,10 @@ function nextConfigEvent(reader) {
       badSfUhd.response.status === 400);
     const previewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-42--freef1.netlify.app' } });
     const mirrorPreviewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-8--freef2.netlify.app' } });
+    const vercelProdConfig = await request('/api/site/config', { headers: { Origin: 'https://freef1-live.vercel.app' } });
+    const vercelPreviewConfig = await request('/api/site/config', { headers: { Origin: 'https://freef1-live-git-main-team.vercel.app' } });
     const rogueNetlify = await request('/api/site/config', { headers: { Origin: 'https://random-other-site.netlify.app' } });
+    const rogueVercel = await request('/api/site/config', { headers: { Origin: 'https://random-other-site.vercel.app' } });
     const badWeellzEmbed = await request('/api/stream/weellz-embed?stream=bad$id');
     const directWeellzEmbed = await request('/api/stream/weellz-embed?stream=gebdacefgfacieee&autoplay=1&mute=1', {
       headers: { 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate' }
@@ -495,7 +498,12 @@ function nextConfigEvent(reader) {
       previewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-42--freef1.netlify.app' &&
       mirrorPreviewConfig.response.status === 200 &&
       mirrorPreviewConfig.response.headers.get('access-control-allow-origin') === 'https://deploy-preview-8--freef2.netlify.app' &&
+      vercelProdConfig.response.status === 200 &&
+      vercelProdConfig.response.headers.get('access-control-allow-origin') === 'https://freef1-live.vercel.app' &&
+      vercelPreviewConfig.response.status === 200 &&
+      vercelPreviewConfig.response.headers.get('access-control-allow-origin') === 'https://freef1-live-git-main-team.vercel.app' &&
       rogueNetlify.response.status === 403 &&
+      rogueVercel.response.status === 403 &&
       badWeellzEmbed.response.status === 400 &&
       directWeellzEmbed.response.status === 403 &&
       directWeeloState.response.status === 403 &&

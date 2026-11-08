@@ -69,8 +69,8 @@ const UPSTASH_URL = cleanEnv('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL').replac
 const UPSTASH_TOKEN = cleanEnv('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN');
 const UPSTASH_ENABLED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
 const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
-  ? 'https://freef1.netlify.app'
-  : 'https://freef1.netlify.app,http://localhost:4173,http://127.0.0.1:4173';
+  ? 'https://freef1.netlify.app,https://freef1-live.vercel.app'
+  : 'https://freef1.netlify.app,https://freef1-live.vercel.app,http://localhost:4173,http://127.0.0.1:4173';
 const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGINS));
 const MAX_NEWS_ITEMS = Math.max(1, Math.min(100, Number.parseInt(process.env.NEWS_MAX_ITEMS || '50', 10) || 50));
 const SITE_CONFIG_MAX_AGE_SECONDS = 300;
@@ -165,8 +165,9 @@ function normalizeOrigin(value) {
 
 function isPublicSiteOrigin(origin) {
   if (ALLOWED_ORIGINS.has(origin)) return true;
-  // Production + mirror Netlify projects (freef1..freef9) and their deploy previews / branch deploys.
+  // Production + mirror Netlify/Vercel projects and their deploy previews.
   if (/^https:\/\/(?:[a-z0-9-]+--)?freef[1-9]\.netlify\.app$/i.test(origin)) return true;
+  if (/^https:\/\/(?:free-?f[1-9]|vercel-?f[1-9]|netlify-?f[1-9])(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin)) return true;
   if (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin)) {
     return true;
   }
@@ -840,6 +841,42 @@ function setNetlifyEdgeCache(res, sMaxAge, { swr = 0, varyQuery = null, varyHead
   if (varyParts.length) res.setHeader('Netlify-Vary', varyParts.join(','));
 }
 
+function matchesIfNoneMatch(req, etag) {
+  const inm = String(req.headers['if-none-match'] || '').trim();
+  if (!inm || !etag) return false;
+  if (inm === '*') return true;
+  const cleanTarget = etag.replace(/^W\//, '');
+  return inm.split(',').some((part) => part.trim().replace(/^W\//, '') === cleanTarget);
+}
+
+function sendPacked(req, res, pack, contentType) {
+  if (!pack) return false;
+  res.setHeader('ETag', pack.etag);
+  res.append('Vary', 'Accept-Encoding');
+  if (matchesIfNoneMatch(req, pack.etag)) {
+    res.status(304).end();
+    return true;
+  }
+  res.setHeader('Content-Type', contentType);
+  const ae = String(req.headers['accept-encoding'] || '');
+  const viaNetlifyProxy = Boolean(req.headers['x-nf-request-id']);
+  if (!viaNetlifyProxy && /\bbr\b/i.test(ae) && pack.br) {
+    res.setHeader('Content-Encoding', 'br');
+    res.setHeader('Content-Length', String(pack.br.length));
+    res.status(200).end(pack.br);
+    return true;
+  }
+  if (/\bgzip\b/i.test(ae) && pack.gzip) {
+    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Content-Length', String(pack.gzip.length));
+    res.status(200).end(pack.gzip);
+    return true;
+  }
+  res.setHeader('Content-Length', String(pack.raw.length));
+  res.status(200).end(pack.raw);
+  return true;
+}
+
 function isTrustedStreamClientRequest(req) {
   const clientHeader = String(req.headers['x-freef1-client'] || '').trim().toLowerCase();
   if (clientHeader !== 'cockpit') return false;
@@ -882,8 +919,8 @@ app.get('/api/stream/resolve', async (req, res) => {
 app.get('/api/stream/health', async (_req, res) => {
   try {
     const report = await streamResolver.getHealth();
-    res.setHeader('Cache-Control', 'public, max-age=60');
-    setNetlifyEdgeCache(res, 60, { swr: 30 });
+    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=60');
+    setNetlifyEdgeCache(res, 120, { swr: 60 });
     return res.json({ checkedAt: report.at, providers: report.providers, uhdResolved: report.uhdResolved });
   } catch (error) {
     setNoStore(res);
@@ -948,8 +985,8 @@ app.get('/api/stream/weelo', async (req, res) => {
   }
   try {
     const state = await streamResolver.weeloState();
-    res.setHeader('Cache-Control', 'private, max-age=15');
-    setNetlifyEdgeCache(res, 15, { swr: 15, varyHeader: 'x-freef1-client|sec-fetch-dest' });
+    res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=30');
+    setNetlifyEdgeCache(res, 30, { swr: 30, varyHeader: 'x-freef1-client|sec-fetch-dest' });
     return res.json({ state, count: Object.keys(state).length });
   } catch (error) {
     setNoStore(res);
@@ -966,6 +1003,9 @@ const WEELLZ_EMBED_FRAME_ANCESTORS = [...new Set([
   SITE_URL,
   'https://freef1.netlify.app',
   'https://*.netlify.app',
+  'https://freef1-live.vercel.app',
+  'https://freef1.vercel.app',
+  'https://*.vercel.app',
   ...ALLOWED_ORIGINS,
   ...(PRODUCTION ? [] : ['http://localhost:*', 'http://127.0.0.1:*', 'https://*.e2b.app'])
 ].filter(Boolean))].join(' ');
@@ -1053,20 +1093,23 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
     }
     return res.status(status).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setNetlifyEdgeCache(res, 300, { swr: 60, varyQuery: 'variant|host' });
+  if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
 
 app.get('/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8', async (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'no-store');
   const result = await streamResolver.strmfreePlaylist(req.params.mode, req.params.variant, req.query.host);
   if (!result.ok) {
+    setNoStore(res);
     res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
     return res.status(result.status || 502).json({ error: result.error || 'Playlist unavailable.', code: 'unavailable' });
   }
+  res.setHeader('Cache-Control', 'private, max-age=3');
   setNetlifyEdgeCache(res, 3, { swr: 2, varyQuery: 'host' });
+  if (sendPacked(req, res, result.pack, 'application/vnd.apple.mpegurl; charset=utf-8')) return;
   return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
 });
 
@@ -1081,32 +1124,37 @@ app.get('/api/stream/ppv-embed', (req, res) => {
     setNoStore(res);
     return res.status(result.status || 400).json({ error: result.error || 'A valid HD PPV stream slug is required.', code: 'bad-request' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
   setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'slug|host|mute|tile' });
+  if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
 
 app.get('/api/stream/ppv-m3u8/index.m3u8', async (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'no-store');
   const result = await streamResolver.ppvMasterPlaylist(req.query.slug, req.query.host);
   if (!result.ok) {
+    setNoStore(res);
     res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
     return res.status(result.status || 502).json({ error: result.error || 'PPV playlist unavailable.', code: 'unavailable' });
   }
+  res.setHeader('Cache-Control', 'private, max-age=20');
   setNetlifyEdgeCache(res, 30, { swr: 15, varyQuery: 'slug|host' });
+  if (sendPacked(req, res, result.pack, 'application/vnd.apple.mpegurl; charset=utf-8')) return;
   return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
 });
 
 app.get('/api/stream/ppv-m3u8/sub.m3u8', async (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'no-store');
   const result = await streamResolver.ppvSubPlaylist(req.query.slug, req.query.sub, req.query.host);
   if (!result.ok) {
+    setNoStore(res);
     res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
     return res.status(result.status || 502).json({ error: result.error || 'PPV media playlist unavailable.', code: 'unavailable' });
   }
+  res.setHeader('Cache-Control', 'private, max-age=2');
   setNetlifyEdgeCache(res, 3, { swr: 2, varyQuery: 'slug|host|sub' });
+  if (sendPacked(req, res, result.pack, 'application/vnd.apple.mpegurl; charset=utf-8')) return;
   return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
 });
 
@@ -1120,8 +1168,9 @@ app.get('/api/stream/embdlol-embed', (req, res) => {
     setNoStore(res);
     return res.status(result.status || 400).json({ error: result.error || 'A valid EMB channel id is required.', code: 'bad-request' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
   setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'id|mute|tile' });
+  if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
 
@@ -1130,8 +1179,8 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
   res.append('Vary', 'Sec-Fetch-Dest, Referer');
-  const stream = String(req.query.stream || '').trim();
-  if (!/^[A-Za-z0-9_-]{4,160}$/.test(stream)) {
+  const rawStream = req.query.stream;
+  if (rawStream !== undefined && !/^[A-Za-z0-9_-]{4,160}$/.test(String(rawStream).trim())) {
     setNoStore(res);
     return res.status(400).json({ error: 'A valid stream id is required.', code: 'bad-request' });
   }
@@ -1140,9 +1189,10 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
     return res.status(403).json({ error: 'Direct embed access is not permitted.', code: 'forbidden' });
   }
   try {
-    const { html } = await streamResolver.weellzStrippedHtml();
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    const { html, pack } = await streamResolver.weellzStrippedHtml();
+    res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=86400');
     setNetlifyEdgeCache(res, 900, { swr: 300, varyQuery: 'v', varyHeader: 'sec-fetch-dest|referer' });
+    if (sendPacked(req, res, pack, 'text/html; charset=utf-8')) return;
     res.type('html').send(html);
   } catch (error) {
     console.error('[streams] weellz stripped embed failed:', error?.message || error);
