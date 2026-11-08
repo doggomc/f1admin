@@ -16,7 +16,6 @@
    --------------------------------------------------------------------------- */
 
 const crypto = require('crypto');
-const { execFile } = require('child_process');
 const path = require('path');
 const { Worker } = require('worker_threads');
 
@@ -174,52 +173,18 @@ const STRMFREE_STRIPPED_EMBED = '/api/stream/strmfree-embed';
 const PPV_STRIPPED_EMBED = '/api/stream/ppv-embed';
 const PPV_DEFAULT_HOST = 'taifood-blog.asia';
 const PPV_ALLOWED_HOSTS = new Set([PPV_DEFAULT_HOST]);
-const PPV_MASTER_TTL_MS = 20 * 60_000;
+const PPV_MASTER_TTL_MS = 8 * 60_000;
 const PPV_MASTER_M3U8_TTL_MS = 30_000;
 const PPV_M3U8_TTL_MS = 2_500;
 const PPV_WORKER_IDLE_MS = 10 * 60_000;
-const PPV_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-function curlPpvPlaylist(targetUrl, host, timeoutMs = 8_000) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(targetUrl);
-    if (parsed.protocol !== 'https:') {
-      reject(new Error('HTTPS required'));
-      return;
-    }
-    const maxSec = String(Math.max(2, Math.ceil(timeoutMs / 1000)));
-    execFile(
-      'curl',
-      [
-        '--silent',
-        '--show-error',
-        '--compressed',
-        '--max-time', maxSec,
-        '--write-out', '\n__HTTP_STATUS__:%{http_code}',
-        '-H', `User-Agent: ${PPV_UA}`,
-        '-H', `Referer: https://${host}/`,
-        '-H', `Origin: https://${host}`,
-        '-H', 'Accept: application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
-        parsed.href
-      ],
-      { timeout: timeoutMs + 1500, maxBuffer: 512 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(stderr?.trim() || err.message));
-          return;
-        }
-        const out = String(stdout || '');
-        const idx = out.lastIndexOf('\n__HTTP_STATUS__:');
-        if (idx < 0) {
-          reject(new Error('Malformed curl status output'));
-          return;
-        }
-        const body = out.slice(0, idx);
-        const status = Number(out.slice(idx + 17).trim()) || 502;
-        resolve({ ok: status >= 200 && status < 300, status, text: async () => body });
-      }
-    );
-  });
+let sharedImpit = null;
+function getPpvBrowserClient(timeoutMs = 8_000) {
+  if (!sharedImpit) {
+    const { Impit } = require('impit');
+    sharedImpit = new Impit({ browser: 'chrome', timeout: timeoutMs });
+  }
+  return sharedImpit;
 }
 const STRMFREE_HOSTS = ['strmfree.st', 'streamfree.top'];
 const STRMFREE_VARIANTS = ['skyf11080p', 'skyf1'];
@@ -1523,25 +1488,20 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
   }
 
   async function fetchPpvPlaylistUpstream(targetUrl, host) {
+    const hdrs = {
+      Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+      Origin: `https://${host}`,
+      Referer: `https://${host}/`
+    };
     if (fetchImpl !== fetch) {
-      return fetchWithTimeout(targetUrl, {
-        headers: {
-          Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
-          Origin: `https://${host}`,
-          Referer: `https://${host}/`
-        }
-      });
+      return fetchWithTimeout(targetUrl, { headers: hdrs });
     }
     try {
-      return await curlPpvPlaylist(targetUrl, host, FETCH_TIMEOUT_MS);
+      const client = getPpvBrowserClient(FETCH_TIMEOUT_MS);
+      const res = await client.fetch(targetUrl, { headers: hdrs });
+      return { ok: res.ok, status: res.status, text: () => res.text() };
     } catch (_) {
-      return fetchWithTimeout(targetUrl, {
-        headers: {
-          Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
-          Origin: `https://${host}`,
-          Referer: `https://${host}/`
-        }
-      });
+      return fetchWithTimeout(targetUrl, { headers: hdrs });
     }
   }
 
