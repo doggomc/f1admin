@@ -742,7 +742,14 @@ function adminIpAllowed(ip) {
 
 // Security headers are deliberately small; the Render process no longer
 // serves or frames the main public site.
-app.use(compression({ threshold: 1024 }));
+app.use(compression({
+  threshold: 512,
+  filter: (req, res) => {
+    const type = String(res.getHeader('Content-Type') || '');
+    if (/mpegurl/i.test(type)) return true;
+    return compression.filter(req, res);
+  }
+}));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -1046,8 +1053,8 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
     }
     return res.status(status).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=30');
-  setNetlifyEdgeCache(res, 45, { swr: 15, varyQuery: 'variant|host|mute' });
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  setNetlifyEdgeCache(res, 300, { swr: 60, varyQuery: 'variant|host' });
   return res.type('html').send(result.html);
 });
 
@@ -1134,8 +1141,8 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   }
   try {
     const { html } = await streamResolver.weellzStrippedHtml();
-    res.setHeader('Cache-Control', 'private, max-age=60');
-    setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'stream|autoplay|mute|tile', varyHeader: 'sec-fetch-dest|referer' });
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    setNetlifyEdgeCache(res, 900, { swr: 300, varyQuery: 'v', varyHeader: 'sec-fetch-dest|referer' });
     res.type('html').send(html);
   } catch (error) {
     console.error('[streams] weellz stripped embed failed:', error?.message || error);
@@ -1157,7 +1164,7 @@ app.get('/api/stream/weellz-key/:kid', async (req, res) => {
     return res.status(result.status || 502).json({ error: result.error || 'Key unavailable.', code: 'unavailable' });
   }
   res.setHeader('Cache-Control', 'public, max-age=3600');
-  setNetlifyEdgeCache(res, 7200, { swr: 600, varyQuery: 't' });
+  setNetlifyEdgeCache(res, 7200, { swr: 600, varyQuery: 'v' });
   res.type('application/octet-stream').status(200).send(result.body);
 });
 
