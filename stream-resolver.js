@@ -166,9 +166,149 @@ const WEELO_PLAYER = 'https://weellz.live/beta?stream=';
 const WEELLZ_BETA_URL = 'https://weellz.live/beta';
 const REWND_KEY_BASE = 'https://rewnd.live/k/';
 const WEELO_STRIPPED_EMBED = '/api/stream/weellz-embed?stream=';
+const EMBDLOL_STRIPPED_EMBED = '/api/stream/embdlol-embed?id=';
+const STRMFREE_STRIPPED_EMBED = '/api/stream/strmfree-embed';
+const STRMFREE_HOSTS = ['strmfree.st', 'streamfree.top'];
+const STRMFREE_VARIANTS = ['skyf11080p', 'skyf1'];
+const STRMFREE_MODES = new Set(['live', 'live-cdn', 'live-externalcdn']);
+const STRMFREE_HTML_TTL_MS = 45_000;
+const STRMFREE_M3U8_TTL_MS = 2_000;
 const WEELLZ_HTML_TTL_MS = 5 * 60_000;
 const WEELLZ_KEY_TTL_MS = 2 * 60 * 60_000;
 const WEELLZ_KEY_MAX_ENTRIES = 500;
+
+function normalizeStrmfreeHost(rawHost) {
+  const clean = String(rawHost || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  return STRMFREE_HOSTS.includes(clean) ? clean : STRMFREE_HOSTS[0];
+}
+
+function normalizeStrmfreeVariant(rawVariant) {
+  const clean = String(rawVariant || '').trim().toLowerCase();
+  return STRMFREE_VARIANTS.includes(clean) ? clean : '';
+}
+
+function toStrippedStrmfreeUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    if (!STRMFREE_HOSTS.includes(host)) return '';
+    const slug = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (/2160p|540p/i.test(slug)) return '';
+    const variant = normalizeStrmfreeVariant(slug) || 'skyf11080p';
+    return `${STRMFREE_STRIPPED_EMBED}?variant=${encodeURIComponent(variant)}&host=${encodeURIComponent(host)}`;
+  } catch (_) {
+    return '';
+  }
+}
+
+function parseStrmfreeTokens(rawHtml) {
+  const match = String(rawHtml || '').match(/const\s+_0x\s*=\s*(\{[\s\S]*?\});/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function stripStrmfreeHtml(rawHtml, { host = 'strmfree.st' } = {}) {
+  const safeHost = normalizeStrmfreeHost(host);
+  let html = String(rawHtml || '');
+  /* Strip Adcash 620KB popunder script (/analytics.js), inline aclib.runPop(...),
+     periodic /ad.html injector, and <object id="sandDetect"> anti-sandbox trap. */
+  html = html.replace(/<script\b[^>]*\bsrc=["']\/analytics\.js(?:\?[^"']*)?["'][^>]*>\s*<\/script>/gi, '');
+  html = html.replace(/<script\b[^>]*>[\s\S]*?aclib\.runPop[\s\S]*?<\/script>/gi,
+    '<script>window.__isOwnSite=true;window.open=function(){return null;};</script>');
+  html = html.replace(/window\.sandDetect\s*=\s*\(\)\s*=>\s*\{[\s\S]*?\};/g, 'window.sandDetect = () => {};');
+  html = html.replace(/<object\b[^>]*\bid=["']sandDetect["'][^>]*>[\s\S]*?<\/object>/gi, '');
+  html = html.replace(/\(\(\)=>\{let a=\(\)=>\{document\.body\.insertAdjacentHTML\([\s\S]*?\/ad\.html[\s\S]*?\}\)\(\);/g, '');
+  /* Route the tiny .m3u8 playlist fetch through f1admin (/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8)
+     so server-fetched _0x tokens always match the playlist requester's IP and auto-refresh on expiry,
+     while keeping '/live-externalcdn/' in the path so JWPlayer selects its TikTok direct-segment mode. */
+  const hostParam = `host=${encodeURIComponent(safeHost)}`;
+  html = html.replace(/url\s*=\s*`\/(live(?:-externalcdn|-cdn)?)\/\$\{VARIANT\}\/index\.m3u8`/g,
+    `url = \`\${window.location.origin}/api/stream/strmfree-m3u8/$1/\${VARIANT}/index.m3u8?${hostParam}\``);
+  html = html.replace(/url\s*\+=\s*`\?_t=\$\{p\._t\}&_e=\$\{p\._e\}&_n=\$\{p\._n\}`/g,
+    'url += `&_t=${p._t}&_e=${p._e}&_n=${p._n}`');
+  html = html.replace(/return\s*`\/live\/\$\{VARIANT\}\/index\.m3u8`/g,
+    `return \`\${window.location.origin}/api/stream/strmfree-m3u8/live/\${VARIANT}/index.m3u8?${hostParam}\``);
+  html = html.replace(/const\s+AUTOSTART\s*=\s*getAutostartFromURL\(\);/g, 'const AUTOSTART = true;');
+  html = html.replace(/mute:\s*false\s*,/g, "mute: new URLSearchParams(window.location.search).get('mute') === '1',");
+
+  const headShim = `<base href="https://${safeHost}/"><meta name="referrer" content="no-referrer">`;
+  html = html.replace(/<head\b[^>]*>/i, (m) => `${m}${headShim}`);
+
+  const bodyShim = [
+    '<script>(function(){',
+    'window.open=function(){return null;};',
+    'var bound=false;',
+    'function bindJw(){if(bound)return;try{if(typeof window.jwplayer==="function"){var p=window.jwplayer("jwplayer");if(p&&typeof p.on==="function"){bound=true;p.on("autostartNotAllowed",function(){try{p.setMute(true);p.play(true);}catch(_){}});return;}}}catch(_){}setTimeout(bindJw,250);}',
+    'bindJw();',
+    'window.addEventListener("message",function(ev){try{var d=typeof ev.data==="string"?JSON.parse(ev.data):ev.data;if(d&&d.type==="freef1-audio"){var m=Boolean(d.muted);if(typeof window.jwplayer==="function"){var p=window.jwplayer("jwplayer");if(p&&typeof p.setMute==="function")p.setMute(m);}document.querySelectorAll("video").forEach(function(v){v.muted=m;});}}catch(_){}});',
+    '})();</script>'
+  ].join('');
+  return html.replace(/<\/body>/i, `${bodyShim}</body>`);
+}
+
+function extractEmbdlolId(rawUrlOrId) {
+  const clean = String(rawUrlOrId || '').trim();
+  if (!clean) return '';
+  const match = clean.match(/\/embed\/([A-Za-z0-9_-]{4,80})(?:[/?#]|$)/i);
+  const candidate = match ? match[1] : clean;
+  return /^[A-Za-z0-9_-]{4,80}$/.test(candidate) ? candidate : '';
+}
+
+function toStrippedEmbdlolUrl(rawUrlOrId) {
+  const id = extractEmbdlolId(rawUrlOrId);
+  return id ? `${EMBDLOL_STRIPPED_EMBED}${encodeURIComponent(id)}` : '';
+}
+
+function buildEmbdlolStrippedHtml(watchId) {
+  const cleanId = extractEmbdlolId(watchId);
+  if (!cleanId) return '';
+  const safeIdJson = JSON.stringify(cleanId);
+  return [
+    '<!doctype html><html lang="en"><head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<meta name="referrer" content="no-referrer">',
+    '<title>FreeF1 Live Feed</title>',
+    '<style>',
+    'html,body,#player{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}',
+    '#err{display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:#000;color:rgba(255,255,255,.78);font:500 14px/1.45 Inter,system-ui,sans-serif;text-align:center;padding:20px}',
+    '</style>',
+    '</head><body>',
+    '<div id="player"></div><div id="err"></div>',
+    '<script src="https://embdlol.st/jwplayer.js"></script>',
+    '<script src="https://cdn.jsdelivr.net/npm/swarmcloud-jwplayer-hlsjs@0.1.3/dist/jwplayer.hlsjs.min.js"></script>',
+    '<script src="https://cdn.jsdelivr.net/npm/@swarmcloud/hls@2.18.0/hls.min.js"></script>',
+    '<script>(function(){',
+    'window.open=function(){return null;};',
+    'var params=new URLSearchParams(window.location.search);',
+    "var startMuted=params.get('mute')==='1'||params.get('tile')==='side';",
+    'var pInstance=null;',
+    'function setErr(msg){var el=document.getElementById("err");if(el){el.textContent=msg;el.style.display="flex";}}',
+    'function applyMute(m){startMuted=Boolean(m);try{if(pInstance&&typeof pInstance.setMute==="function")pInstance.setMute(startMuted);}catch(_){}document.querySelectorAll("video").forEach(function(v){v.muted=startMuted;});}',
+    'window.addEventListener("message",function(ev){try{var d=typeof ev.data==="string"?JSON.parse(ev.data):ev.data;if(!d)return;if(d.type==="freef1-audio"){applyMute(Boolean(d.muted));}else if(d.source==="pitsport-host"&&d.command==="tile"){applyMute(d.tile==="side");}}catch(_){}});',
+    '(async function(){try{',
+    `var res=await fetch("https://api.embdlol.st/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({watchId:${safeIdJson}})});`,
+    'if(!res.ok)throw new Error("Upstream feed returned "+res.status);',
+    'var data=await res.json();',
+    'if(!data||!data.url)throw new Error("Channel is currently offline");',
+    'if(typeof window.jwplayer!=="function")throw new Error("Player library unavailable");',
+    'window.jwplayer.key="uoW6qHjBL3KNudxKVnwa3rt5LlTakbko9e6aQ6VUyKQ=";',
+    'if(window.jwplayer_hls_provider&&typeof window.jwplayer_hls_provider.attach==="function")window.jwplayer_hls_provider.attach();',
+    'var chCode=data.channel&&data.channel.channelCode;',
+    'var p2pCfg={logLevel:"error",p2pEnabled:true,live:true,announce:"https://ann.cdn-lab.shop/v1",token:"pitsport",channelId:function(u){if(chCode)return chCode;var m=String(u||"").match(/channel\\(([^)]+)\\)/);return m?m[1]:u;},startFromSegmentOffset:0,dcDownloadTimeout:45,httpLoadTime:7.5,trickleICE:true};',
+    'pInstance=window.jwplayer("player").setup({file:data.url,width:"100%",height:"100%",type:"hls",autostart:true,mute:startMuted,hlsjsdefault:true,hlsjsConfig:{debug:false,p2pConfig:p2pCfg}});',
+    'pInstance.on("ready",function(){applyMute(startMuted);});',
+    'pInstance.on("autostartNotAllowed",function(){try{pInstance.setMute(true);pInstance.play(true);}catch(_){}});',
+    '}catch(err){setErr(err&&err.message?err.message:"Stream unavailable");}})();',
+    '})();</script>',
+    '</body></html>'
+  ].join('');
+}
 /* [key, label, special, id, tab]. Every id and language is from weelo's own event feed
    (weelo.live/feed/events.json): 'Multi-audio' feeds carry several commentaries, so they are Other. */
 const WEELO_FEEDS = [
@@ -218,19 +358,18 @@ function taidUrl(event, session, id, mark) {
 
    `minQuality` is the floor a link has to clear to appear in this provider's pool. */
 const STREAM_SOURCES = [
-  { id: 'sky-uk', label: 'Sky HD', main: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
-    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
-    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' },
-    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf1' },
-    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf1?server=origin&quality=1080p&category=racing' }
-  ] },
-  { id: 'sky-uhd', label: 'Sky UHD', provider: 'strmfree', minQuality: 720, tab: 'en', links: [
-    { quality: 2160, url: 'https://strmfree.st/embed/racing/skyf12160p' },
-    { quality: 2160, url: 'https://streamfree.top/embed/racing/skyf12160p' }
+  { id: 'sky-uk', label: 'Sky HD', main: true, stripped: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=strmfree.st` },
+    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=streamfree.top` },
+    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf1&host=strmfree.st` },
+    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf1&host=streamfree.top` }
   ] },
   /* The feeds whose commentary is not English draw under the Other tab, in the player and here. */
   ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
   { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, tab: 'en', links: [] },
+  /* Stripped (ad-free) counterparts of every EMB feed, relayed via /api/stream/embdlol-embed. */
+  ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-stripped-${feed}`, label: `${label} (EMB Stripped)`, provider: 'embdlol-stripped', stripped: true, channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
+  { id: 'emb-stripped-uhd', label: 'F1 UHD 4K (Stripped)', provider: 'embdlol-stripped', stripped: true, channel: UHD_CHANNEL_NAME, minQuality: 0, tab: 'en', links: [] },
   /* Onboards and the data channel. `special` chips are drawn apart from the broadcasters. */
   ...WEELO_FEEDS.map(([id, label, special, weelo, tab]) => ({
     id: `weelo-${id}`, label, provider: 'weelo', weelo, special, tab, minQuality: 720,
@@ -299,9 +438,7 @@ const MIRROR_KEYS = { skyf1: ['https://strmfree.st', 'https://streamfree.top'] }
 /* Providers worth probing, with the address a browser would actually request. */
 const PROVIDER_PROBES = [
   { provider: 'strmfree', label: 'strmfree 1080p', url: 'https://strmfree.st/embed/racing/skyf11080p' },
-  { provider: 'strmfree', label: 'strmfree 2160p', url: 'https://strmfree.st/embed/racing/skyf12160p' },
   { provider: 'streamfree', label: 'streamfree 1080p', url: 'https://streamfree.top/embed/racing/skyf11080p' },
-  { provider: 'streamfree', label: 'streamfree 2160p', url: 'https://streamfree.top/embed/racing/skyf12160p' },
   { provider: 'wikisport', label: 'WikiSport 1', url: 'https://wikisport.info/strm/f1.php' },
   { provider: 'westream', label: 'WeStream', url: 'https://westreamf1.com/westreamf1.php' },
   { provider: 'hakunamatata', label: 'hakunamatata', url: 'https://hakunamatata5.org/hakunamatata5.html' },
@@ -406,7 +543,15 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         const id = channels instanceof Map ? channels.get(source.channel) : null;
         if (id) addresses.unshift({ url: `${EMBDLOL_EMBED}${id}`, quality: 0, from: 'embdlol' });
       }
+      if (source.provider === 'embdlol-stripped' && source.id !== 'emb-stripped-uhd') {
+        const id = channels instanceof Map ? channels.get(source.channel) : null;
+        if (id) addresses.unshift({ url: toStrippedEmbdlolUrl(id), quality: 0, from: 'embdlol-stripped' });
+      }
       if (source.id === 'emb-uhd' && uhdUrl) addresses.unshift({ url: uhdUrl, quality: 2160, from: 'embdlol' });
+      if (source.id === 'emb-stripped-uhd' && uhdUrl) {
+        const strippedUhd = toStrippedEmbdlolUrl(uhdUrl);
+        if (strippedUhd) addresses.unshift({ url: strippedUhd, quality: 2160, from: 'embdlol-stripped' });
+      }
       /* weelo: one address, and only while weelo reports the feed as up. The address is kept in
          `wouldUse` so the admin panel can still show what the chip will ask for once it is live. */
       let wouldUse = '';
@@ -559,11 +704,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     return STREAM_SOURCES.map((source) => {
       let links = source.links.slice();
       if (source.id === 'sky-uk') {
-        links = [...links.filter((link) => link.quality === 1080), ...skyMirrors.filter((mirror) => mirror.quality === 1080 && !links.some((link) => link.url === mirror.url))];
-      }
-      if (source.id === 'sky-uhd') {
-        links = [...skyMirrors.filter((mirror) => mirror.quality >= 2160), ...links.filter((link) => link.quality === 1080 || link.quality >= 2160)];
-        links = links.filter((link, index) => links.findIndex((other) => other.url === link.url) === index);
+        const strippedMirrors = skyMirrors
+          .filter((mirror) => mirror.quality === 1080)
+          .map((mirror) => ({ quality: 1080, url: toStrippedStrmfreeUrl(mirror.url) }))
+          .filter((mirror) => mirror.url && !links.some((link) => link.url === mirror.url));
+        links = [...links.filter((link) => link.quality === 1080), ...strippedMirrors];
       }
       return {
         id: source.id,
@@ -574,7 +719,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         channels: source.channel ? [source.channel] : [],
         /* Which language the chip speaks, and the feed ids it may fail over to: same language only. */
         lang: EMB_LANG[source.channel] || 'en',
-        pool: source.provider === 'embdlol' ? embPool(source.channel, channels) : [],
+        pool: (source.provider === 'embdlol' || source.provider === 'embdlol-stripped') ? embPool(source.channel, channels) : [],
         /* The tab the player filters on, and whether the chip is drawn apart from the broadcasters. */
         tab: source.tab || 'en',
         special: source.special || null,
@@ -585,12 +730,14 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
            own resolution path. Reporting this is what stops the site drawing dead EMB chips. */
         upstream: (source.provider === 'weelo' || source.provider === 'weelo-stripped')
           ? weeloUp(state, source.weelo) !== 'off'
-          : source.provider !== 'embdlol'
+          : (source.provider !== 'embdlol' && source.provider !== 'embdlol-stripped')
           ? true
-          : source.id === 'emb-uhd' ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null,
+          : (source.id === 'emb-uhd' || source.id === 'emb-stripped-uhd') ? Boolean(uhdUrl) : knownChannels ? hasChannel(source.channel) : null,
         /* Where the chip would play, so a client can also build the pool itself. */
         resolvedUrl: source.provider === 'embdlol' && knownChannels && hasChannel(source.channel)
           ? EMBDLOL_EMBED + channels.get(source.channel)
+          : source.provider === 'embdlol-stripped' && knownChannels && hasChannel(source.channel)
+          ? toStrippedEmbdlolUrl(channels.get(source.channel))
           : null
       };
     });
@@ -907,6 +1054,130 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     };
   }
 
+  function embdlolStrippedHtml(watchId) {
+    const html = buildEmbdlolStrippedHtml(watchId);
+    if (!html) return { ok: false, status: 400, error: 'A valid EMB channel id is required.' };
+    return { ok: true, status: 200, html };
+  }
+
+  /* ── stripped strmfree embed & lightweight .m3u8 playlist relay ────── */
+  const strmfreeShells = new Map(); // `${host}:${variant}` -> { html, tokens, activeHost, at }
+  const strmfreeShellInFlight = new Map();
+  const strmfreePlaylists = new Map(); // `${host}:${mode}:${variant}` -> { body, at }
+
+  async function fetchStrmfreeShell(variant, preferredHost, { forceRefresh = false } = {}) {
+    const cleanVariant = normalizeStrmfreeVariant(variant || 'skyf11080p');
+    if (!cleanVariant) return { ok: false, status: 400, error: 'Unsupported strmfree stream variant.' };
+    const host = normalizeStrmfreeHost(preferredHost);
+    const cacheKey = `${host}:${cleanVariant}`;
+    const cached = strmfreeShells.get(cacheKey);
+    if (!forceRefresh && cached && Date.now() - cached.at < STRMFREE_HTML_TTL_MS) {
+      return { ok: true, status: 200, ...cached, cached: true };
+    }
+    if (!forceRefresh && strmfreeShellInFlight.has(cacheKey)) {
+      return strmfreeShellInFlight.get(cacheKey);
+    }
+    const task = (async () => {
+      const candidates = [host, ...STRMFREE_HOSTS.filter((h) => h !== host)];
+      let lastErr = null;
+      for (const candidateHost of candidates) {
+        try {
+          const upstreamUrl = `https://${candidateHost}/embed/racing/${cleanVariant}`;
+          const response = await fetchWithTimeout(upstreamUrl, {
+            headers: {
+              Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+              Referer: `https://${candidateHost}/`
+            }
+          });
+          if (!response.ok) throw new Error(`${candidateHost} responded ${response.status}`);
+          const raw = await response.text();
+          if (!/<head\b/i.test(raw) || !/jwplayer|getStreamSource/i.test(raw)) {
+            throw new Error(`unexpected ${candidateHost} player payload`);
+          }
+          const tokens = parseStrmfreeTokens(raw);
+          const html = stripStrmfreeHtml(raw, { host: candidateHost });
+          const entry = { html, tokens, activeHost: candidateHost, variant: cleanVariant, at: Date.now() };
+          strmfreeShells.set(cacheKey, entry);
+          strmfreeShells.set(`${candidateHost}:${cleanVariant}`, entry);
+          return { ok: true, status: 200, ...entry, cached: false };
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (cached) return { ok: true, status: 200, ...cached, cached: true, stale: true };
+      log.warn?.('[streams] strmfree stripped embed failed:', lastErr?.message || lastErr);
+      return { ok: false, status: 503, error: 'Stripped strmfree player unavailable right now.' };
+    })();
+    strmfreeShellInFlight.set(cacheKey, task);
+    try {
+      return await task;
+    } finally {
+      strmfreeShellInFlight.delete(cacheKey);
+    }
+  }
+
+  async function strmfreeStrippedHtml(variant = 'skyf11080p', host = 'strmfree.st') {
+    return fetchStrmfreeShell(variant, host);
+  }
+
+  async function strmfreePlaylist(mode, variant, preferredHost = 'strmfree.st') {
+    const cleanMode = String(mode || '').trim().toLowerCase();
+    const cleanVariant = normalizeStrmfreeVariant(variant);
+    if (!STRMFREE_MODES.has(cleanMode) || !cleanVariant) {
+      return { ok: false, status: 400, error: 'Invalid strmfree playlist parameters.' };
+    }
+    const host = normalizeStrmfreeHost(preferredHost);
+    const plKey = `${host}:${cleanMode}:${cleanVariant}`;
+    const cachedPl = strmfreePlaylists.get(plKey);
+    if (cachedPl && Date.now() - cachedPl.at < STRMFREE_M3U8_TTL_MS) {
+      return { ok: true, status: 200, body: cachedPl.body, cached: true };
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const shell = await fetchStrmfreeShell(cleanVariant, host, { forceRefresh: attempt > 0 });
+      if (!shell.ok) return { ok: false, status: shell.status || 503, error: shell.error || 'Playlist unavailable.' };
+      const activeHost = shell.activeHost || host;
+      const qualityKey = cleanVariant.includes('720p') ? '720p' : '1080p';
+      const tok = shell.tokens && (shell.tokens[qualityKey] || shell.tokens['1080p']);
+      const qs = tok && tok._t && tok._e && tok._n
+        ? `?_t=${encodeURIComponent(tok._t)}&_e=${encodeURIComponent(tok._e)}&_n=${encodeURIComponent(tok._n)}`
+        : '';
+      const upstreamM3u8 = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8${qs}`;
+      try {
+        const res = await fetchWithTimeout(upstreamM3u8, {
+          headers: {
+            Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+            Origin: `https://${activeHost}`,
+            Referer: `https://${activeHost}/embed/racing/${cleanVariant}`
+          }
+        });
+        if (res.status === 403 && attempt === 0) continue; // refresh expired _0x token once
+        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream playlist unavailable.' };
+        const rawText = await res.text();
+        if (!rawText.includes('#EXTM3U')) {
+          return { ok: false, status: 502, error: 'Invalid upstream playlist.' };
+        }
+        const basePlaylistUrl = `https://${activeHost}/${cleanMode}/${cleanVariant}/index.m3u8`;
+        const rewritten = rawText
+          .split(/\r?\n/)
+          .map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return line;
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            try { return new URL(trimmed, basePlaylistUrl).href; } catch (_) { return line; }
+          })
+          .join('\n');
+        strmfreePlaylists.set(plKey, { body: rewritten, at: Date.now() });
+        return { ok: true, status: 200, body: rewritten, cached: false };
+      } catch (err) {
+        if (attempt === 0) continue;
+        log.warn?.('[streams] strmfree playlist relay failed:', err?.message || err);
+        return { ok: false, status: 502, error: 'Upstream playlist unreachable.' };
+      }
+    }
+    return { ok: false, status: 502, error: 'Upstream playlist unavailable.' };
+  }
+
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own
      origin), so it is relayed from here. */
   return {
@@ -921,8 +1192,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     embdlolPublicChannels,
     chipAddresses,
     weellzStrippedHtml,
-    weellzAesKey
+    weellzAesKey,
+    embdlolStrippedHtml,
+    strmfreeStrippedHtml,
+    strmfreePlaylist
   };
 }
 
-module.exports = { createStreamResolver, stripWeellzHtml, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };
+module.exports = { createStreamResolver, stripWeellzHtml, stripStrmfreeHtml, buildEmbdlolStrippedHtml, toStrippedEmbdlolUrl, toStrippedStrmfreeUrl, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

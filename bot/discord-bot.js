@@ -178,7 +178,7 @@ function websiteEmbed(siteUrl, inviteUrl) {
       'Direct browser playback, live race-control\n' +
       'data, standings, Help tickets and a pit-stop-fast interface.',
     fields: [
-      { name: 'Streams', value: 'WeStream F1, Sky UHD, F1TV, AppleTV, DAZN, WikiSport', inline: false },
+      { name: 'Streams', value: 'WeStream F1, Sky HD, F1TV, AppleTV, DAZN, WikiSport', inline: false },
       { name: 'Race control', value: 'Live timing windows, radio feed, standings and results', inline: false },
       { name: 'Community', value: 'Session alerts and supporter roles for the FreeF1 community', inline: false },
     ],

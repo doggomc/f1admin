@@ -329,6 +329,35 @@ function nextConfigEvent(reader) {
             })
           };
         }
+        if (String(url).includes('strmfree.st/embed/racing/skyf11080p')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => [
+              '<!DOCTYPE html><html><head><title>Sky Sports F1</title>',
+              '<script src="/static/mirror-client.js?v=2"></script>',
+              '<script src="/analytics.js"></script>',
+              "<script>(function(){ aclib.runPop({ zoneId: '10818186' }); })();</script>",
+              '</head><body><div id="jwplayer"></div><script>',
+              'const VARIANT = "skyf11080p"; const QUALITY = "1080p";',
+              'const AUTOSTART = getAutostartFromURL();',
+              'const _0x = {"1080p": {"_e": 1794154609, "_n": "3fc4d3cdc6ecb2d2", "_t": "n0S0giC4NRJOYdZQYGvAJg"}};',
+              'async function getStreamSource(){ let url = `/live-externalcdn/${VARIANT}/index.m3u8`; const p = _0x[QUALITY]; if (p) { url += `?_t=${p._t}&_e=${p._e}&_n=${p._n}`; } return url; }',
+              'const playerConfig = { mute: false }; window.sandDetect = () => { document.body.innerHTML = "blocked"; };',
+              'document.body.insertAdjacentHTML("beforeend", \'<object id="sandDetect" onerror="window.sandDetect()"></object>\');',
+              '(()=>{let a=()=>{document.body.insertAdjacentHTML(\'beforeend\',\'<iframe id="close" src="/ad.html"></iframe>\');};a()})();',
+              'jwplayer("jwplayer");',
+              '</script></body></html>'
+            ].join('\n')
+          };
+        }
+        if (String(url).includes('strmfree.st/live-externalcdn/skyf11080p/index.m3u8')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => '#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:5.76,\nhttps://p16-common-sign.tiktokcdn.com/seg1.image\n#EXTINF:5.76,\nrelative-seg2.js\n'
+          };
+        }
         if (String(url).includes('weellz.live/beta')) {
           return {
             ok: true,
@@ -368,6 +397,32 @@ function nextConfigEvent(reader) {
       Buffer.isBuffer(keyRelay.body) &&
       keyRelay.body.length === 16 &&
       chipById.get('weelo-stripped-skyweelo')?.wouldUse === '/api/stream/weellz-embed?stream=dflgjhacdfahpgchehacbdacoekfacieee');
+    const okEmbEmbed = await request('/api/stream/embdlol-embed?id=01a1b7c0-66f7-77f0-9268-7205c35c60b8', { headers: { Origin: 'null' } });
+    const badEmbEmbed = await request('/api/stream/embdlol-embed?id=bad$id');
+    check('embdlol-embed serves stripped ad-free player shell and resolves emb-stripped-* addresses',
+      okEmbEmbed.response.status === 200 &&
+      okEmbEmbed.response.headers.get('access-control-allow-origin') === '*' &&
+      okEmbEmbed.text.includes('https://api.embdlol.st/watch') &&
+      okEmbEmbed.text.includes('freef1-audio') &&
+      !okEmbEmbed.text.includes('llvpn.com') &&
+      !okEmbEmbed.text.includes('rtmark.net') &&
+      badEmbEmbed.response.status === 400 &&
+      chipById.get('emb-stripped-fullhd1')?.current === '/api/stream/embdlol-embed?id=01a1b624-6a06-75eb-8927-bcfc1c37791e' &&
+      chipById.get('emb-stripped-uhd')?.current === '/api/stream/embdlol-embed?id=01a1b624-c0dd-7119-9596-76d79e8b5b9a');
+    const sfStripped = await mockResolver.strmfreeStrippedHtml('skyf11080p', 'strmfree.st');
+    const sfPlaylist = await mockResolver.strmfreePlaylist('live-externalcdn', 'skyf11080p', 'strmfree.st');
+    const badSfUhd = await request('/api/stream/strmfree-embed?variant=skyf12160p');
+    check('strmfree UHD is removed and base Sky HD is stripped with playlist relay',
+      !chipById.has('sky-uhd') &&
+      chipById.get('sky-uk')?.current === '/api/stream/strmfree-embed?variant=skyf11080p&host=strmfree.st' &&
+      sfStripped.ok === true &&
+      !sfStripped.html.includes('/analytics.js') &&
+      !sfStripped.html.includes('aclib.runPop') &&
+      !sfStripped.html.includes('/ad.html') &&
+      sfStripped.html.includes('/api/stream/strmfree-m3u8/live-externalcdn/') &&
+      sfPlaylist.ok === true &&
+      sfPlaylist.body.includes('https://strmfree.st/live-externalcdn/skyf11080p/relative-seg2.js') &&
+      badSfUhd.response.status === 400);
     const previewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-42--freef1.netlify.app' } });
     const mirrorPreviewConfig = await request('/api/site/config', { headers: { Origin: 'https://deploy-preview-8--freef2.netlify.app' } });
     const rogueNetlify = await request('/api/site/config', { headers: { Origin: 'https://random-other-site.netlify.app' } });

@@ -590,7 +590,8 @@ function storageSummary() {
 }
 
 function publicSources() {
-  return { disabled: [...state.sources.disabled], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+  /* Keep retired 'sky-uhd' listed in public disabled so already-deployed clients hide it cleanly. */
+  return { disabled: [...new Set([...state.sources.disabled, 'sky-uhd'])], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
 }
 
 /* Race Control sees the chip as a visitor will: the custom name and link when there is one. */
@@ -754,6 +755,10 @@ app.use((req, res, next) => {
   const origin = normalizeOrigin(rawOrigin);
   const own = selfOrigin(req);
   const isWeellzRelay = req.path === '/api/stream/weellz-embed' || req.path.startsWith('/api/stream/weellz-key/');
+  const isStrippedEmbedRelay = isWeellzRelay
+    || req.path === '/api/stream/embdlol-embed'
+    || req.path === '/api/stream/strmfree-embed'
+    || req.path.startsWith('/api/stream/strmfree-m3u8/');
   res.setHeader('Vary', 'Origin');
   if (origin && origin !== own && !isPublicSiteOrigin(origin)) return res.status(403).json({ error: 'Forbidden origin' });
   if (origin) {
@@ -761,10 +766,10 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', isWeellzRelay ? 'Date, Retry-After' : 'Retry-After');
-  } else if (rawOrigin === 'null' && isWeellzRelay) {
+  } else if (rawOrigin === 'null' && isStrippedEmbedRelay) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Expose-Headers', 'Date, Retry-After');
+    res.setHeader('Access-Control-Expose-Headers', isWeellzRelay ? 'Date, Retry-After' : 'Retry-After');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -905,6 +910,81 @@ const WEELLZ_EMBED_CSP = [
   "form-action 'none'",
   ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
 ].join('; ');
+
+const EMBDLOL_EMBED_CSP = [
+  "default-src 'self' https: blob: data:",
+  "base-uri 'self'",
+  "object-src 'none'",
+  `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://embdlol.st https://cdn.jsdelivr.net https://ssl.p.jwpcdn.com https://*.jwpcdn.com${PRODUCTION ? '' : ' http://ssl.p.jwpcdn.com'} blob:`,
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: data: https:",
+  "connect-src 'self' https: wss:",
+  `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}`,
+  "form-action 'none'",
+  ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
+].join('; ');
+
+const STRMFREE_EMBED_CSP = [
+  "default-src 'self' https: blob: data:",
+  "base-uri https://strmfree.st https://streamfree.top 'self'",
+  "object-src 'none'",
+  `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://strmfree.st https://streamfree.top https://*.strmfree.st https://cdn.jwplayer.com https://cdn.jsdelivr.net https://ssl.p.jwpcdn.com https://*.jwpcdn.com https://*.connatix.com${PRODUCTION ? '' : ' http://ssl.p.jwpcdn.com'} blob:`,
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline' https://strmfree.st https://streamfree.top",
+  "font-src 'self' data: https:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: data: https:",
+  "connect-src 'self' https: wss:",
+  `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}`,
+  "form-action 'none'",
+  ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
+].join('; ');
+
+app.get('/api/stream/strmfree-embed', async (req, res) => {
+  const variant = String(req.query.variant || 'skyf11080p').trim();
+  const host = String(req.query.host || 'strmfree.st').trim();
+  if (/2160p|540p/i.test(variant) || !/^(?:skyf11080p|skyf1)$/i.test(variant)) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(400).json({ error: 'A valid HD stream variant is required.', code: 'bad-request' });
+  }
+  const result = await streamResolver.strmfreeStrippedHtml(variant, host);
+  if (!result.ok) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(result.status || 503).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
+  }
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', STRMFREE_EMBED_CSP);
+  res.setHeader('Cache-Control', 'public, max-age=30');
+  return res.type('html').send(result.html);
+});
+
+app.get('/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8', async (req, res) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'no-store');
+  const result = await streamResolver.strmfreePlaylist(req.params.mode, req.params.variant, req.query.host);
+  if (!result.ok) {
+    return res.status(result.status || 502).json({ error: result.error || 'Playlist unavailable.', code: 'unavailable' });
+  }
+  return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
+});
+
+app.get('/api/stream/embdlol-embed', (req, res) => {
+  const id = String(req.query.id || '').trim();
+  const result = streamResolver.embdlolStrippedHtml(id);
+  if (!result.ok) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(result.status || 400).json({ error: result.error || 'A valid EMB channel id is required.', code: 'bad-request' });
+  }
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', EMBDLOL_EMBED_CSP);
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  return res.type('html').send(result.html);
+});
 
 app.get('/api/stream/weellz-embed', async (req, res) => {
   const stream = String(req.query.stream || '').trim();

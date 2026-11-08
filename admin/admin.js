@@ -338,6 +338,7 @@ const FILTER_GROUPS = [
   ['off', 'Hidden', (s) => sourceDraft.has(s.id)],
   ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online)],
   ['emb', 'EMB', (s) => s.provider === 'embdlol'],
+  ['embdlol-stripped', 'EMB Stripped', (s) => s.provider === 'embdlol-stripped'],
   ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
   ['weelo-stripped', 'Weelo Stripped', (s) => s.provider === 'weelo-stripped'],
   ['ppv', 'PPV', (s) => s.provider === 'ppv' || s.provider === 'taifood'],
@@ -347,6 +348,7 @@ const FILTER_GROUPS = [
 
 const BULK_GROUPS = [
   ['emb', 'EMB'],
+  ['embdlol-stripped', 'EMB Stripped'],
   ['weelo', 'Weelo'],
   ['weelo-stripped', 'Weelo Stripped'],
   ['ppv', 'PPV'],
@@ -461,6 +463,7 @@ function renderSources() {
     if (sourceFilter === 'live') return Boolean(linkReport[source.id]?.online);
     if (sourceFilter === 'all') return true;
     return sourceFilter === 'emb' ? source.provider === 'embdlol'
+      : sourceFilter === 'embdlol-stripped' ? source.provider === 'embdlol-stripped'
       : sourceFilter === 'weelo' ? source.provider === 'weelo'
       : sourceFilter === 'weelo-stripped' ? source.provider === 'weelo-stripped'
       : sourceFilter === 'ppv' || sourceFilter === 'taifood' ? (source.provider === 'ppv' || source.provider === 'taifood')
