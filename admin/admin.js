@@ -342,6 +342,7 @@ const FILTER_GROUPS = [
   ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
   ['weelo-stripped', 'Weelo Stripped', (s) => s.provider === 'weelo-stripped'],
   ['ppv', 'PPV', (s) => s.provider === 'ppv' || s.provider === 'taifood'],
+  ['ppv-stripped', 'PPV Stripped', (s) => s.provider === 'ppv-stripped'],
   ['other', 'Other langs', (s) => s.tab === 'other'],
   ['special', 'Special', (s) => Boolean(s.special)]
 ];
@@ -352,6 +353,7 @@ const BULK_GROUPS = [
   ['weelo', 'Weelo'],
   ['weelo-stripped', 'Weelo Stripped'],
   ['ppv', 'PPV'],
+  ['ppv-stripped', 'PPV Stripped'],
   ['strmfree', 'StreamFree'],
   ['other', 'Other langs'],
   ['all', 'Every source']
@@ -467,6 +469,7 @@ function renderSources() {
       : sourceFilter === 'weelo' ? source.provider === 'weelo'
       : sourceFilter === 'weelo-stripped' ? source.provider === 'weelo-stripped'
       : sourceFilter === 'ppv' || sourceFilter === 'taifood' ? (source.provider === 'ppv' || source.provider === 'taifood')
+      : sourceFilter === 'ppv-stripped' ? source.provider === 'ppv-stripped'
       : sourceFilter === 'other' ? source.tab === 'other'
       : Boolean(source.special);
   });

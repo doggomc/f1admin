@@ -16,6 +16,9 @@
    --------------------------------------------------------------------------- */
 
 const crypto = require('crypto');
+const { execFile } = require('child_process');
+const path = require('path');
+const { Worker } = require('worker_threads');
 
 const EMBDLOL_STRUCT = 'https://api.embdlol.st/struct';
 const EMBDLOL_EMBED = 'https://embdlol.st/embed/';
@@ -168,6 +171,56 @@ const REWND_KEY_BASE = 'https://rewnd.live/k/';
 const WEELO_STRIPPED_EMBED = '/api/stream/weellz-embed?stream=';
 const EMBDLOL_STRIPPED_EMBED = '/api/stream/embdlol-embed?id=';
 const STRMFREE_STRIPPED_EMBED = '/api/stream/strmfree-embed';
+const PPV_STRIPPED_EMBED = '/api/stream/ppv-embed';
+const PPV_DEFAULT_HOST = 'taifood-blog.asia';
+const PPV_ALLOWED_HOSTS = new Set([PPV_DEFAULT_HOST]);
+const PPV_MASTER_TTL_MS = 20 * 60_000;
+const PPV_MASTER_M3U8_TTL_MS = 30_000;
+const PPV_M3U8_TTL_MS = 2_500;
+const PPV_WORKER_IDLE_MS = 10 * 60_000;
+const PPV_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+function curlPpvPlaylist(targetUrl, host, timeoutMs = 8_000) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol !== 'https:') {
+      reject(new Error('HTTPS required'));
+      return;
+    }
+    const maxSec = String(Math.max(2, Math.ceil(timeoutMs / 1000)));
+    execFile(
+      'curl',
+      [
+        '--silent',
+        '--show-error',
+        '--compressed',
+        '--max-time', maxSec,
+        '--write-out', '\n__HTTP_STATUS__:%{http_code}',
+        '-H', `User-Agent: ${PPV_UA}`,
+        '-H', `Referer: https://${host}/`,
+        '-H', `Origin: https://${host}`,
+        '-H', 'Accept: application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+        parsed.href
+      ],
+      { timeout: timeoutMs + 1500, maxBuffer: 512 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr?.trim() || err.message));
+          return;
+        }
+        const out = String(stdout || '');
+        const idx = out.lastIndexOf('\n__HTTP_STATUS__:');
+        if (idx < 0) {
+          reject(new Error('Malformed curl status output'));
+          return;
+        }
+        const body = out.slice(0, idx);
+        const status = Number(out.slice(idx + 17).trim()) || 502;
+        resolve({ ok: status >= 200 && status < 300, status, text: async () => body });
+      }
+    );
+  });
+}
 const STRMFREE_HOSTS = ['strmfree.st', 'streamfree.top'];
 const STRMFREE_VARIANTS = ['skyf11080p', 'skyf1'];
 const STRMFREE_MODES = new Set(['live', 'live-cdn', 'live-externalcdn']);
@@ -176,6 +229,184 @@ const STRMFREE_M3U8_TTL_MS = 2_000;
 const WEELLZ_HTML_TTL_MS = 5 * 60_000;
 const WEELLZ_KEY_TTL_MS = 2 * 60 * 60_000;
 const WEELLZ_KEY_MAX_ENTRIES = 500;
+
+function isSafePublicHostname(host) {
+  const clean = String(host || '').trim().toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(clean)) return false;
+  if (/^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(clean)) return false;
+  if (/\.(?:local|internal|localhost)$/.test(clean)) return false;
+  return true;
+}
+
+function registerAllowedPpvHost(rawHost) {
+  const clean = String(rawHost || '').trim().toLowerCase().replace(/^www\./, '');
+  if (isSafePublicHostname(clean)) PPV_ALLOWED_HOSTS.add(clean);
+}
+
+function normalizePpvHost(rawHost) {
+  const clean = String(rawHost || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+  return PPV_ALLOWED_HOSTS.has(clean) ? clean : PPV_DEFAULT_HOST;
+}
+
+function normalizePpvSlug(rawSlug) {
+  const clean = String(rawSlug || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!clean || clean.length > 160 || /540p|\.\.|[\s?#\\]/i.test(clean)) return '';
+  if (/^f1\/20\d\d\/[a-z0-9_-]+\/[a-z0-9_-]+$/i.test(clean)) return clean;
+  if (/^[a-z0-9][a-z0-9_-]{1,150}$/i.test(clean)) return clean;
+  return '';
+}
+
+function toStrippedPpvUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    if (parsed.protocol !== 'https:') return '';
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    if (!isSafePublicHostname(host)) return '';
+    const match = parsed.pathname.match(/^\/embed\/(.+)$/i);
+    if (!match) return '';
+    const slug = normalizePpvSlug(match[1]);
+    if (!slug) return '';
+    registerAllowedPpvHost(host);
+    return `${PPV_STRIPPED_EMBED}?slug=${encodeURIComponent(slug)}&host=${encodeURIComponent(host)}`;
+  } catch (_) {
+    return '';
+  }
+}
+
+function buildPpvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
+  const slug = normalizePpvSlug(rawSlug);
+  if (!slug) return '';
+  const host = String(rawHost || '').trim()
+    ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
+    : PPV_DEFAULT_HOST;
+  if (!host) return '';
+  const m3u8Path = `/api/stream/ppv-m3u8/index.m3u8?slug=${encodeURIComponent(slug)}&host=${encodeURIComponent(host)}`;
+  const safePathJson = JSON.stringify(m3u8Path);
+  return [
+    '<!doctype html><html lang="en"><head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<meta name="referrer" content="no-referrer">',
+    '<title>FreeF1 Live Feed</title>',
+    '<style>',
+    'html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}',
+    '#player{width:100%;height:100%;display:block;background:#000;object-fit:contain;outline:none}',
+    '#err{display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:#000;color:rgba(255,255,255,.78);font:500 14px/1.45 Inter,system-ui,sans-serif;text-align:center;padding:20px;z-index:5}',
+    '</style>',
+    '</head><body>',
+    '<video id="player" controls autoplay playsinline></video><div id="err"></div>',
+    '<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>',
+    '<script>(function(){',
+    'window.open=function(){return null;};',
+    'var video=document.getElementById("player");',
+    'var params=new URLSearchParams(window.location.search);',
+    "var startMuted=params.get('mute')==='1'||params.get('tile')==='side';",
+    'video.muted=startMuted;',
+    'function setErr(msg){var el=document.getElementById("err");if(el){el.textContent=msg;el.style.display="flex";}}',
+    'function applyMute(m){startMuted=Boolean(m);video.muted=startMuted;}',
+    'window.addEventListener("message",function(ev){try{var d=typeof ev.data==="string"?JSON.parse(ev.data):ev.data;if(!d)return;if(d.type==="freef1-audio"){applyMute(Boolean(d.muted));}else if(d.source==="pitsport-host"&&d.command==="tile"){applyMute(d.tile==="side");}}catch(_){}});',
+    `var src=window.location.origin+${safePathJson};`,
+    'function tryPlay(){var p=video.play();if(p&&typeof p.catch==="function"){p.catch(function(){video.muted=true;video.play().catch(function(){});});}}',
+    'if(window.Hls&&window.Hls.isSupported()){',
+    'var BaseLoader=window.Hls.DefaultConfig.loader;',
+    'function TsSyncLoader(cfg){BaseLoader.call(this,cfg);}',
+    'TsSyncLoader.prototype=Object.create(BaseLoader.prototype);',
+    'TsSyncLoader.prototype.constructor=TsSyncLoader;',
+    'TsSyncLoader.prototype.load=function(context,config,callbacks){',
+    'var origSuccess=callbacks.onSuccess;',
+    'callbacks.onSuccess=function(response,stats,ctx,net){',
+    'if(response&&response.data instanceof ArrayBuffer){',
+    'var u8=new Uint8Array(response.data);',
+    'if(u8.length>564&&u8[0]!==0x47){',
+    'for(var i=0;i<=512&&i+376<u8.length;i++){',
+    'if(u8[i]===0x47&&u8[i+188]===0x47&&u8[i+376]===0x47){response.data=response.data.slice(i);break;}',
+    '}}}',
+    'return origSuccess.call(this,response,stats,ctx,net);',
+    '};',
+    'return BaseLoader.prototype.load.call(this,context,config,callbacks);',
+    '};',
+    'var netRetries=0,mediaRetries=0;',
+    'var hls=new window.Hls({fLoader:TsSyncLoader,enableWorker:true,lowLatencyMode:false,backBufferLength:30,maxBufferLength:30});',
+    'hls.loadSource(src);',
+    'hls.attachMedia(video);',
+    'hls.on(window.Hls.Events.MANIFEST_PARSED,function(){applyMute(startMuted);tryPlay();});',
+    'hls.on(window.Hls.Events.ERROR,function(_e,data){',
+    'if(!data||!data.fatal)return;',
+    'if(data.type===window.Hls.ErrorTypes.NETWORK_ERROR&&netRetries<3){netRetries++;setTimeout(function(){hls.startLoad();},800);return;}',
+    'if(data.type===window.Hls.ErrorTypes.MEDIA_ERROR&&mediaRetries<2){mediaRetries++;hls.recoverMediaError();return;}',
+    'setErr("Stream is currently offline");',
+    '});',
+    '}else if(video.canPlayType("application/vnd.apple.mpegurl")){',
+    'video.src=src;video.addEventListener("loadedmetadata",function(){applyMute(startMuted);tryPlay();});',
+    '}else{setErr("HLS playback unsupported in this browser");}',
+    '})();</script>',
+    '</body></html>'
+  ].join('');
+}
+
+let sharedPpvWorker = null;
+let sharedPpvSeq = 0;
+let sharedPpvIdleTimer = null;
+const sharedPpvPending = new Map();
+
+function resetSharedPpvWorker(reason = 'Worker terminated') {
+  if (sharedPpvIdleTimer) {
+    clearTimeout(sharedPpvIdleTimer);
+    sharedPpvIdleTimer = null;
+  }
+  const w = sharedPpvWorker;
+  sharedPpvWorker = null;
+  if (w) {
+    try { w.terminate(); } catch (_) {}
+  }
+  for (const [, entry] of sharedPpvPending) {
+    clearTimeout(entry.timer);
+    entry.resolve({ ok: false, error: reason });
+  }
+  sharedPpvPending.clear();
+}
+
+function touchSharedPpvIdle() {
+  if (sharedPpvIdleTimer) clearTimeout(sharedPpvIdleTimer);
+  sharedPpvIdleTimer = setTimeout(() => {
+    if (sharedPpvPending.size === 0) resetSharedPpvWorker('Idle timeout');
+  }, PPV_WORKER_IDLE_MS);
+  if (sharedPpvIdleTimer && typeof sharedPpvIdleTimer.unref === 'function') {
+    sharedPpvIdleTimer.unref();
+  }
+}
+
+function resolvePpvViaWorker(embedOrigin, slug, { forceRefresh = false, timeoutMs = 10_000 } = {}) {
+  if (!sharedPpvWorker) {
+    const worker = new Worker(path.join(__dirname, 'ppv-wasm-worker.js'));
+    if (typeof worker.unref === 'function') worker.unref();
+    worker.on('message', (msg) => {
+      if (!msg || typeof msg !== 'object') return;
+      const pending = sharedPpvPending.get(msg.id);
+      if (!pending) return;
+      sharedPpvPending.delete(msg.id);
+      clearTimeout(pending.timer);
+      touchSharedPpvIdle();
+      pending.resolve(msg);
+    });
+    worker.on('error', (err) => resetSharedPpvWorker(err?.message || 'WASM worker error'));
+    worker.on('exit', () => {
+      if (sharedPpvWorker === worker) resetSharedPpvWorker('WASM worker exited');
+    });
+    sharedPpvWorker = worker;
+  }
+  touchSharedPpvIdle();
+  return new Promise((resolve) => {
+    const id = ++sharedPpvSeq;
+    const timer = setTimeout(() => {
+      sharedPpvPending.delete(id);
+      resolve({ ok: false, error: 'PPV WASM resolution timed out.' });
+    }, timeoutMs);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    sharedPpvPending.set(id, { resolve, timer });
+    sharedPpvWorker.postMessage({ id, embedOrigin, slug, forceRefresh });
+  });
+}
 
 function normalizeStrmfreeHost(rawHost) {
   const clean = String(rawHost || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
@@ -422,6 +653,32 @@ const STREAM_SOURCES = [
   { id: 'nova', label: 'Nova Sport CZ (PPV)', provider: 'ppv', minQuality: 720, tab: 'other', links: [
     { quality: 1080, taid: 31872 }, { quality: 1080, taid: 31861 }
   ] },
+  /* Stripped (ad-free) counterparts of every PPV feed, resolved server-side via gasm.wasm + /api/stream/ppv-embed. */
+  { id: 'ppv-stripped', label: 'Sky Sports (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, links: [{ quality: 1080, ppv: true }] },
+  { id: 'appletv-stripped', label: 'AppleTV (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, links: [
+    { quality: 1080, taid: 31865 }, { quality: 1080, taid: 31854 }
+  ] },
+  { id: 'dazn-stripped', label: 'DAZN (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31867 }, { quality: 1080, taid: 31856 }
+  ] },
+  { id: 'viaplay-stripped', label: 'Viaplay (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31871 }, { quality: 1080, taid: 31860 }
+  ] },
+  { id: 'sky-italia-stripped', label: 'Sky Sport Italia (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31869 }, { quality: 1080, taid: 31858 }
+  ] },
+  { id: 'sky-de-stripped', label: 'Sky Sport F1 DE (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31868 }, { quality: 1080, taid: 31857 }
+  ] },
+  { id: 'v-sport-stripped', label: 'V Sport Motor SE (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31870 }, { quality: 1080, taid: 31859 }
+  ] },
+  { id: 'eleven-stripped', label: 'Eleven Sports PL (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31873 }, { quality: 1080, taid: 31862 }
+  ] },
+  { id: 'nova-stripped', label: 'Nova Sport CZ (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
+    { quality: 1080, taid: 31872 }, { quality: 1080, taid: 31861 }
+  ] },
   { id: 'wikisport', label: 'WikiSport', provider: 'wikisport', minQuality: 0, links: [
     { quality: 0, url: 'https://wikisport.info/strm/f1.php' },
     { quality: 0, url: 'https://wikisport.info/fsl/f1s2.php' },
@@ -445,7 +702,7 @@ const PROVIDER_PROBES = [
   { provider: 'ehgembxe', label: 'ehgembxe', url: 'https://ehgembxe.cfd/f596f98r-4089', follow: true }
 ];
 
-function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
+function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl = null } = {}) {
   const uhd = { url: '', at: 0, failedAt: 0 };
   const dynamic = new Map();      // path -> { url, at }
   const mirrorCache = new Map();  // stream key -> { at, list }
@@ -525,17 +782,21 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
         else if (link.taid) addresses.push({ url: `ppv id ${link.taid}`, quality: link.quality || 0, from: 'ppv-id' });
       }
       /* What https://api.ppv.st/api/streams publishes for this chip right now (never 540p). */
-      if (source.provider === 'ppv' || source.provider === 'taifood') {
-        if (source.id === 'ppv') {
-          if (taifood.ppv) addresses.unshift({ url: taifood.ppv, quality: 1080, from: 'ppv-live' });
+      if (source.provider === 'ppv' || source.provider === 'taifood' || source.provider === 'ppv-stripped') {
+        const baseId = source.provider === 'ppv-stripped' ? source.id.replace(/-stripped$/, '') : source.id;
+        const mapUri = (uri) => (source.provider === 'ppv-stripped' ? toStrippedPpvUrl(uri) : uri);
+        const fromTag = source.provider === 'ppv-stripped' ? 'ppv-stripped' : 'ppv-live';
+        if (baseId === 'ppv') {
+          const mapped = taifood.ppv ? mapUri(taifood.ppv) : '';
+          if (mapped) addresses.unshift({ url: mapped, quality: 1080, from: fromTag });
         } else {
-          const bucketKey = TAIFOOD_BUCKET[source.id];
-          const wantedLang = PPV_CHIP_LANG[source.id] || '';
+          const bucketKey = TAIFOOD_BUCKET[baseId];
+          const wantedLang = PPV_CHIP_LANG[baseId] || '';
           const bucket = (bucketKey && taifood.key && taifood.key[bucketKey]) || [];
           const live = bucket
             .filter((entry) => entry && entry.uri && !/540p/i.test(entry.uri) && (!wantedLang || !entry.lang || entry.lang === wantedLang))
             .sort((a, b) => Number(Boolean(wantedLang && b.lang === wantedLang)) - Number(Boolean(wantedLang && a.lang === wantedLang)));
-          addresses.unshift(...live.map((entry) => ({ url: entry.uri, quality: 1080, from: 'ppv-live' })));
+          addresses.unshift(...live.map((entry) => ({ url: mapUri(entry.uri), quality: 1080, from: fromTag })).filter((entry) => Boolean(entry.url)));
         }
       }
       /* embdlol: the id for THIS feed, exactly as the player picks it. */
@@ -786,10 +1047,22 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
           const key = {};
           const seen = new Set();
           let mainPpv = '';
+          const extractEmbedHost = (rawUri) => {
+            try {
+              const u = new URL(rawUri);
+              if (u.protocol !== 'https:' || !/^\/embed\/.+/i.test(u.pathname)) return '';
+              const h = u.hostname.toLowerCase().replace(/^www\./, '');
+              if (!isSafePublicHostname(h)) return '';
+              registerAllowedPpvHost(h);
+              return h;
+            } catch (_) {
+              return '';
+            }
+          };
           const addItem = (item) => {
             if (isPpv540p(item)) return;
             const uri = String(item.iframe || item.uri || '').trim();
-            if (!/^https:\/\/taifood-blog\.asia\/embed\//i.test(uri)) return;
+            if (!extractEmbedHost(uri)) return;
             if (/\/embed\/f1\//i.test(uri)) return;
             const rawTag = String(item.source_tag || item.title || item.name || '');
             const name = rawTag.replace(/^\[Embed\]\s*/i, '').replace(/^(?:HD|FHD|UHD|4K)\s*\|\s*/i, '').replace(/\s*\[[^\]]+\]/, '').trim();
@@ -808,7 +1081,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
           };
           for (const ev of f1Events) {
             const mainUri = String(ev.iframe || ev.uri || '').trim();
-            if (!isPpv540p(ev) && /^https:\/\/taifood-blog\.asia\/embed\//i.test(mainUri)) {
+            if (!isPpv540p(ev) && extractEmbedHost(mainUri)) {
               if (!mainPpv) mainPpv = mainUri;
               addItem(ev);
             }
@@ -1179,6 +1452,215 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     return { ok: false, status: 502, error: 'Upstream playlist unavailable.' };
   }
 
+  /* ── stripped PPV (taifood-blog.asia -> indianservers.st -> tiktokcdn) ─ */
+  const ppvMasters = new Map();     // `${host}:${slug}` -> { masterUrl, host, expiresAt, at }
+  const ppvMastersInFlight = new Map();
+  const ppvPlaylists = new Map();   // `${host}:${slug}:${sub}` -> { body, at }
+
+  function ppvStrippedHtml(rawSlug, rawHost = PPV_DEFAULT_HOST) {
+    const cleanSlug = normalizePpvSlug(rawSlug);
+    if (!cleanSlug) return { ok: false, status: 400, error: 'A valid HD PPV stream slug is required.' };
+    const cleanHost = String(rawHost || '').trim()
+      ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
+      : PPV_DEFAULT_HOST;
+    if (!cleanHost) return { ok: false, status: 400, error: 'Unsupported PPV embed host.' };
+    const html = buildPpvStrippedHtml(cleanSlug, cleanHost);
+    if (!html) return { ok: false, status: 400, error: 'A valid HD PPV stream slug is required.' };
+    return { ok: true, status: 200, html };
+  }
+
+  async function resolvePpvMasterUrl(rawSlug, rawHost = PPV_DEFAULT_HOST, { forceRefresh = false } = {}) {
+    const slug = normalizePpvSlug(rawSlug);
+    if (!slug) return { ok: false, status: 400, error: 'Invalid PPV stream slug.' };
+    const host = String(rawHost || '').trim()
+      ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
+      : PPV_DEFAULT_HOST;
+    if (!host) return { ok: false, status: 400, error: 'Unsupported PPV embed host.' };
+
+    const cacheKey = `${host}:${slug}`;
+    const cached = ppvMasters.get(cacheKey);
+    const now = Date.now();
+    if (!forceRefresh && cached && now - cached.at < PPV_MASTER_TTL_MS && (!cached.expiresAt || now < cached.expiresAt - 60_000)) {
+      return { ok: true, status: 200, ...cached, cached: true };
+    }
+    if (!forceRefresh && ppvMastersInFlight.has(cacheKey)) {
+      return ppvMastersInFlight.get(cacheKey);
+    }
+
+    const task = (async () => {
+      try {
+        const embedOrigin = `https://${host}`;
+        const result = typeof ppvResolveImpl === 'function'
+          ? await ppvResolveImpl({ embedOrigin, slug, forceRefresh })
+          : await resolvePpvViaWorker(embedOrigin, slug, { forceRefresh });
+        if (!result?.ok || !result.masterUrl) {
+          return { ok: false, status: 503, error: result?.error || 'PPV stream is offline right now.' };
+        }
+        const parsedMaster = new URL(result.masterUrl);
+        if (parsedMaster.protocol !== 'https:' || !isSafePublicHostname(parsedMaster.hostname)) {
+          return { ok: false, status: 502, error: 'Invalid upstream PPV playlist URL.' };
+        }
+        const expMatch = parsedMaster.pathname.match(/\/secure\/[^/]+\/\d+\/(\d{9,12})\//);
+        const expiresAt = expMatch ? Number(expMatch[1]) * 1000 : 0;
+        const entry = { masterUrl: parsedMaster.href, host, expiresAt, at: Date.now() };
+        ppvMasters.set(cacheKey, entry);
+        return { ok: true, status: 200, ...entry, cached: false };
+      } catch (err) {
+        if (cached && (!cached.expiresAt || Date.now() < cached.expiresAt - 10_000)) {
+          return { ok: true, status: 200, ...cached, cached: true, stale: true };
+        }
+        log.warn?.('[streams] PPV master resolve failed:', err?.message || err);
+        return { ok: false, status: 503, error: 'Stripped PPV stream unavailable right now.' };
+      }
+    })();
+
+    ppvMastersInFlight.set(cacheKey, task);
+    try {
+      return await task;
+    } finally {
+      ppvMastersInFlight.delete(cacheKey);
+    }
+  }
+
+  async function fetchPpvPlaylistUpstream(targetUrl, host) {
+    if (fetchImpl !== fetch) {
+      return fetchWithTimeout(targetUrl, {
+        headers: {
+          Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+          Origin: `https://${host}`,
+          Referer: `https://${host}/`
+        }
+      });
+    }
+    try {
+      return await curlPpvPlaylist(targetUrl, host, FETCH_TIMEOUT_MS);
+    } catch (_) {
+      return fetchWithTimeout(targetUrl, {
+        headers: {
+          Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+          Origin: `https://${host}`,
+          Referer: `https://${host}/`
+        }
+      });
+    }
+  }
+
+  async function ppvMasterPlaylist(rawSlug, rawHost = PPV_DEFAULT_HOST) {
+    const slug = normalizePpvSlug(rawSlug);
+    if (!slug) return { ok: false, status: 400, error: 'Invalid PPV stream slug.' };
+    const host = String(rawHost || '').trim()
+      ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
+      : PPV_DEFAULT_HOST;
+    if (!host) return { ok: false, status: 400, error: 'Unsupported PPV embed host.' };
+
+    const plKey = `${host}:${slug}:master`;
+    const cachedPl = ppvPlaylists.get(plKey);
+    if (cachedPl && Date.now() - cachedPl.at < PPV_MASTER_M3U8_TTL_MS) {
+      return { ok: true, status: 200, body: cachedPl.body, cached: true };
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
+      if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
+      try {
+        const res = await fetchPpvPlaylistUpstream(resolved.masterUrl, host);
+        if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
+        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV playlist unavailable.' };
+        const rawText = await res.text();
+        if (!rawText.includes('#EXTM3U')) {
+          if (attempt === 0) continue;
+          return { ok: false, status: 502, error: 'Invalid upstream PPV playlist.' };
+        }
+        const masterBase = new URL('.', resolved.masterUrl).href;
+        const rewritten = rawText
+          .split(/\r?\n/)
+          .map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return line;
+            if (/\.m3u8(?:\?.*)?$/i.test(trimmed)) {
+              let subRel = trimmed;
+              if (/^https?:\/\//i.test(trimmed)) {
+                try {
+                  const u = new URL(trimmed);
+                  if (u.href.startsWith(masterBase)) subRel = u.href.slice(masterBase.length);
+                  else return trimmed;
+                } catch (_) { return line; }
+              }
+              subRel = subRel.replace(/^\.?\//, '').split('?')[0];
+              if (/^[A-Za-z0-9._/-]{1,160}\.m3u8$/.test(subRel) && !subRel.includes('..')) {
+                return `sub.m3u8?slug=${encodeURIComponent(slug)}&host=${encodeURIComponent(host)}&sub=${encodeURIComponent(subRel)}`;
+              }
+            }
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            try { return new URL(trimmed, resolved.masterUrl).href; } catch (_) { return line; }
+          })
+          .join('\n');
+        ppvPlaylists.set(plKey, { body: rewritten, at: Date.now() });
+        return { ok: true, status: 200, body: rewritten, cached: false };
+      } catch (err) {
+        if (attempt === 0) continue;
+        log.warn?.('[streams] PPV master playlist relay failed:', err?.message || err);
+        return { ok: false, status: 502, error: 'Upstream PPV playlist unreachable.' };
+      }
+    }
+    return { ok: false, status: 502, error: 'Upstream PPV playlist unavailable.' };
+  }
+
+  async function ppvSubPlaylist(rawSlug, rawSub, rawHost = PPV_DEFAULT_HOST) {
+    const slug = normalizePpvSlug(rawSlug);
+    const cleanSub = String(rawSub || '').trim().replace(/^\/+/, '');
+    if (!slug || !cleanSub || cleanSub.includes('..') || !/^[A-Za-z0-9._/-]{1,160}\.m3u8$/.test(cleanSub)) {
+      return { ok: false, status: 400, error: 'Invalid PPV sub-playlist parameters.' };
+    }
+    const host = String(rawHost || '').trim()
+      ? (PPV_ALLOWED_HOSTS.has(String(rawHost).trim().toLowerCase()) ? String(rawHost).trim().toLowerCase() : '')
+      : PPV_DEFAULT_HOST;
+    if (!host) return { ok: false, status: 400, error: 'Unsupported PPV embed host.' };
+
+    const plKey = `${host}:${slug}:${cleanSub}`;
+    const cachedPl = ppvPlaylists.get(plKey);
+    if (cachedPl && Date.now() - cachedPl.at < PPV_M3U8_TTL_MS) {
+      return { ok: true, status: 200, body: cachedPl.body, cached: true };
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const resolved = await resolvePpvMasterUrl(slug, host, { forceRefresh: attempt > 0 });
+      if (!resolved.ok) return { ok: false, status: resolved.status || 503, error: resolved.error || 'PPV stream unavailable.' };
+      let subUrl;
+      try {
+        subUrl = new URL(cleanSub, resolved.masterUrl).href;
+      } catch (_) {
+        return { ok: false, status: 400, error: 'Invalid PPV sub-playlist URL.' };
+      }
+      try {
+        const res = await fetchPpvPlaylistUpstream(subUrl, host);
+        if ((res.status === 403 || res.status === 404 || res.status === 410) && attempt === 0) continue;
+        if (!res.ok) return { ok: false, status: res.status || 502, error: 'Upstream PPV media playlist unavailable.' };
+        const rawText = await res.text();
+        if (!rawText.includes('#EXTM3U')) {
+          if (attempt === 0) continue;
+          return { ok: false, status: 502, error: 'Invalid upstream PPV media playlist.' };
+        }
+        const rewritten = rawText
+          .split(/\r?\n/)
+          .map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return line;
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            try { return new URL(trimmed, subUrl).href; } catch (_) { return line; }
+          })
+          .join('\n');
+        ppvPlaylists.set(plKey, { body: rewritten, at: Date.now() });
+        return { ok: true, status: 200, body: rewritten, cached: false };
+      } catch (err) {
+        if (attempt === 0) continue;
+        log.warn?.('[streams] PPV media playlist relay failed:', err?.message || err);
+        return { ok: false, status: 502, error: 'Upstream PPV media playlist unreachable.' };
+      }
+    }
+    return { ok: false, status: 502, error: 'Upstream PPV media playlist unavailable.' };
+  }
+
   /* The status map on its own: the browser cannot read it directly (weelo only answers its own
      origin), so it is relayed from here. */
   return {
@@ -1196,8 +1678,11 @@ function createStreamResolver({ log = console, fetchImpl = fetch } = {}) {
     weellzAesKey,
     embdlolStrippedHtml,
     strmfreeStrippedHtml,
-    strmfreePlaylist
+    strmfreePlaylist,
+    ppvStrippedHtml,
+    ppvMasterPlaylist,
+    ppvSubPlaylist
   };
 }
 
-module.exports = { createStreamResolver, stripWeellzHtml, stripStrmfreeHtml, buildEmbdlolStrippedHtml, toStrippedEmbdlolUrl, toStrippedStrmfreeUrl, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };
+module.exports = { createStreamResolver, stripWeellzHtml, stripStrmfreeHtml, buildEmbdlolStrippedHtml, buildPpvStrippedHtml, toStrippedEmbdlolUrl, toStrippedStrmfreeUrl, toStrippedPpvUrl, normalizePpvHost, normalizePpvSlug, UHD_CHANNEL_NAME, DYNAMIC_ALLOWLIST, PROVIDER_PROBES, STREAM_SOURCES, MIRROR_KEYS };

@@ -764,7 +764,9 @@ app.use((req, res, next) => {
   const isStrippedEmbedRelay = isWeellzRelay
     || req.path === '/api/stream/embdlol-embed'
     || req.path === '/api/stream/strmfree-embed'
-    || req.path.startsWith('/api/stream/strmfree-m3u8/');
+    || req.path.startsWith('/api/stream/strmfree-m3u8/')
+    || req.path === '/api/stream/ppv-embed'
+    || req.path.startsWith('/api/stream/ppv-m3u8/');
   res.setHeader('Vary', 'Origin');
   if (origin && origin !== own && !isPublicSiteOrigin(origin)) return res.status(403).json({ error: 'Forbidden origin' });
   if (origin) {
@@ -805,8 +807,22 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
    address and plays it; joining the Discord is an optional nudge in the UI. */
 const streamResolver = require('./stream-resolver').createStreamResolver();
 
-app.get('/api/stream/resolve', async (req, res) => {
+function setNoStore(res) {
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
+}
+
+function setNetlifyEdgeCache(res, sMaxAge, { swr = 0, varyQuery = null } = {}) {
+  const directives = [`public`, `s-maxage=${sMaxAge}`];
+  if (swr > 0) directives.push(`stale-while-revalidate=${swr}`);
+  res.setHeader('Netlify-CDN-Cache-Control', directives.join(', '));
+  if (typeof varyQuery === 'string' && varyQuery) {
+    res.setHeader('Netlify-Vary', `query=${varyQuery}`);
+  }
+}
+
+app.get('/api/stream/resolve', async (req, res) => {
+  setNoStore(res);
   const path = String(req.query.path || '').trim().slice(0, 120);
   if (!path) return res.status(400).json({ error: 'A provider path is required.', code: 'bad-request' });
   try {
@@ -826,11 +842,13 @@ app.get('/api/stream/resolve', async (req, res) => {
 });
 
 app.get('/api/stream/health', async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=60');
   try {
     const report = await streamResolver.getHealth();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ checkedAt: report.at, providers: report.providers, uhdResolved: report.uhdResolved });
   } catch (error) {
+    setNoStore(res);
     console.error('[streams] health failed:', error?.message || error);
     return res.status(503).json({ error: 'Health check unavailable.', code: 'unavailable' });
   }
@@ -841,11 +859,13 @@ app.get('/api/stream/health', async (_req, res) => {
    chips in netlifyf1/src/app.ts. Providers that publish mirrors (strmfree) contribute their
    current ones on top of the static pool. */
 app.get('/api/stream/sources', async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=60');
   try {
     const sources = await streamResolver.listSources();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ sources, count: sources.length, minQuality: 720 });
   } catch (error) {
+    setNoStore(res);
     console.error('[streams] sources failed:', error?.message || error);
     return res.status(503).json({ error: 'Source list unavailable.', code: 'unavailable' });
   }
@@ -856,11 +876,13 @@ app.get('/api/stream/sources', async (_req, res) => {
    shows up in the console as a CORS failure and left every onboard stuck on "unknown". */
 /* PPV F1 channel list (built from https://api.ppv.st/api/streams with 540p variants excluded). */
 app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=60');
   try {
     const { list, ppv, at } = await streamResolver.taifoodChannels();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ channels: list, ppv: ppv || '', count: list.length, updatedAt: at || null });
   } catch (error) {
+    setNoStore(res);
     console.error('[streams] ppv list failed:', error?.message || error);
     return res.status(503).json({ error: 'Channel list unavailable.', code: 'unavailable' });
   }
@@ -868,22 +890,26 @@ app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
 
 /* EMB F1 channel map relay (excludes UHD, backs up direct api.embdlol.st/struct browser fetches). */
 app.get('/api/stream/embdlol', async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=60');
   try {
     const { channels, at } = await streamResolver.embdlolPublicChannels();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ channels, count: Object.keys(channels).length, updatedAt: at });
   } catch (error) {
+    setNoStore(res);
     console.error('[streams] embdlol list failed:', error?.message || error);
     return res.status(503).json({ error: 'Channel list unavailable.', code: 'unavailable' });
   }
 });
 
 app.get('/api/stream/weelo', async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=15');
   try {
     const state = await streamResolver.weeloState();
+    res.setHeader('Cache-Control', 'public, max-age=15');
+    setNetlifyEdgeCache(res, 15, { swr: 15 });
     return res.json({ state, count: Object.keys(state).length });
   } catch (error) {
+    setNoStore(res);
     console.error('[streams] weelo state failed:', error?.message || error);
     return res.status(503).json({ error: 'Status unavailable.', code: 'unavailable' });
   }
@@ -949,6 +975,22 @@ const STRMFREE_EMBED_CSP = [
   ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
 ].join('; ');
 
+const PPV_EMBED_CSP = [
+  "default-src 'self' https: blob: data:",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:",
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: data: https:",
+  "connect-src 'self' https: wss:",
+  `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}`,
+  "form-action 'none'",
+  ...(PRODUCTION ? ['upgrade-insecure-requests'] : [])
+].join('; ');
+
 app.get('/api/stream/strmfree-embed', async (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
@@ -956,12 +998,12 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
   const variant = String(req.query.variant || 'skyf11080p').trim();
   const host = String(req.query.host || 'strmfree.st').trim();
   if (/2160p|540p/i.test(variant) || !/^(?:skyf11080p|skyf1)$/i.test(variant)) {
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     return res.status(400).json({ error: 'A valid HD stream variant is required.', code: 'bad-request' });
   }
   const result = await streamResolver.strmfreeStrippedHtml(variant, host);
   if (!result.ok) {
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     const status = result.status || 503;
     if (req.accepts(['json', 'html']) === 'html') {
       return res.status(status).type('html').send('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#000;color:rgba(255,255,255,.72);font:500 14px/1.4 system-ui,sans-serif}</style><body><div>Feed temporarily unavailable — switching mirror…</div></body>');
@@ -969,6 +1011,7 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
     return res.status(status).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
   }
   res.setHeader('Cache-Control', 'public, max-age=30');
+  setNetlifyEdgeCache(res, 45, { swr: 15, varyQuery: 'variant|host|mute' });
   return res.type('html').send(result.html);
 });
 
@@ -977,8 +1020,50 @@ app.get('/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8', async (req, res) 
   res.setHeader('Cache-Control', 'no-store');
   const result = await streamResolver.strmfreePlaylist(req.params.mode, req.params.variant, req.query.host);
   if (!result.ok) {
+    res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
     return res.status(result.status || 502).json({ error: result.error || 'Playlist unavailable.', code: 'unavailable' });
   }
+  setNetlifyEdgeCache(res, 3, { swr: 2, varyQuery: 'host' });
+  return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
+});
+
+app.get('/api/stream/ppv-embed', (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Security-Policy', PPV_EMBED_CSP);
+  const slug = String(req.query.slug || '').trim();
+  const host = String(req.query.host || '').trim();
+  const result = streamResolver.ppvStrippedHtml(slug, host);
+  if (!result.ok) {
+    setNoStore(res);
+    return res.status(result.status || 400).json({ error: result.error || 'A valid HD PPV stream slug is required.', code: 'bad-request' });
+  }
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'slug|host|mute|tile' });
+  return res.type('html').send(result.html);
+});
+
+app.get('/api/stream/ppv-m3u8/index.m3u8', async (req, res) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'no-store');
+  const result = await streamResolver.ppvMasterPlaylist(req.query.slug, req.query.host);
+  if (!result.ok) {
+    res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
+    return res.status(result.status || 502).json({ error: result.error || 'PPV playlist unavailable.', code: 'unavailable' });
+  }
+  setNetlifyEdgeCache(res, 30, { swr: 15, varyQuery: 'slug|host' });
+  return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
+});
+
+app.get('/api/stream/ppv-m3u8/sub.m3u8', async (req, res) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'no-store');
+  const result = await streamResolver.ppvSubPlaylist(req.query.slug, req.query.sub, req.query.host);
+  if (!result.ok) {
+    res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
+    return res.status(result.status || 502).json({ error: result.error || 'PPV media playlist unavailable.', code: 'unavailable' });
+  }
+  setNetlifyEdgeCache(res, 3, { swr: 2, varyQuery: 'slug|host|sub' });
   return res.type('application/vnd.apple.mpegurl').status(200).send(result.body);
 });
 
@@ -989,10 +1074,11 @@ app.get('/api/stream/embdlol-embed', (req, res) => {
   const id = String(req.query.id || '').trim();
   const result = streamResolver.embdlolStrippedHtml(id);
   if (!result.ok) {
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     return res.status(result.status || 400).json({ error: result.error || 'A valid EMB channel id is required.', code: 'bad-request' });
   }
   res.setHeader('Cache-Control', 'public, max-age=60');
+  setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'id|mute|tile' });
   return res.type('html').send(result.html);
 });
 
@@ -1002,16 +1088,17 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
   const stream = String(req.query.stream || '').trim();
   if (!/^[A-Za-z0-9_-]{4,160}$/.test(stream)) {
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     return res.status(400).json({ error: 'A valid stream id is required.', code: 'bad-request' });
   }
   try {
     const { html } = await streamResolver.weellzStrippedHtml();
     res.setHeader('Cache-Control', 'public, max-age=60');
+    setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'stream|autoplay|mute|tile' });
     res.type('html').send(html);
   } catch (error) {
     console.error('[streams] weellz stripped embed failed:', error?.message || error);
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     if (req.accepts(['json', 'html']) === 'html') {
       return res.status(503).type('html').send('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#000;color:rgba(255,255,255,.72);font:500 14px/1.4 system-ui,sans-serif}</style><body><div>Feed temporarily unavailable.</div></body>');
     }
@@ -1025,25 +1112,29 @@ app.get('/api/stream/weellz-key/:kid', async (req, res) => {
   const result = await streamResolver.weellzAesKey(req.params.kid, req.query.t);
   if (result.date) res.setHeader('Date', result.date);
   if (!result.ok) {
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     return res.status(result.status || 502).json({ error: result.error || 'Key unavailable.', code: 'unavailable' });
   }
   res.setHeader('Cache-Control', 'public, max-age=3600');
+  setNetlifyEdgeCache(res, 7200, { swr: 600, varyQuery: 't' });
   res.type('application/octet-stream').status(200).send(result.body);
 });
 
 app.get('/api/stream/uhd', async (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=300');
   try {
     const url = await streamResolver.resolveUhdUrl();
     if (!url) {
+      setNoStore(res);
       return res.status(503).json({
         error: 'The 4K channel is not listed upstream right now.',
         code: 'unavailable'
       });
     }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    setNetlifyEdgeCache(res, 120, { swr: 30 });
     return res.json({ url, source: 'emb-uhd' });
   } catch (error) {
+    setNoStore(res);
     console.error('[4K] resolve failed:', error?.message || error);
     return res.status(503).json({ error: 'The 4K channel could not be resolved.', code: 'unavailable' });
   }
@@ -1053,6 +1144,7 @@ app.get('/api/stream/uhd', async (_req, res) => {
 app.get('/api/site/config', async (_req, res) => {
   await stateReady;
   res.setHeader('Cache-Control', `public, max-age=${SITE_CONFIG_MAX_AGE_SECONDS}`);
+  setNetlifyEdgeCache(res, 60, { swr: 30 });
   res.json(publicConfig());
 });
 

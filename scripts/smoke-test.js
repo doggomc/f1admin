@@ -122,7 +122,9 @@ function nextConfigEvent(reader) {
     const siteConfig = await request('/api/site/config', { headers: { Origin: 'https://freef1.netlify.app' } });
     check('public site config is served without admin credentials', siteConfig.response.status === 200 && siteConfig.body.maintenance?.active === false);
     check('public News payload is empty while the reversible hide flag is off', Array.isArray(siteConfig.body.news) && siteConfig.body.news.length === 0);
-    check('public config is HTTP-cacheable for five minutes', /public, max-age=300/.test(siteConfig.response.headers.get('cache-control') || ''));
+    check('public config is HTTP-cacheable for five minutes and edge-cached for 60s',
+      /public, max-age=300/.test(siteConfig.response.headers.get('cache-control') || '') &&
+      /public, s-maxage=60/.test(siteConfig.response.headers.get('netlify-cdn-cache-control') || ''));
     check('CORS allows the public site origin', siteConfig.response.headers.get('access-control-allow-origin') === 'https://freef1.netlify.app');
     const deniedOrigin = await request('/api/site/config', { headers: { Origin: 'https://evil.example' } });
     check('untrusted browser origins are rejected', deniedOrigin.response.status === 403);
@@ -274,20 +276,56 @@ function nextConfigEvent(reader) {
       !adminCfgAfterSave.body.sources?.disabled?.includes('sky-uhd'));
 
     const ppvSources = (sourceChange.body.sources || []).filter(item => item.provider === 'ppv');
-    check('all 9 PPV sources are labelled with (PPV) and grouped under provider ppv',
+    const ppvStrippedSources = (sourceChange.body.sources || []).filter(item => item.provider === 'ppv-stripped');
+    check('all 9 PPV sources and 9 Stripped PPV counterparts are registered cleanly',
       ppvSources.length === 9 && ppvSources.every(item => /\(PPV\)$/.test(item.label)) &&
+      ppvStrippedSources.length === 9 && ppvStrippedSources.every(item => item.stripped === true && /\(PPV Stripped\)$/.test(item.label)) &&
       !(sourceChange.body.sources || []).some(item => item.provider === 'taifood'));
     const ppvBulkOff = await request('/admin/api/stream/sources/bulk', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv', action: 'disable' })
     });
-    check('bulk PPV group toggle disables all 9 PPV sources', ppvBulkOff.response.status === 200 && ppvBulkOff.body.touched === 9);
+    const ppvStrippedBulkOff = await request('/admin/api/stream/sources/bulk', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv-stripped', action: 'disable' })
+    });
+    check('bulk PPV and PPV Stripped group toggles each touch all 9 sources independently',
+      ppvBulkOff.response.status === 200 && ppvBulkOff.body.touched === 9 &&
+      ppvStrippedBulkOff.response.status === 200 && ppvStrippedBulkOff.body.touched === 9);
     await request('/admin/api/stream/sources/bulk', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv', action: 'enable' })
+    });
+    await request('/admin/api/stream/sources/bulk', {
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ group: 'ppv-stripped', action: 'enable' })
     });
 
     const { createStreamResolver } = require('../stream-resolver');
     const mockResolver = createStreamResolver({
+      ppvResolveImpl: async ({ slug }) => ({
+        ok: true,
+        masterUrl: `https://bharat.indianservers.st/secure/TESTTOKEN/0/1899999999/${slug.split('/').pop()}/index.m3u8`
+      }),
       fetchImpl: async (url, options) => {
+        if (String(url).includes('indianservers.st/secure/TESTTOKEN/') && String(url).endsWith('/index.m3u8')) {
+          const hdrs = options?.headers || {};
+          if ((hdrs.Referer || hdrs.referer) !== 'https://taifood-blog.asia/') {
+            return { ok: false, status: 403, text: async () => 'Forbidden' };
+          }
+          return {
+            ok: true,
+            status: 200,
+            text: async () => '#EXTM3U\n## IRON DOME\n#EXT-X-STREAM-INF:BANDWIDTH=10060000,RESOLUTION=1920x1080\ntracks-v1a1/mono.ts.m3u8\n'
+          };
+        }
+        if (String(url).includes('indianservers.st/secure/TESTTOKEN/') && String(url).endsWith('/tracks-v1a1/mono.ts.m3u8')) {
+          const hdrs = options?.headers || {};
+          if ((hdrs.Referer || hdrs.referer) !== 'https://taifood-blog.asia/') {
+            return { ok: false, status: 403, text: async () => 'Forbidden' };
+          }
+          return {
+            ok: true,
+            status: 200,
+            text: async () => '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:3.840,\nhttps://p16-common-sign.tiktokcdn.com/tos-alisg-v-4896/seg1~tplv-tiktokx-origin.image?x-expires=1794150000\n'
+          };
+        }
         if (String(url).includes('api.embdlol.st/struct')) {
           return {
             ok: true,
@@ -454,7 +492,33 @@ function nextConfigEvent(reader) {
       chipById.get('ppv')?.current === 'https://taifood-blog.asia/embed/f1/2026/brazil/qualifying' &&
       chipById.get('appletv')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31854' &&
       chipById.get('sky-italia')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31858' &&
-      chipById.get('sky-de')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31857');
+      chipById.get('sky-de')?.current === 'https://taifood-blog.asia/embed/so-paulo-grand-prix---qualifying-31857' &&
+      chipById.get('ppv-stripped')?.current === '/api/stream/ppv-embed?slug=f1%2F2026%2Fbrazil%2Fqualifying&host=taifood-blog.asia' &&
+      chipById.get('appletv-stripped')?.current === '/api/stream/ppv-embed?slug=so-paulo-grand-prix---qualifying-31854&host=taifood-blog.asia' &&
+      chipById.get('sky-italia-stripped')?.current === '/api/stream/ppv-embed?slug=so-paulo-grand-prix---qualifying-31858&host=taifood-blog.asia' &&
+      chipById.get('sky-de-stripped')?.current === '/api/stream/ppv-embed?slug=so-paulo-grand-prix---qualifying-31857&host=taifood-blog.asia');
+    const okPpvEmbed = await request('/api/stream/ppv-embed?slug=f1%2F2026%2Fbrazil%2Fqualifying&host=taifood-blog.asia', { headers: { Origin: 'null' } });
+    const badPpv540 = await request('/api/stream/ppv-embed?slug=f1%2F2026%2Fbrazil%2Fqualifying_540p');
+    const badPpvHost = await request('/api/stream/ppv-embed?slug=sky-sports-golf-29059&host=evil.example');
+    const ppvMaster = await mockResolver.ppvMasterPlaylist('so-paulo-grand-prix---qualifying-31854', 'taifood-blog.asia');
+    const ppvSub = await mockResolver.ppvSubPlaylist('so-paulo-grand-prix---qualifying-31854', 'tracks-v1a1/mono.ts.m3u8', 'taifood-blog.asia');
+    const badPpvSub = await mockResolver.ppvSubPlaylist('so-paulo-grand-prix---qualifying-31854', '../secret.m3u8', 'taifood-blog.asia');
+    check('ppv-embed and ppv-m3u8 strip ads, enforce Referer/SSRF rules, edge-cache playlists, and keep TikTok segments direct',
+      okPpvEmbed.response.status === 200 &&
+      okPpvEmbed.response.headers.get('access-control-allow-origin') === '*' &&
+      /public, s-maxage=60/.test(okPpvEmbed.response.headers.get('netlify-cdn-cache-control') || '') &&
+      okPpvEmbed.response.headers.get('netlify-vary') === 'query=slug|host|mute|tile' &&
+      okPpvEmbed.text.includes('/api/stream/ppv-m3u8/index.m3u8?slug=') &&
+      okPpvEmbed.text.includes('TsSyncLoader') &&
+      !okPpvEmbed.text.includes('aclib') &&
+      badPpv540.response.status === 400 &&
+      badPpvHost.response.status === 400 &&
+      ppvMaster.ok === true &&
+      ppvMaster.body.includes('sub.m3u8?slug=so-paulo-grand-prix---qualifying-31854&host=taifood-blog.asia&sub=tracks-v1a1%2Fmono.ts.m3u8') &&
+      ppvSub.ok === true &&
+      ppvSub.body.includes('https://p16-common-sign.tiktokcdn.com/tos-alisg-v-4896/seg1~tplv-tiktokx-origin.image') &&
+      badPpvSub.ok === false &&
+      badPpvSub.status === 400);
     check('stream-resolver resolves hyphenated EMB F1 channels (Sky, ATV, UHD, DAZN, SkyIT, SkyDE) and drops 540p/MotoGP',
       chipById.get('emb-fullhd1')?.current === 'https://embdlol.st/embed/01a1b624-6a06-75eb-8927-bcfc1c37791e' &&
       chipById.get('emb-fullhd3')?.current === 'https://embdlol.st/embed/01a1b625-3629-7451-a024-99b4b0b14854' &&
