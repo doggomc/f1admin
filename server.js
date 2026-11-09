@@ -69,6 +69,16 @@ const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
   ? 'https://freef1.netlify.app,https://freef1-live.vercel.app'
   : 'https://freef1.netlify.app,https://freef1-live.vercel.app,http://localhost:4173,http://127.0.0.1:4173';
 const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGINS));
+// Relay framing uses exact origins; list additional preview domains explicitly.
+const RELAY_ORIGINS = new Set(parseOrigins([
+  'https://freef1.netlify.app', 'https://freef1-live.vercel.app', 'https://freef1.vercel.app',
+  'https://freef1-git-design-modern-cockpit-motion-f4-ac7f.vercel.app',
+  process.env.ALLOWED_ORIGIN || '', process.env.RELAY_ALLOWED_ORIGINS || ''
+].join(',')));
+function isRelayOrigin(origin) {
+  return RELAY_ORIGINS.has(origin) || (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin));
+}
+
 const SITE_CONFIG_MAX_AGE_SECONDS = 300;
 const ADMIN_IP_ALLOWLIST = String(process.env.ADMIN_IP_ALLOWLIST || '').split(',').map(value => value.trim()).filter(Boolean);
 const LEGACY_REMOTE_KEYS_TO_DELETE = [
@@ -743,7 +753,7 @@ app.use((req, res, next) => {
     || req.path === '/api/stream/ppv-embed'
     || req.path.startsWith('/api/stream/ppv-m3u8/');
   res.setHeader('Vary', 'Origin');
-  if (origin && origin !== own && !isPublicSiteOrigin(origin)) return res.status(403).json({ error: 'Forbidden origin' });
+  if (origin && origin !== own && !(isStrippedEmbedRelay ? isRelayOrigin(origin) : isPublicSiteOrigin(origin))) return res.status(403).json({ error: 'Forbidden origin' });
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
@@ -858,7 +868,7 @@ function isTrustedStreamEmbedRequest(req) {
   if (secDest !== 'iframe') return false;
   const refererOrigin = normalizeOrigin(req.headers.referer || '');
   if (!refererOrigin) return false;
-  return isPublicSiteOrigin(refererOrigin) || (!PRODUCTION && refererOrigin === selfOrigin(req));
+  return isRelayOrigin(refererOrigin) || (!PRODUCTION && refererOrigin === selfOrigin(req));
 }
 
 app.get('/api/stream/resolve', async (req, res) => {
@@ -965,15 +975,9 @@ app.get('/api/stream/weelo', async (req, res) => {
    only the cached player HTML shell and 16-byte decryption keys touch this process. */
 const WEELLZ_EMBED_FRAME_ANCESTORS = [...new Set([
   "'self'",
-  SITE_URL,
-  'https://freef1.netlify.app',
-  'https://*.netlify.app',
-  'https://freef1-live.vercel.app',
-  'https://freef1.vercel.app',
-  'https://*.vercel.app',
-  ...ALLOWED_ORIGINS,
+  ...RELAY_ORIGINS,
   ...(PRODUCTION ? [] : ['http://localhost:*', 'http://127.0.0.1:*', 'https://*.e2b.app'])
-].filter(Boolean))].join(' ');
+])].join(' ');
 
 const WEELLZ_EMBED_CSP = [
   "default-src 'self' https: blob: data:",
