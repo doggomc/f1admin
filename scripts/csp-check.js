@@ -113,7 +113,7 @@ function walk(dir) {
   const helpHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
   const helpJs = browserSource('help');
   const helpCacheRules = modern
-    ? headersText.includes('/*.html\n  Cache-Control: public, max-age=0, must-revalidate') &&
+    ? headersText.includes('/*.html\n  Cache-Control: public, max-age=60, must-revalidate') &&
       headersText.includes('/bundles/*\n  Cache-Control: public, max-age=31536000, immutable')
     : ['/help.html', '/help.css', '/help.js'].every(route => headersText.includes(`${route}\n  Cache-Control: public, max-age=0, must-revalidate`));
   check('Help page uses local build assets with safe HTML and versioned-asset caching',

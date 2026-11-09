@@ -749,6 +749,9 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', req.path.startsWith('/api/stream/') ? 'Content-Type, Authorization, X-FreeF1-Client' : 'Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', isWeellzRelay ? 'Date, Retry-After' : 'Retry-After');
+    // Browsers can reuse approved stream preflights; each actual request is
+    // still checked against the current origin and client policy.
+    if (req.method === 'OPTIONS' && req.path.startsWith('/api/stream/')) res.setHeader('Access-Control-Max-Age', '600');
   } else if (rawOrigin === 'null' && isStrippedEmbedRelay) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -781,6 +784,12 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 /* 4K feed resolver — public, no Discord membership required. The site asks for the
    address and plays it; joining the Discord is an optional nudge in the UI. */
 const streamResolver = require('./stream-resolver').createStreamResolver();
+const { singleFlight } = require('./single-flight');
+// Prevent a cold catalogue refresh from fanning out to the provider once per
+// concurrent visitor. No result is cached here; existing resolver TTLs apply.
+const getWeeloState = singleFlight(() => streamResolver.weeloState());
+const getTaifoodChannels = singleFlight(() => streamResolver.taifoodChannels());
+const getEmbdlolChannels = singleFlight(() => streamResolver.embdlolPublicChannels());
 
 function setNoStore(res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -908,7 +917,7 @@ app.get('/api/stream/sources', async (_req, res) => {
 /* PPV F1 channel list (built from https://api.ppv.st/api/streams with 540p variants excluded). */
 app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
   try {
-    const { list, ppv, at } = await streamResolver.taifoodChannels();
+    const { list, ppv, at } = await getTaifoodChannels();
     res.setHeader('Cache-Control', 'public, max-age=60');
     setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ channels: list, ppv: ppv || '', count: list.length, updatedAt: at || null });
@@ -922,7 +931,7 @@ app.get(['/api/stream/taifood', '/api/stream/ppv'], async (_req, res) => {
 /* EMB F1 channel map relay (excludes UHD, backs up direct api.embdlol.st/struct browser fetches). */
 app.get('/api/stream/embdlol', async (_req, res) => {
   try {
-    const { channels, at } = await streamResolver.embdlolPublicChannels();
+    const { channels, at } = await getEmbdlolChannels();
     res.setHeader('Cache-Control', 'public, max-age=60');
     setNetlifyEdgeCache(res, 60, { swr: 30 });
     return res.json({ channels, count: Object.keys(channels).length, updatedAt: at });
@@ -940,7 +949,7 @@ app.get('/api/stream/weelo', async (req, res) => {
     return res.status(403).json({ error: 'Direct access is not permitted.', code: 'forbidden' });
   }
   try {
-    const state = await streamResolver.weeloState();
+    const state = await getWeeloState();
     res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=30');
     setNetlifyEdgeCache(res, 30, { swr: 30, varyHeader: 'x-freef1-client|sec-fetch-dest' });
     return res.json({ state, count: Object.keys(state).length });
