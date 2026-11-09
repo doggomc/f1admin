@@ -192,6 +192,7 @@ function nextConfigEvent(reader) {
     const dashboardConfig = await request('/admin/api/config', { headers: { Origin: origin, Cookie: cookie } });
     check('dashboard receives its single compact config payload', dashboardConfig.response.status === 200 && Array.isArray(dashboardConfig.body.sourceList) && !('adminNews' in dashboardConfig.body), `${dashboardConfig.response.status} ${JSON.stringify(dashboardConfig.body)}`);
     check('legacy Force Live state migrates into the admin config snapshot', dashboardConfig.body.streamWindow?.active === true && dashboardConfig.body.streamWindow?.reason === 'Migrated legacy setting');
+    check('Page Control lists Other, Replays and Other streams', ['other','replays','other-streams'].every(id => dashboardConfig.body.pageList.some(page => page.id === id)));
     const sourceIds = Array.isArray(dashboardConfig.body.sourceList) ? dashboardConfig.body.sourceList.map(source => source.id) : [];
     check('retired Sky and Fly 44 source IDs are not registered', !sourceIds.includes('sky-sports-f1') && !sourceIds.includes('sky-uk-2'));
     check('local-only state is explicitly marked non-durable', dashboardConfig.body.storage?.store === 'local' && dashboardConfig.body.storage?.durable === false);
@@ -213,12 +214,12 @@ function nextConfigEvent(reader) {
     });
     check('Home cannot be disabled through Page Control', invalidPage.response.status === 400);
     const pageOutage = await request('/admin/api/pages', {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['standings', 'help'] })
+      method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['standings', 'help', 'other', 'replays', 'other-streams'] })
     });
     check('authenticated admin can set Standings to Partial Outage', pageOutage.response.status === 200 && pageOutage.body.pages?.disabled?.includes('standings'));
     const pushedPageOutage = await readNextConfigEvent();
     check('Page Control outage is broadcast immediately to open public tabs',
-      pushedPageOutage.pages?.disabled?.includes('standings') && pushedPageOutage.pages?.disabled?.includes('help'));
+      pushedPageOutage.pages?.disabled?.includes('standings') && pushedPageOutage.pages?.disabled?.includes('help') && ['other','replays','other-streams'].every(id => pushedPageOutage.pages?.disabled?.includes(id)));
     const pausedHelpConfig = await request('/api/help/config', { headers: { Origin: 'https://freef1.netlify.app' } });
     const pausedHelpCreate = await request('/api/help/tickets', {
       method: 'POST',

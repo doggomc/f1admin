@@ -7,6 +7,9 @@ const DEFAULT_PAGE_LIST = [
   { id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' },
   { id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' },
   { id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' },
+  { id: 'other', label: 'Other', path: '/other.html', description: 'Other section hub' },
+  { id: 'replays', label: 'Replays', path: '/replays.html', description: 'Replay directory & replay player' },
+  { id: 'other-streams', label: 'Other streams', path: '/other-streams.html', description: 'Other streams directory & private player' },
   { id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' }
 ];
 
@@ -17,6 +20,9 @@ const PAGE_ICONS = {
   'live-timing': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M10 2h4"/></svg>',
   drivers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   teams: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  other: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+  replays: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z"/></svg>',
+  'other-streams': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 22h6M12 19v3M10 9l5 3-5 3z"/></svg>',
   help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
 };
 
@@ -524,8 +530,9 @@ function renderSources() {
     button.addEventListener('click', () => {
       if (sourceDraft.has(source.id)) sourceDraft.delete(source.id);
       else sourceDraft.add(source.id);
-      renderSourcesFromDraft();
       renderFilterChips();
+      if (sourceFilter === 'on' || sourceFilter === 'off') renderSources();
+      else renderSourcesFromDraft();
       setStatusLine('sourcesMessage', 'Visibility changed in draft. Save to publish.');
     });
 
@@ -868,7 +875,9 @@ $('restoreSources').addEventListener('click', async () => {
 
 $('enableAllSources').addEventListener('click', () => {
   sourceDraft = new Set();
-  renderSourcesFromDraft();
+  renderFilterChips();
+  if (sourceFilter === 'on' || sourceFilter === 'off') renderSources();
+  else renderSourcesFromDraft();
   setStatusLine('sourcesMessage', 'All sources enabled in draft. Click Save source settings to publish.');
 });
 

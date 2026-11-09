@@ -114,6 +114,9 @@ const CONTROLLABLE_PAGES = Object.freeze([
   Object.freeze({ id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' }),
   Object.freeze({ id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' }),
   Object.freeze({ id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' }),
+  Object.freeze({ id: 'other', label: 'Other', path: '/other.html', description: 'Other section hub' }),
+  Object.freeze({ id: 'replays', label: 'Replays', path: '/replays.html', description: 'Replay directory & replay player' }),
+  Object.freeze({ id: 'other-streams', label: 'Other streams', path: '/other-streams.html', description: 'Other streams directory & private player' }),
   Object.freeze({ id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' })
 ]);
 const CONTROLLABLE_PAGE_IDS = new Set(CONTROLLABLE_PAGES.map(page => page.id));

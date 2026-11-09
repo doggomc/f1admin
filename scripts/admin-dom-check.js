@@ -31,6 +31,9 @@ const PAGE_LIST = [
   { id: 'live-timing', label: 'Live timing', path: '/live-timing.html', description: 'Timing tower, sectors, race control & radio' },
   { id: 'drivers', label: 'Drivers', path: '/drivers.html', description: 'Driver grid & individual driver profiles' },
   { id: 'teams', label: 'Teams', path: '/teams.html', description: 'Constructor grid & team profiles' },
+  { id: 'other', label: 'Other', path: '/other.html', description: 'Other section hub' },
+  { id: 'replays', label: 'Replays', path: '/replays.html', description: 'Replay directory & replay player' },
+  { id: 'other-streams', label: 'Other streams', path: '/other-streams.html', description: 'Other streams directory & private player' },
   { id: 'help', label: 'Help', path: '/help.html', description: 'Support desk & help tickets' }
 ];
 let snapshot = {
@@ -134,11 +137,23 @@ window.fetch = async (url, options = {}) => {
   await new Promise(resolve => setTimeout(resolve, 30));
   check('Restore all pages clears Partial Outage state', snapshot.pages.disabled.length === 0);
 
+  check('Page Control includes Other, Replays and Other streams', ['other','replays','other-streams'].every(id => $('pageControlList').querySelector(`[data-page-id="${id}"]`)));
   const toggle = $('sourceList').querySelector('.source-switch');
   toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   $('saveSources').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise(resolve => setTimeout(resolve, 30));
   check('source controls submit only the intentional admin change', writePayloads.some(item => item.endpoint === 'sources') && calls.at(-1).method === 'POST');
+
+  const filterChip = label => [...$('sourceFilters').querySelectorAll('button')].find(button => button.textContent.trim().startsWith(label));
+  filterChip('Visible').click();
+  const beforeVisible = $('sourceList').querySelectorAll('.source-row').length;
+  $('sourceList').querySelector('.source-switch').click();
+  check('hiding a source immediately removes it from the Visible filter', $('sourceList').querySelectorAll('.source-row').length === beforeVisible - 1);
+  filterChip('Hidden').click();
+  const beforeHidden = $('sourceList').querySelectorAll('.source-row').length;
+  $('sourceList').querySelector('.source-switch').click();
+  check('enabling a source immediately removes it from the Hidden filter', $('sourceList').querySelectorAll('.source-row').length === beforeHidden - 1);
+  filterChip('All').click();
 
   $('forceLiveReason').value = 'Red flag delay';
   $('enableForceLive').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
