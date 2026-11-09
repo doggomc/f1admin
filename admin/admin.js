@@ -21,9 +21,9 @@ const PAGE_ICONS = {
 };
 
 let config = null;
-let editingNewsId = null;
 let sourceDraft = new Set();
 let customDraft = {};
+let removedDraft = new Set();
 let linkReport = {};
 let linkCheckedAt = 0;
 let linkSiteUrl = 'https://freef1.netlify.app';
@@ -345,7 +345,8 @@ const FILTER_GROUPS = [
   ['all', 'All', () => true],
   ['on', 'Visible', (s) => !sourceDraft.has(s.id)],
   ['off', 'Hidden', (s) => sourceDraft.has(s.id)],
-  ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online)],
+  ['live', 'Has link', (s) => Boolean(linkReport[s.id]?.online || s.isCustom)],
+  ['custom', 'Custom', (s) => Boolean(s.isCustom)],
   ['emb', 'EMB', (s) => s.provider === 'embdlol'],
   ['embdlol-stripped', 'EMB Stripped', (s) => s.provider === 'embdlol-stripped'],
   ['weelo', 'Weelo', (s) => s.provider === 'weelo'],
@@ -413,20 +414,11 @@ function renderBulkGroups() {
 }
 
 async function bulkGroup(group, action, label) {
-  try {
-    const result = await api('/stream/sources/bulk', {
-      method: 'POST',
-      body: JSON.stringify({ group, action })
-    });
-    config.sources.disabled = result.disabled || [];
-    sourceDraft = new Set(config.sources.disabled.map(String));
-    renderFilterChips();
-    renderSources();
-    acceptWrite(result, `${label}: ${action === 'enable' ? 'enabled' : 'hidden'} (${result.touched}).`, 'sourcesMessage');
-  } catch (error) {
-    setStatusLine('sourcesMessage', error.message, 'error');
-    showToast(error.message, 'error');
-  }
+  const match = (source) => group === 'all' || (group === 'other' && source.tab === 'other') || (group === 'emb' && source.provider === 'embdlol') || (group === 'ppv' && (source.provider === 'ppv' || source.provider === 'taifood')) || source.provider === group;
+  const items = (config?.sourceList || []).filter(match);
+  for (const item of items) { if (action === 'disable') sourceDraft.add(item.id); else sourceDraft.delete(item.id); }
+  renderFilterChips(); renderSources();
+  setStatusLine('sourcesMessage', `${label}: ${items.length} updated in draft. Save to publish.`);
 }
 
 const whenLabel = (at) => {
@@ -462,8 +454,6 @@ function renderSources() {
   const list = $('sourceList');
   list.replaceChildren();
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
-  sourceDraft = new Set((config?.sources?.disabled || []).map(String));
-  customDraft = {};
 
   const visible = sources.filter((source) => {
     if (sourceQuery) {
@@ -472,7 +462,8 @@ function renderSources() {
     }
     if (sourceFilter === 'off') return sourceDraft.has(source.id);
     if (sourceFilter === 'on') return !sourceDraft.has(source.id);
-    if (sourceFilter === 'live') return Boolean(linkReport[source.id]?.online);
+    if (sourceFilter === 'live') return Boolean(linkReport[source.id]?.online || source.isCustom);
+    if (sourceFilter === 'custom') return Boolean(source.isCustom);
     if (sourceFilter === 'all') return true;
     return sourceFilter === 'emb' ? source.provider === 'embdlol'
       : sourceFilter === 'embdlol-stripped' ? source.provider === 'embdlol-stripped'
@@ -534,6 +525,8 @@ function renderSources() {
       if (sourceDraft.has(source.id)) sourceDraft.delete(source.id);
       else sourceDraft.add(source.id);
       renderSourcesFromDraft();
+      renderFilterChips();
+      setStatusLine('sourcesMessage', 'Visibility changed in draft. Save to publish.');
     });
 
     const custom = document.createElement('div');
@@ -541,22 +534,32 @@ function renderSources() {
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.maxLength = 40;
-    nameInput.value = source.customLabel || '';
+    customDraft[source.id] ||= { label: source.customLabel || '', url: source.customUrl || '' };
+    nameInput.value = customDraft[source.id].label;
     nameInput.placeholder = `Name: ${source.baseLabel || source.label}`;
     nameInput.setAttribute('aria-label', `Custom name for ${source.label}`);
     nameInput.className = source.customLabel ? 'is-set' : '';
 
     const linkInput = document.createElement('input');
     linkInput.type = 'url';
-    linkInput.value = source.customUrl || '';
+    linkInput.value = customDraft[source.id].url;
     linkInput.placeholder = 'Link: shipped default';
     linkInput.setAttribute('aria-label', `Custom link for ${source.label}`);
     linkInput.className = source.customUrl ? 'is-set' : '';
 
-    customDraft[source.id] = { label: source.customLabel || '', url: source.customUrl || '' };
     nameInput.addEventListener('input', () => { customDraft[source.id].label = nameInput.value; });
     linkInput.addEventListener('input', () => { customDraft[source.id].url = linkInput.value; });
     custom.append(nameInput, linkInput);
+    if (source.isCustom) {
+      const group = document.createElement('select');
+      group.setAttribute('aria-label', `Language group for ${source.label}`);
+      for (const [value,label] of [['en','English'],['other','Other languages']]) {
+        const option = document.createElement('option'); option.value=value; option.textContent=label; group.append(option);
+      }
+      group.value = source.tab === 'other' ? 'other' : 'en';
+      group.addEventListener('change', () => { source.tab = group.value; setStatusLine('sourcesMessage', 'Group changed in draft. Save to publish.'); });
+      custom.append(group);
+    }
 
     const live = linkReport[source.id];
     const address = document.createElement('div');
@@ -591,7 +594,26 @@ function renderSources() {
       address.append(more);
     }
 
-    row.append(name, id, status, button, custom, address);
+    const tools = document.createElement('div');
+    tools.className = 'source-row-tools';
+    for (const [label, step] of [['↑', -1], ['↓', 1]]) {
+      const move = document.createElement('button'); move.type = 'button'; move.textContent = label;
+      move.setAttribute('aria-label', `${step < 0 ? 'Move up' : 'Move down'} ${source.label}`);
+      const position = sources.indexOf(source); move.disabled = position + step < 0 || position + step >= sources.length;
+      move.addEventListener('click', () => { const index = sources.indexOf(source); const target = index + step; if (target < 0 || target >= sources.length) return; [sources[index],sources[target]] = [sources[target],sources[index]]; renderSources(); list.querySelector(`[data-source-id="${source.id}"] .source-row-tools button:nth-child(${step < 0 ? 1 : 2})`)?.focus(); setStatusLine('sourcesMessage', 'Order changed in draft. Save to publish.'); });
+      tools.append(move);
+    }
+    const remove = document.createElement('button'); remove.type='button'; remove.className='source-remove'; remove.textContent='Remove';
+    remove.setAttribute('aria-label', `Remove ${source.label}`);
+    remove.addEventListener('click', () => {
+      if (!window.confirm(`Remove ${source.label} from the source list?`)) return;
+      if (!source.isCustom) removedDraft.add(source.id);
+      config.sourceList = config.sourceList.filter(item => item.id !== source.id);
+      sourceDraft.delete(source.id); delete customDraft[source.id]; renderFilterChips(); renderSources();
+      setStatusLine('sourcesMessage', 'Source removed from draft. Save to publish.');
+    });
+    tools.append(remove);
+    row.append(name, id, status, button, custom, address, tools);
     list.append(row);
   }
 }
@@ -612,52 +634,6 @@ function renderSourcesFromDraft() {
   });
 }
 
-/* ── Public News ── */
-function renderNews() {
-  const container = $('newsList');
-  container.replaceChildren();
-  const items = Array.isArray(config?.adminNews) ? config.adminNews : [];
-  if (!items.length) {
-    const empty = document.createElement('p');
-    empty.className = 'storage-copy';
-    empty.textContent = 'No public news items published yet.';
-    container.append(empty);
-    return;
-  }
-  for (const item of items) {
-    const card = document.createElement('article');
-    card.className = 'news-card';
-    const head = document.createElement('div');
-    head.className = 'news-card-head';
-    const content = document.createElement('div');
-    const title = document.createElement('h3');
-    title.textContent = item.title;
-    const meta = document.createElement('div');
-    meta.className = 'news-card-meta';
-    meta.textContent = `${item.tag || 'Race Control'} · ${item.published ? 'Published' : 'Draft'} · ${safeDate(item.updatedAt)}`;
-    content.append(title, meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'news-card-actions';
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.textContent = 'Edit';
-    edit.addEventListener('click', () => beginNewsEdit(item));
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'delete-news';
-    remove.textContent = 'Delete';
-    remove.addEventListener('click', () => deleteNewsItem(item));
-    actions.append(edit, remove);
-
-    head.append(content, actions);
-    const body = document.createElement('p');
-    body.textContent = item.body;
-    card.append(head, body);
-    container.append(card);
-  }
-}
-
 function renderConfig() {
   renderPages();
   renderMaintenance();
@@ -666,7 +642,6 @@ function renderConfig() {
   renderBulkGroups();
   renderFilterChips();
   renderSources();
-  renderNews();
   updateStorage();
   updateKpiStrip();
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
@@ -684,51 +659,19 @@ async function loadConfig({ silent = false } = {}) {
     maintenance: payload.maintenance || {},
     pages: payload.pages || { disabled: [] },
     pageList: Array.isArray(payload.pageList) && payload.pageList.length ? payload.pageList : DEFAULT_PAGE_LIST,
-    news: payload.news || [],
     sources: payload.sources || { disabled: [] },
     streamOverride: payload.streamOverride || {},
     streamWindow: payload.streamWindow || { active: false, reason: '', startedAt: null, updatedAt: null },
     experimental: payload.experimental || {},
     sourceList: payload.sourceList || [],
-    adminNews: payload.adminNews || [],
     storage: payload.storage || {}
   };
+  sourceDraft = new Set((config.sources.disabled || []).map(String));
+  removedDraft = new Set((config.sources.removed || []).map(String));
+  customDraft = {};
   renderConfig();
   if (silent) return;
   return payload;
-}
-
-function resetNewsForm() {
-  editingNewsId = null;
-  $('newsForm').reset();
-  $('newsTag').value = 'Race Control';
-  $('newsPublished').checked = true;
-  $('saveNews').textContent = 'Publish update';
-  $('cancelNewsEdit').hidden = true;
-}
-
-function beginNewsEdit(item) {
-  editingNewsId = item.id;
-  $('newsHeadline').value = item.title || '';
-  $('newsTag').value = item.tag || 'Race Control';
-  $('newsBody').value = item.body || '';
-  $('newsPublished').checked = item.published !== false;
-  $('saveNews').textContent = 'Save changes';
-  $('cancelNewsEdit').hidden = false;
-  $('newsHeadline').focus();
-}
-
-async function deleteNewsItem(item) {
-  if (!window.confirm(`Delete “${item.title}”?`)) return;
-  try {
-    const result = await api(`/news/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-    config.adminNews = config.adminNews.filter((entry) => entry.id !== item.id);
-    renderNews();
-    acceptWrite(result, 'News item deleted.', 'newsMessage');
-  } catch (error) {
-    setStatusLine('newsMessage', error.message, 'error');
-    showToast(error.message, 'error');
-  }
 }
 
 async function saveMaintenance(active) {
@@ -883,35 +826,44 @@ $('disableForceLive').addEventListener('click', () => {
 $('saveSources').addEventListener('click', async () => {
   setStatusLine('sourcesMessage', '');
   try {
-    const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
-    const changed = sources.filter((source) => {
-      const draft = customDraft[source.id];
-      if (!draft) return false;
-      return draft.label.trim() !== (source.customLabel || '') || draft.url.trim() !== (source.customUrl || '');
-    });
-    for (const source of changed) {
-      const draft = customDraft[source.id];
-      const reply = await api('/stream/chip', {
-        method: 'POST',
-        body: JSON.stringify({ id: source.id, label: draft.label, url: draft.url })
-      });
-      if (Array.isArray(reply.sourceList)) config.sourceList = reply.sourceList;
+    const list = config?.sourceList || [];
+    const custom = []; const overrides = {};
+    for (const source of list) {
+      const draft = customDraft[source.id] || { label: source.customLabel || '', url: source.customUrl || '' };
+      const label = draft.label.trim(), url = draft.url.trim();
+      if (source.isCustom) {
+        if (!label || !url) throw new Error(`A name and HTTPS link are required for ${source.label}.`);
+        custom.push({ id: source.id, label, url, tab: source.tab === 'other' ? 'other' : 'en' });
+      } else if (label || url) overrides[source.id] = { label, url };
     }
-    const knownIds = new Set((config.sourceList || []).map((s) => String(s.id)));
-    const disabledPayload = [...sourceDraft].filter((id) => !knownIds.size || knownIds.has(id));
-    const result = await api('/stream/sources', {
-      method: 'POST',
-      body: JSON.stringify({ disabled: disabledPayload })
-    });
-    config.sources.disabled = result.disabled || [];
-    if (Array.isArray(result.sourceList)) config.sourceList = result.sourceList;
-    renderFilterChips();
-    renderSources();
-    acceptWrite(result, changed.length ? `Source settings saved (${changed.length} custom).` : 'Source settings saved.', 'sourcesMessage');
-  } catch (error) {
-    setStatusLine('sourcesMessage', error.message, 'error');
-    showToast(error.message, 'error');
-  }
+    const result = await api('/stream/catalogue', { method: 'POST', body: JSON.stringify({ custom, overrides, disabled: [...sourceDraft], removed: [...removedDraft], order: list.map(s => s.id) }) });
+    config.sources = result.sources; config.sourceList = result.sourceList;
+    sourceDraft = new Set(config.sources.disabled); removedDraft = new Set(config.sources.removed); customDraft = {};
+    renderFilterChips(); renderSources(); acceptWrite(result, 'Source settings saved.', 'sourcesMessage');
+  } catch (error) { setStatusLine('sourcesMessage', error.message, 'error'); showToast(error.message, 'error'); }
+});
+
+$('addSourceForm').addEventListener('submit', event => {
+  event.preventDefault();
+  const label = $('newSourceName').value.trim(), value = $('newSourceUrl').value.trim();
+  let url; try { url = new URL(value); } catch (_) {}
+  if (!label || !url || url.protocol !== 'https:' || url.username || url.password) { setStatusLine('sourcesMessage', 'Enter a name and a full HTTPS link.', 'error'); return; }
+  if ((config.sourceList || []).filter(source => source.isCustom).length >= 50) { setStatusLine('sourcesMessage', 'At most 50 custom sources are allowed.', 'error'); return; }
+  const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+  const source = { id, label, baseLabel: label, customLabel: label, customUrl: url.href, defaultUrl: url.href, provider: 'custom', tab: $('newSourceTab').value, isCustom: true };
+  config.sourceList.push(source); customDraft[id] = { label, url: url.href };
+  sourceFilter = 'all'; sourceQuery = ''; $('sourceSearch').value = ''; $('addSourceForm').reset();
+  renderFilterChips(); renderSources(); setStatusLine('sourcesMessage', 'Source added to draft. Save to publish.');
+});
+
+$('restoreSources').addEventListener('click', async () => {
+  if (!removedDraft.size) { setStatusLine('sourcesMessage', 'No default sources have been removed.'); return; }
+  try {
+    const reply = await api('/stream/sources');
+    const originals = reply.sources || [];
+    for (const source of originals) if (removedDraft.has(source.id) && !config.sourceList.some(item => item.id === source.id)) config.sourceList.push({ ...source, baseLabel: source.label, customLabel: '', customUrl: '' });
+    removedDraft.clear(); renderFilterChips(); renderSources(); setStatusLine('sourcesMessage', 'Defaults restored to draft. Save to publish.');
+  } catch(error) { setStatusLine('sourcesMessage', error.message, 'error'); }
 });
 
 $('enableAllSources').addEventListener('click', () => {
@@ -929,28 +881,13 @@ $('sourceSearch').addEventListener('input', (event) => {
   renderSources();
 });
 
-$('clearCustomSources').addEventListener('click', async () => {
-  const customised = (config?.sourceList || []).filter((s) => s.customLabel || s.customUrl);
-  if (!customised.length) {
-    setStatusLine('sourcesMessage', 'No custom names or links are set.');
-    return;
-  }
-  if (!window.confirm(`Clear custom names and links on ${customised.length} source${customised.length === 1 ? '' : 's'}?`)) return;
-  try {
-    let last = null;
-    for (const source of customised) {
-      last = await api('/stream/chip', { method: 'POST', body: JSON.stringify({ id: source.id, label: '', url: '' }) });
-    }
-    await loadConfig({ silent: true });
-    if (last) acceptWrite(last, 'Cleared custom names and links.', 'sourcesMessage');
-  } catch (error) {
-    setStatusLine('sourcesMessage', error.message, 'error');
-    showToast(error.message, 'error');
-  }
+$('clearCustomSources').addEventListener('click', () => {
+  for (const source of config?.sourceList || []) if (!source.isCustom) customDraft[source.id] = { label: '', url: '' };
+  renderSources(); setStatusLine('sourcesMessage', 'Custom names and links cleared in draft. Save to publish.');
 });
 
 $('resetAll').addEventListener('click', async () => {
-  if (!window.confirm('Reset Race Control to shipped defaults? This restores all pages, re-enables every stream source, clears custom labels/links, stops overrides, turns off maintenance, and clears news.')) return;
+  if (!window.confirm('Reset Race Control to shipped defaults? This restores all pages, re-enables every stream source, clears custom labels/links, stops overrides, turns off maintenance.')) return;
   try {
     const result = await api('/reset-all', { method: 'POST' });
     await loadConfig({ silent: true });
@@ -960,37 +897,7 @@ $('resetAll').addEventListener('click', async () => {
   }
 });
 
-$('newsForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  setStatusLine('newsMessage', '');
-  const body = {
-    title: $('newsHeadline').value,
-    tag: $('newsTag').value,
-    body: $('newsBody').value,
-    published: $('newsPublished').checked
-  };
-  try {
-    const result = editingNewsId
-      ? await api(`/news/${encodeURIComponent(editingNewsId)}`, { method: 'PATCH', body: JSON.stringify(body) })
-      : await api('/news', { method: 'POST', body: JSON.stringify(body) });
-    if (editingNewsId) {
-      config.adminNews = config.adminNews.map((item) => item.id === editingNewsId ? result.news : item);
-    } else {
-      config.adminNews = [result.news, ...(config.adminNews || [])];
-    }
-    resetNewsForm();
-    renderNews();
-    acceptWrite(result, editingNewsId ? 'News item updated.' : 'News item published.', 'newsMessage');
-  } catch (error) {
-    setStatusLine('newsMessage', error.message, 'error');
-    showToast(error.message, 'error');
-  }
-});
-
-$('cancelNewsEdit').addEventListener('click', () => resetNewsForm());
-
 async function initialize() {
-  resetNewsForm();
   const params = new URLSearchParams(window.location.search);
   const failedFromForm = params.get('auth') === 'failed';
   if (failedFromForm && window.history?.replaceState) {

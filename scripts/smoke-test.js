@@ -16,6 +16,8 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freef1-control-data-'));
 fs.writeFileSync(path.join(dataDir, 'stream-window.json'), JSON.stringify({
   active: true, reason: 'Migrated legacy setting', startedAt: 1_761_900_000_000, updatedAt: 1_761_900_100_000
 }));
+fs.writeFileSync(path.join(dataDir, 'race-control.json'), JSON.stringify({ news: [{ id: 'old', title: 'Old', body: 'remove' }], maintenance: { active: false, message: 'keep me', eta: 'Soon' } }));
+fs.writeFileSync(path.join(dataDir, 'news.json'), JSON.stringify([{ title: 'legacy' }]));
 const base = `http://127.0.0.1:${port}`;
 const origin = base;
 const child = spawn(process.execPath, ['server.js'], {
@@ -35,7 +37,6 @@ const child = spawn(process.execPath, ['server.js'], {
     KV_REST_API_URL: '',
     KV_REST_API_TOKEN: '',
     ALLOWED_ORIGIN: 'https://freef1.netlify.app',
-    PUBLIC_NEWS_ENABLED: 'false',
     DISCORD_BOT_TOKEN: '',
     DISCORD_GUILD_ID: '',
     DISCORD_OWNER_ID: '',
@@ -121,7 +122,8 @@ function nextConfigEvent(reader) {
 
     const siteConfig = await request('/api/site/config', { headers: { Origin: 'https://freef1.netlify.app' } });
     check('public site config is served without admin credentials', siteConfig.response.status === 200 && siteConfig.body.maintenance?.active === false);
-    check('public News payload is empty while the reversible hide flag is off', Array.isArray(siteConfig.body.news) && siteConfig.body.news.length === 0);
+    check('News is removed from the public snapshot', !('news' in siteConfig.body));
+    check('stored News is removed while other state survives migration', !fs.existsSync(path.join(dataDir, 'news.json')) && !('news' in JSON.parse(fs.readFileSync(path.join(dataDir, 'race-control.json'), 'utf8'))) && siteConfig.body.maintenance.message === 'keep me');
     check('public config is HTTP-cacheable for five minutes and edge-cached for 60s',
       /public, max-age=300/.test(siteConfig.response.headers.get('cache-control') || '') &&
       /public, s-maxage=60/.test(siteConfig.response.headers.get('netlify-cdn-cache-control') || ''));
@@ -188,7 +190,7 @@ function nextConfigEvent(reader) {
     const authHeaders = { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' };
 
     const dashboardConfig = await request('/admin/api/config', { headers: { Origin: origin, Cookie: cookie } });
-    check('dashboard receives its single compact config payload', dashboardConfig.response.status === 200 && Array.isArray(dashboardConfig.body.sourceList) && Array.isArray(dashboardConfig.body.adminNews), `${dashboardConfig.response.status} ${JSON.stringify(dashboardConfig.body)}`);
+    check('dashboard receives its single compact config payload', dashboardConfig.response.status === 200 && Array.isArray(dashboardConfig.body.sourceList) && !('adminNews' in dashboardConfig.body), `${dashboardConfig.response.status} ${JSON.stringify(dashboardConfig.body)}`);
     check('legacy Force Live state migrates into the admin config snapshot', dashboardConfig.body.streamWindow?.active === true && dashboardConfig.body.streamWindow?.reason === 'Migrated legacy setting');
     const sourceIds = Array.isArray(dashboardConfig.body.sourceList) ? dashboardConfig.body.sourceList.map(source => source.id) : [];
     check('retired Sky and Fly 44 source IDs are not registered', !sourceIds.includes('sky-sports-f1') && !sourceIds.includes('sky-uk-2'));
@@ -204,7 +206,7 @@ function nextConfigEvent(reader) {
       pushedMaintenance.maintenance?.active === true && pushedMaintenance.maintenance?.message === 'Pit stop');
     const snapshotFile = path.join(dataDir, 'race-control.json');
     const snapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
-    check('saved state remains a combined config snapshot', Boolean(snapshot.maintenance && snapshot.pages && Array.isArray(snapshot.news) && snapshot.sources && snapshot.streamOverride && snapshot.streamWindow && snapshot.experimental));
+    check('saved state remains a combined config snapshot', Boolean(snapshot.maintenance && snapshot.pages && !('news' in snapshot) && snapshot.sources && snapshot.streamOverride && snapshot.streamWindow && snapshot.experimental));
 
     const invalidPage = await request('/admin/api/pages', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['home'] })
@@ -247,19 +249,18 @@ function nextConfigEvent(reader) {
     const pushedRestoreSchedule = await readNextConfigEvent();
     check('schedule restoration is broadcast to connected public tabs', pushedRestoreSchedule.streamWindow?.active === false);
 
-    const news = await request('/admin/api/news', {
-      method: 'POST', headers: authHeaders,
-      body: JSON.stringify({ title: 'Smoke test update', body: 'Race Control is online.', tag: 'Test', published: true })
-    });
-    check('admin can publish a sanitized news item while public display is hidden', news.response.status === 201 && news.body.news?.title === 'Smoke test update');
-    const pushedNews = await readNextConfigEvent();
-    check('published News stays out of public push events while the hide flag is off', Array.isArray(pushedNews.news) && pushedNews.news.length === 0);
-    const publicAfterNews = await request('/api/site/config');
-    check('published News stays out of public snapshots while admin data persists',
-      Array.isArray(publicAfterNews.body.news) && publicAfterNews.body.news.length === 0);
-    const adminNews = await request('/admin/api/news', { headers: { Origin: origin, Cookie: cookie } });
-    check('News remains available in the authenticated admin data endpoint',
-      adminNews.response.status === 200 && adminNews.body.news?.some(item => item.title === 'Smoke test update'));
+    const removedNews = await request('/admin/api/news', { headers: { Origin: origin, Cookie: cookie } });
+    check('authenticated News endpoint has been removed', removedNews.response.status === 404);
+    const customCatalogue = { custom: [{ id:'custom-test', label:'Test feed', url:'https://example.com/embed', tab:'other' }], disabled: ['dazn'], removed: ['sky-uk'], overrides: { dazn: { label:'Race feed' } }, order: ['custom-test', 'dazn'] };
+    const savedCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify(customCatalogue) });
+    check('catalogue atomically adds, orders, edits, hides and removes sources', savedCatalogue.response.status === 200 && savedCatalogue.body.sourceList[0]?.id === 'custom-test' && !savedCatalogue.body.sourceList.some(x => x.id === 'sky-uk') && savedCatalogue.body.sources.overrides.dazn.label === 'Race feed');
+    const pushedCatalogue = await readNextConfigEvent();
+    check('custom catalogue reaches public config without refresh', pushedCatalogue.sources.custom[0]?.id === 'custom-test' && pushedCatalogue.sources.disabled.includes('sky-uk') && pushedCatalogue.sources.order[0] === 'custom-test');
+    const badCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify({ ...customCatalogue, custom:[{ id:'custom-test', label:'Bad', url:'http://example.com', tab:'en' }] }) });
+    check('insecure custom source is rejected without changing state', badCatalogue.response.status === 400 && JSON.parse(fs.readFileSync(snapshotFile, 'utf8')).sources.custom[0]?.label === 'Test feed');
+    const clearCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify({ custom:[], disabled:[], removed:[], overrides:{}, order:[] }) });
+    check('catalogue can remove custom sources and restore defaults', clearCatalogue.response.status === 200 && !clearCatalogue.body.sources.custom.length && clearCatalogue.body.sourceList.some(x => x.id === 'sky-uk'));
+    await readNextConfigEvent();
 
     const invalidSource = await request('/admin/api/stream/sources', {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ disabled: ['sky-uk-2'] })

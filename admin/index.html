@@ -58,7 +58,6 @@
           <a href="#pageControlSection">Page control</a>
           <a href="#streamSection">Streams</a>
           <a href="#sourcesSection">Sources</a>
-          <a href="#newsSection">News</a>
           <a href="#maintenanceSection">Maintenance</a>
         </nav>
 
@@ -180,11 +179,20 @@
             <div class="card-head">
               <div>
                 <span class="card-kicker">Player feeds</span>
-                <h2 id="sourcesHeading">Stream source availability</h2>
+                <h2 id="sourcesHeading">Source manager</h2>
               </div>
               <button class="btn btn-sm" id="refreshLinks" type="button">Refresh live links</button>
             </div>
-            <p class="section-note">Toggle the sources you want visible to viewers, customize chip names or links if needed, then click Save source settings to publish.</p>
+            <p class="section-note">Add your own HTTPS feeds, edit names and links, reorder or remove sources, and choose what viewers see. Changes remain a draft until you save. Broadcasts and special feeds appear in separate cockpit groups.</p>
+            <details class="source-add">
+              <summary>＋ Add a custom source</summary>
+              <form id="addSourceForm" class="source-add-form">
+                <label class="field"><span>Name</span><input id="newSourceName" maxlength="40" required placeholder="e.g. Alternate feed"></label>
+                <label class="field"><span>HTTPS player link</span><input id="newSourceUrl" type="url" maxlength="500" required placeholder="https://example.com/player"></label>
+                <label class="field"><span>Group</span><select id="newSourceTab"><option value="en">English</option><option value="other">Other languages</option></select></label>
+                <button class="btn" type="submit">Add to draft</button>
+              </form>
+            </details>
             <div class="source-toolbar">
               <input id="sourceSearch" class="source-search" type="search" placeholder="Filter by label, source ID, or provider…" autocomplete="off" aria-label="Filter stream sources">
               <div id="sourceFilters" class="source-filters" role="group" aria-label="Filter sources"></div>
@@ -195,46 +203,11 @@
               <button class="btn btn-primary" id="saveSources" type="button">Save source settings</button>
               <button class="btn" id="enableAllSources" type="button">Enable all</button>
               <button class="btn btn-ghost" id="clearCustomSources" type="button">Clear custom names &amp; links</button>
+              <button class="btn btn-ghost" id="restoreSources" type="button">Restore removed defaults</button>
             </div>
             <p class="status-line" id="sourcesMessage" role="status"></p>
           </section>
 
-          <!-- Public News -->
-          <section class="panel-card inset-hl" id="newsSection" aria-labelledby="newsHeading">
-            <div class="card-head">
-              <div>
-                <span class="card-kicker">Announcements</span>
-                <h2 id="newsHeading">Public news &amp; notices</h2>
-              </div>
-            </div>
-            <p class="section-note">Short updates stored with the site configuration snapshot.</p>
-            <form id="newsForm">
-              <div class="field-grid">
-                <label class="field">
-                  <span>Headline</span>
-                  <input id="newsHeadline" type="text" maxlength="100" placeholder="Qualifying feed updated" required>
-                </label>
-                <label class="field">
-                  <span>Tag</span>
-                  <input id="newsTag" type="text" maxlength="32" value="Race Control" placeholder="Race Control">
-                </label>
-              </div>
-              <label class="field">
-                <span>Update body</span>
-                <textarea id="newsBody" maxlength="600" placeholder="Share concise status notes for viewers…" required></textarea>
-              </label>
-              <label class="check-row">
-                <input id="newsPublished" type="checkbox" checked>
-                <span>Published publicly</span>
-              </label>
-              <div class="action-row">
-                <button class="btn btn-primary" id="saveNews" type="submit">Publish update</button>
-                <button class="btn btn-ghost" id="cancelNewsEdit" type="button" hidden>Cancel edit</button>
-              </div>
-            </form>
-            <p class="status-line" id="newsMessage" role="status"></p>
-            <div id="newsList" class="news-list"></div>
-          </section>
         </div>
 
         <div class="control-col">

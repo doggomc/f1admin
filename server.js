@@ -49,10 +49,8 @@ const CONTROL_FILE = path.join(DATA_DIR, 'race-control.json');
 const HELP_TICKETS_FILE = path.join(DATA_DIR, 'help-tickets.json');
 const HELP_TICKETS_REDIS_KEY = 'freef1:help-tickets:v1';
 const HELP_TICKETS_ENABLED = String(process.env.DISCORD_TICKETS_ENABLED || '').toLowerCase() === 'true';
-const PUBLIC_NEWS_ENABLED = String(process.env.PUBLIC_NEWS_ENABLED || '').toLowerCase() === 'true';
 const LEGACY_FILES = {
   maintenance: path.join(DATA_DIR, 'maintenance.json'),
-  news: path.join(DATA_DIR, 'news.json'),
   sources: path.join(DATA_DIR, 'stream-sources.json'),
   streamOverride: path.join(DATA_DIR, 'stream-override.json'),
   streamWindow: path.join(DATA_DIR, 'stream-window.json')
@@ -60,7 +58,6 @@ const LEGACY_FILES = {
 const CONTROL_REDIS_KEY = 'freef1:race-control:v1';
 const LEGACY_REDIS_KEYS = {
   maintenance: 'freef1:maintenance:v1',
-  news: 'freef1:news:v1',
   sources: 'freef1:stream-sources:v1',
   streamOverride: 'freef1:stream-override:v1',
   streamWindow: process.env.STREAM_WINDOW_REDIS_KEY || 'freef1:stream-window:v1'
@@ -72,7 +69,6 @@ const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
   ? 'https://freef1.netlify.app,https://freef1-live.vercel.app'
   : 'https://freef1.netlify.app,https://freef1-live.vercel.app,http://localhost:4173,http://127.0.0.1:4173';
 const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGINS));
-const MAX_NEWS_ITEMS = Math.max(1, Math.min(100, Number.parseInt(process.env.NEWS_MAX_ITEMS || '50', 10) || 50));
 const SITE_CONFIG_MAX_AGE_SECONDS = 300;
 const ADMIN_IP_ALLOWLIST = String(process.env.ADMIN_IP_ALLOWLIST || '').split(',').map(value => value.trim()).filter(Boolean);
 const LEGACY_REMOTE_KEYS_TO_DELETE = [
@@ -133,8 +129,7 @@ const DEFAULT_MAINTENANCE = Object.freeze({
 const state = {
   maintenance: { ...DEFAULT_MAINTENANCE },
   pages: { disabled: [], updatedAt: null },
-  news: [],
-  sources: { disabled: [], overrides: {}, updatedAt: null },
+  sources: { disabled: [], removed: [], overrides: {}, custom: [], order: [], updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
   experimental: { enabled: true }
@@ -201,28 +196,6 @@ function normalizeMaintenance(raw = {}) {
   return { active, message, eta, startedAt, updatedAt };
 }
 
-function normalizeNewsItem(raw = {}, index = 0) {
-  const now = Date.now();
-  const id = safeText(raw.id, 80).replace(/[^A-Za-z0-9_-]/g, '') || `news_${now.toString(36)}_${index}`;
-  const createdAt = Number(raw.createdAt);
-  const updatedAt = Number(raw.updatedAt);
-  return {
-    id,
-    title: safeText(raw.title, 100),
-    body: safeText(raw.body, 600, { lines: true }),
-    tag: safeText(raw.tag, 32) || 'Race Control',
-    published: raw.published !== false,
-    createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : now,
-    updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : now
-  };
-}
-
-function normalizeNews(raw) {
-  const items = Array.isArray(raw) ? raw : Array.isArray(raw?.news) ? raw.news : Array.isArray(raw?.items) ? raw.items : [];
-  return items.map(normalizeNewsItem).filter(item => item.title && item.body)
-    .sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_NEWS_ITEMS);
-}
-
 /* Chip overrides: a label, a custom link, or both, keyed by source id. Ids that no longer exist are
    dropped, so a retired chip cannot keep a ghost name. */
 const OVERRIDE_TEXT = 40;
@@ -242,9 +215,22 @@ function normalizeOverrides(raw = {}) {
 }
 
 function normalizeSources(raw = {}) {
-  /* Ids that no longer exist are dropped, so a retired chip cannot linger as a hidden switch. */
-  const disabled = Array.isArray(raw.disabled) ? raw.disabled.map(String).filter(id => FEED_SOURCE_IDS.has(id)) : [];
-  return { disabled: [...new Set(disabled)], overrides: normalizeOverrides(raw.overrides), updatedAt: Number(raw.updatedAt) || null };
+  const custom = [];
+  const customIds = new Set();
+  for (const item of Array.isArray(raw.custom) ? raw.custom.slice(0, 50) : []) {
+    if (!item || typeof item !== 'object') continue;
+    const id = String(item.id || '');
+    const label = safeText(item.label, 40);
+    const url = httpsUrl(item.url);
+    if (!/^custom-[a-z0-9-]{1,60}$/.test(id) || customIds.has(id) || FEED_SOURCE_IDS.has(id) || !label || !url) continue;
+    customIds.add(id);
+    custom.push({ id, label, url: url.href.slice(0, 500), tab: item.tab === 'other' ? 'other' : 'en' });
+  }
+  const ids = new Set([...FEED_SOURCE_IDS, ...customIds]);
+  const disabled = Array.isArray(raw.disabled) ? raw.disabled.map(String).filter(id => ids.has(id)) : [];
+  const removed = Array.isArray(raw.removed) ? raw.removed.map(String).filter(id => FEED_SOURCE_IDS.has(id)) : [];
+  const order = Array.isArray(raw.order) ? raw.order.map(String).filter(id => ids.has(id)) : [];
+  return { disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
 }
 
 function normalizePages(raw = {}) {
@@ -324,7 +310,6 @@ function applySnapshot(raw) {
   if (!raw || typeof raw !== 'object') return;
   if (raw.maintenance) state.maintenance = normalizeMaintenance(raw.maintenance);
   if (raw.pages) state.pages = normalizePages(raw.pages);
-  if (raw.news !== undefined) state.news = normalizeNews(raw.news);
   if (raw.sources) state.sources = normalizeSources(raw.sources);
   if (raw.streamOverride || raw.override) state.streamOverride = normalizeOverride(raw.streamOverride || raw.override);
   if (raw.streamWindow) state.streamWindow = normalizeStreamWindow(raw.streamWindow);
@@ -335,7 +320,6 @@ function currentSnapshot() {
   return {
     maintenance: state.maintenance,
     pages: state.pages,
-    news: state.news,
     sources: state.sources,
     streamOverride: state.streamOverride,
     streamWindow: state.streamWindow,
@@ -498,12 +482,10 @@ function sendHelpError(res, error) {
 
 function applyLegacyLocalState() {
   const maintenance = readLocalJson(LEGACY_FILES.maintenance);
-  const news = readLocalJson(LEGACY_FILES.news);
   const sources = readLocalJson(LEGACY_FILES.sources);
   const streamOverride = readLocalJson(LEGACY_FILES.streamOverride);
   const streamWindow = readLocalJson(LEGACY_FILES.streamWindow);
   if (maintenance) state.maintenance = normalizeMaintenance(maintenance);
-  if (news) state.news = normalizeNews(news);
   if (sources) state.sources = normalizeSources(sources);
   if (streamOverride) state.streamOverride = normalizeOverride(streamOverride);
   if (streamWindow) state.streamWindow = normalizeStreamWindow(streamWindow);
@@ -520,6 +502,8 @@ async function loadSiteState() {
   } else applyLegacyLocalState();
 
   if (!UPSTASH_ENABLED) {
+    const sanitizedLocal = !localSnapshot || !Object.hasOwn(localSnapshot, 'news') || writeLocalJson(CONTROL_FILE, currentSnapshot());
+    if (sanitizedLocal) { try { fs.rmSync(path.join(DATA_DIR, 'news.json'), { force: true }); } catch (_) {} }
     lastStateWrite = { durable: false, store: fileStoreReady ? 'local' : 'memory' };
     return false;
   }
@@ -527,7 +511,7 @@ async function loadSiteState() {
   const redisKeys = [
     CONTROL_REDIS_KEY,
     LEGACY_REDIS_KEYS.maintenance,
-    LEGACY_REDIS_KEYS.news,
+    'freef1:news:v1', // read only to migrate and permanently delete the retired module's data
     LEGACY_REDIS_KEYS.sources,
     LEGACY_REDIS_KEYS.streamOverride,
     LEGACY_REDIS_KEYS.streamWindow
@@ -545,11 +529,20 @@ async function loadSiteState() {
       if (values[0].streamWindow === undefined && values[5]) state.streamWindow = normalizeStreamWindow(values[5]);
     } else {
       if (values[1]) state.maintenance = normalizeMaintenance(values[1]);
-      if (values[2]) state.news = normalizeNews(values[2]);
       if (values[3]) state.sources = normalizeSources(values[3]);
       if (values[4]) state.streamOverride = normalizeOverride(values[4]);
       if (values[5]) state.streamWindow = normalizeStreamWindow(values[5]);
     }
+    // First persist the sanitized combined state, then delete the legacy key. Never delete
+    // the old data before the replacement snapshot is safely acknowledged.
+    if ((values[0] && Object.hasOwn(values[0], 'news')) || values[2]) {
+      const saved = await upstashRequest(['SET', CONTROL_REDIS_KEY, JSON.stringify(currentSnapshot())]);
+      if (saved?.result !== 'OK') throw new Error('News cleanup snapshot was not saved');
+    }
+    const deleted = await upstashRequest(['DEL', 'freef1:news:v1']);
+    if (deleted?.error) throw new Error('Could not delete retired News key');
+    const sanitizedLocal = !localSnapshot || !Object.hasOwn(localSnapshot, 'news') || writeLocalJson(CONTROL_FILE, currentSnapshot());
+    if (sanitizedLocal) { try { fs.rmSync(path.join(DATA_DIR, 'news.json'), { force: true }); } catch (_) {} }
     redisReady = true;
     lastStateWrite = { durable: true, store: 'upstash' };
     return true;
@@ -604,28 +597,24 @@ function storageSummary() {
 const RETIRED_COMPAT_SOURCE_IDS = new Set(['sky-uhd']);
 
 function adminSourcesState() {
-  return { disabled: [...state.sources.disabled], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+  return { ...state.sources, disabled: [...state.sources.disabled] };
 }
 
 function publicSources() {
   /* Keep retired 'sky-uhd' listed in public disabled so already-deployed clients hide it cleanly. */
-  return { disabled: [...new Set([...state.sources.disabled, ...RETIRED_COMPAT_SOURCE_IDS])], overrides: state.sources.overrides, updatedAt: state.sources.updatedAt };
+  return { ...state.sources, disabled: [...new Set([...state.sources.disabled, ...state.sources.removed, ...RETIRED_COMPAT_SOURCE_IDS])] };
 }
 
 /* Race Control sees the chip as a visitor will: the custom name and link when there is one. */
 function adminSourceList() {
-  return FEED_SOURCES.map((source) => {
+  const builtins = FEED_SOURCES.filter(source => !state.sources.removed.includes(source.id)).map((source) => {
     const custom = state.sources.overrides[source.id] || {};
-    const link = state.sources.overrides[source.id]?.url;
-    return {
-      ...source,
-      label: custom.label || source.label,
-      baseLabel: source.label,
-      customLabel: custom.label || '',
-      customUrl: link || '',
-      updatedAt: custom.updatedAt || null
-    };
+    return { ...source, label: custom.label || source.label, baseLabel: source.label,
+      customLabel: custom.label || '', customUrl: custom.url || '', updatedAt: custom.updatedAt || null };
   });
+  const custom = state.sources.custom.map(source => ({ ...source, provider: 'custom', isCustom: true, baseLabel: source.label, customLabel: source.label, customUrl: source.url, defaultUrl: source.url }));
+  const rank = new Map(state.sources.order.map((id, index) => [id, index]));
+  return [...builtins, ...custom].sort((a, b) => (rank.get(a.id) ?? 1e6) - (rank.get(b.id) ?? 1e6));
 }
 
 function publicOverride() {
@@ -638,41 +627,6 @@ function publicOverride() {
   };
 }
 
-function publicNews() {
-  return state.news.filter(item => item.published && item.title && item.body)
-    .sort((a, b) => b.createdAt - a.createdAt).slice(0, 8);
-}
-
-function adminNews() {
-  return state.news.slice().sort((a, b) => b.createdAt - a.createdAt);
-}
-
-function createNews(body = {}) {
-  const item = normalizeNewsItem({ ...body, id: `news_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}` });
-  if (!item.title) return { error: 'A headline is required.' };
-  if (!item.body) return { error: 'An update is required.' };
-  state.news.unshift(item);
-  state.news = state.news.slice(0, MAX_NEWS_ITEMS);
-  return { item };
-}
-
-function updateNews(id, patch = {}) {
-  const index = state.news.findIndex(item => item.id === String(id));
-  if (index < 0) return null;
-  const existing = state.news[index];
-  const item = normalizeNewsItem({ ...existing, ...patch, id: existing.id, createdAt: existing.createdAt, updatedAt: Date.now() }, index);
-  if (!item.title || !item.body) return { error: 'A headline and update are required.' };
-  state.news[index] = item;
-  state.news.sort((a, b) => b.createdAt - a.createdAt);
-  return { item };
-}
-
-function deleteNews(id) {
-  const before = state.news.length;
-  state.news = state.news.filter(item => item.id !== String(id));
-  return before !== state.news.length;
-}
-
 function publicPages() {
   return { disabled: [...state.pages.disabled], updatedAt: state.pages.updatedAt };
 }
@@ -681,7 +635,6 @@ function publicConfig() {
   return {
     maintenance: state.maintenance,
     pages: publicPages(),
-    news: PUBLIC_NEWS_ENABLED ? publicNews() : [],
     sources: publicSources(),
     streamOverride: publicOverride(),
     streamWindow: state.streamWindow,
@@ -1480,7 +1433,7 @@ async function buildAdminLinkReport({ fast = false } = {}) {
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
   const linkReport = await buildAdminLinkReport({ fast: true });
-  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, adminNews: adminNews(), storage: storageSummary(), fourK: streamResolver.summary() });
+  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/pages', async (_req, res) => {
@@ -1575,11 +1528,34 @@ app.post('/admin/api/stream/sources', async (req, res) => {
   await stateReady;
   if (!Array.isArray(req.body?.disabled)) return res.status(400).json({ error: 'disabled must be an array of source IDs.' });
   const cleanedDisabled = req.body.disabled.map(String).filter(id => !RETIRED_COMPAT_SOURCE_IDS.has(id));
-  const unknown = cleanedDisabled.filter(id => !FEED_SOURCE_IDS.has(id));
+  const knownSourceIds = new Set([...FEED_SOURCE_IDS, ...state.sources.custom.map(source => source.id)]);
+  const unknown = cleanedDisabled.filter(id => !knownSourceIds.has(id));
   if (unknown.length) return res.status(400).json({ error: `Unknown source ID(s): ${unknown.join(', ')}` });
-  state.sources = normalizeSources({ disabled: cleanedDisabled, overrides: state.sources.overrides, updatedAt: Date.now() });
+  state.sources = normalizeSources({ ...state.sources, disabled: cleanedDisabled, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: FEED_SOURCES, sourceList: adminSourceList(), ...state.sources, ...persisted });
+});
+
+// One atomic catalogue update. IDs for shipped sources remain stable for old clients.
+app.post('/admin/api/stream/catalogue', async (req, res) => {
+  await stateReady;
+  const body = req.body || {};
+  if (!Array.isArray(body.custom) || !Array.isArray(body.disabled) || !Array.isArray(body.removed) || !Array.isArray(body.order) || !body.overrides || typeof body.overrides !== 'object' || Array.isArray(body.overrides)) return res.status(400).json({ error: 'Invalid source catalogue.' });
+  if (body.custom.length > 50) return res.status(400).json({ error: 'At most 50 custom sources are allowed.' });
+  const ids = new Set(FEED_SOURCE_IDS);
+  for (const item of body.custom) {
+    const id = String(item?.id || '');
+    const url = httpsUrl(item?.url);
+    if (!/^custom-[a-z0-9-]{1,60}$/.test(id) || ids.has(id) || !safeText(item?.label, 40) || !url || url.href.length > 500 || !['en','other'].includes(item?.tab)) return res.status(400).json({ error: 'Each custom source needs a unique ID, name, HTTPS link, and valid group.' });
+    ids.add(id);
+  }
+  if (body.disabled.some(id => !ids.has(id)) || body.order.some(id => !ids.has(id)) || body.removed.some(id => !FEED_SOURCE_IDS.has(id)) || new Set(body.order).size !== body.order.length) return res.status(400).json({ error: 'The source list contains unknown or duplicate IDs.' });
+  for (const [id, entry] of Object.entries(body.overrides)) {
+    if (!FEED_SOURCE_IDS.has(id) || !entry || typeof entry !== 'object' || (entry.url && (!httpsUrl(entry.url) || String(entry.url).length > 500))) return res.status(400).json({ error: 'Custom links must be full HTTPS addresses.' });
+  }
+  state.sources = normalizeSources({ ...body, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, sources: adminSourcesState(), sourceList: adminSourceList(), ...persisted });
 });
 
 /* Bulk availability: 'disable'/'enable' + a group (emb / weelo / taifood / strmfree / all …) or an
@@ -1610,7 +1586,7 @@ app.post('/admin/api/stream/sources/bulk', async (req, res) => {
     else pending.delete(source.id);
   }
   if (!touched) return res.status(400).json({ error: 'That group matched no sources.' });
-  state.sources = normalizeSources({ disabled: [...pending], overrides: state.sources.overrides, updatedAt: Date.now() });
+  state.sources = normalizeSources({ ...state.sources, disabled: [...pending], updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, action, group: group || null, touched, sources: FEED_SOURCES, ...state.sources, ...persisted });
 });
@@ -1651,7 +1627,7 @@ app.post('/admin/api/stream/chip', async (req, res) => {
   const overrides = { ...state.sources.overrides };
   if (raw.label || raw.url) overrides[id] = { ...raw, updatedAt: Date.now() };
   else delete overrides[id];
-  state.sources = normalizeSources({ disabled: state.sources.disabled, overrides, updatedAt: Date.now() });
+  state.sources = normalizeSources({ ...state.sources, overrides, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sourceList: adminSourceList(), ...state.sources, ...persisted });
 });
@@ -1659,40 +1635,13 @@ app.post('/admin/api/stream/chip', async (req, res) => {
 app.post('/admin/api/reset-all', async (_req, res) => {
   await stateReady;
   /* Everything Race Control can change goes back to the shipped default: nothing hidden, no custom
-     names or links, no forced stream, no maintenance, no page outages, no news. Storage settings are left alone. */
+     names or links, no forced stream, no maintenance, no page outages. Storage settings are left alone. */
   state.sources = normalizeSources({ disabled: [], overrides: {}, updatedAt: Date.now() });
   state.pages = normalizePages({ disabled: [], updatedAt: Date.now() });
   state.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: Date.now() };
   state.maintenance = normalizeMaintenance({ active: false, updatedAt: Date.now() });
-  state.news = [];
   const persisted = await persistState();
-  res.json({ success: true, ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), adminNews: adminNews(), ...persisted });
-});
-
-app.get('/admin/api/news', async (_req, res) => {
-  await stateReady;
-  res.json({ news: adminNews(), ...storageSummary() });
-});
-app.post('/admin/api/news', async (req, res) => {
-  await stateReady;
-  const result = createNews(req.body || {});
-  if (result.error) return res.status(400).json({ error: result.error });
-  const persisted = await persistState();
-  res.status(201).json({ success: true, news: result.item, ...persisted });
-});
-app.patch('/admin/api/news/:id', async (req, res) => {
-  await stateReady;
-  const result = updateNews(req.params.id, req.body || {});
-  if (!result) return res.status(404).json({ error: 'News item not found.' });
-  if (result.error) return res.status(400).json({ error: result.error });
-  const persisted = await persistState();
-  res.json({ success: true, news: result.item, ...persisted });
-});
-app.delete('/admin/api/news/:id', async (req, res) => {
-  await stateReady;
-  if (!deleteNews(req.params.id)) return res.status(404).json({ error: 'News item not found.' });
-  const persisted = await persistState();
-  res.json({ success: true, ...persisted });
+  res.json({ success: true, ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), ...persisted });
 });
 
 const ADMIN_ASSET_VERSION = (() => {

@@ -1139,75 +1139,6 @@ button {
   font-size: 12px;
 }
 
-/* ── Public News List ── */
-.news-list {
-  display: grid;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.news-card {
-  padding: 14px;
-  border-radius: var(--r-md);
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-}
-
-.news-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.news-card h3 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.news-card-meta {
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--ink-3);
-}
-
-.news-card p {
-  margin: 10px 0 0;
-  font-size: 13.5px;
-  color: var(--ink-2);
-  white-space: pre-wrap;
-}
-
-.news-card-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.news-card-actions button {
-  padding: 4px 9px;
-  border-radius: 7px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--ink-2);
-  font-size: 12px;
-  font-weight: 600;
-  transition: background-color 150ms var(--ease), color 150ms var(--ease);
-}
-
-.news-card-actions button:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.news-card-actions .delete-news:hover {
-  background: rgba(225, 6, 0, 0.2);
-  border-color: rgba(225, 6, 0, 0.45);
-  color: #ff9a96;
-}
-
 .storage-copy {
   margin: 0 0 8px;
   font-size: 13px;
@@ -1358,3 +1289,22 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Source manager: draft tools, animated without distracting from the controls. */
+.source-add { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-elev); margin: 0 0 16px; overflow: hidden; }
+.source-add summary { cursor: pointer; padding: 13px 15px; font-weight: 700; font-size: 13px; transition: background-color .2s var(--ease); }
+.source-add summary:hover { background: var(--surface-2); }
+.source-add[open] summary { border-bottom: 1px solid var(--line); }
+.source-add-form { display: grid; grid-template-columns: 1fr 1.5fr 1fr auto; align-items: end; gap: 10px; padding: 14px; animation: sourceReveal .25s var(--ease) both; }
+.source-add-form select { width: 100%; min-height: 40px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.source-row { animation: sourceReveal .24s var(--ease) both; }
+.source-row-tools { grid-column: 1 / -1; display: flex; gap: 7px; justify-content: flex-end; }
+.source-row-tools button { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); border-radius: 7px; padding: 5px 10px; cursor: pointer; transition: transform .16s var(--ease), color .16s, border-color .16s; }
+.source-row-tools button:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); transform: translateY(-1px); }
+.source-row-tools button:disabled { opacity: .35; cursor: default; }
+.source-row-tools .source-remove:hover { color: #ff8c85; }
+@keyframes sourceReveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 680px) { .source-add-form { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .source-add-form, .source-row { animation: none; } .source-row-tools button { transition: none; } }
+
+.source-custom select { min-width: 0; padding: 8px 10px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }

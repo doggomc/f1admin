@@ -19,8 +19,8 @@ separately by a Cloudflare Worker and is not sent to this Render backend.
   localStorage fallbacks (up to seven days for most API results, with longer
   season/session metadata); a Render outage does not affect these requests.
 - Race Control settings (disabled sources, stream override, maintenance) arrive
-  over a small optional config channel. News data remains in the authenticated
-  admin tools, and its public config array stays empty while News is hidden. The
+  over a small optional config channel. The retired News module and its stored
+  records are removed on startup. The
   browser uses local defaults and a saved snapshot if the service cannot be
   reached; stale maintenance state does not lock the site behind a maintenance screen.
 - The Discord bot remains optional. Session alerts/presence start when
@@ -55,7 +55,6 @@ changed, update that constant and the CSP in `netlifyf1/_headers` together.
 | `ADMIN_SECRET` | At least 32 random characters for signing the admin session cookie; use 64 hex characters. |
 | `ALLOWED_ORIGIN` | Public site origin, normally `https://freef1.netlify.app`. Netlify deploy-preview origins for this site are also allowed. |
 | `TRUST_PROXY_HOPS` | `1` on Render. Increase only if you deliberately add another trusted proxy. |
-| `PUBLIC_NEWS_ENABLED` | Optional; leave false/unset to exclude published News from public config while retaining admin data and CRUD. Set true only when re-enabling the frontend view too. |
 
 Generate a strong session secret:
 
@@ -112,11 +111,9 @@ push-only connection even when backgrounded, so maintenance changes reach them
 without polling; after a disconnect/reconnect the server sends a fresh snapshot. It sends no periodic heartbeat and collects no
 visitor identity or analytics. This makes maintenance, Force Live, source, and
 stream-override changes visible to connected public tabs immediately without a
-refresh. News records and admin CRUD remain intact, but public config returns
-an empty News array unless the backend `PUBLIC_NEWS_ENABLED=true`; the frontend
-view also remains hidden while `PUBLIC_NEWS_ENABLED=false` in
-`netlifyf1/app.js`. To restore the feed later, enable both flags, restore the
-public News navigation link, and remove the temporary `/news` redirects.
+refresh. The retired News data is removed from the combined snapshot and legacy
+News storage on startup. Source changes are saved atomically; custom feeds require
+HTTPS URLs and are distributed to clients through the same configuration channel.
 Stream playback and sports data still connect directly from
 the browser to their providers; Render does not proxy them.
 

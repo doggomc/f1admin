@@ -88,8 +88,8 @@ async function json(response) {
     });
     check('foreign origins cannot subscribe to public config changes', deniedUpdates.status === 403);
 
-    const external = await fetch(server.base + '/admin/api/news');
-    check('admin news is not public', external.status === 401);
+    const external = await fetch(server.base + '/admin/api/stream/catalogue');
+    check('admin source manager is not public', external.status === 401);
     const sameOrigin = server.base;
     const csrf = await fetch(server.base + '/admin/api/login', {
       method: 'POST', headers: { Origin: 'https://freef1.netlify.app', 'Content-Type': 'application/json' },

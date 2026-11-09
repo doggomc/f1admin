@@ -37,10 +37,10 @@ let snapshot = {
   maintenance: { active: false, message: "We'll be back before the race.", eta: 'Before lights out', startedAt: null },
   pages: { disabled: [], updatedAt: null },
   pageList: PAGE_LIST,
-  news: [], sources: { disabled: [], updatedAt: null },
+  sources: { disabled: [], updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
-  experimental: { enabled: true }, sourceList: FEED_SOURCES, adminNews: [],
+  experimental: { enabled: true }, sourceList: FEED_SOURCES,
   storage: { store: 'upstash', durable: true, redisConfigured: true, localWritable: true }
 };
 const calls = [];
@@ -95,15 +95,12 @@ window.fetch = async (url, options = {}) => {
     snapshot.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null };
     return reply({ success: true, override: snapshot.streamOverride, durable: true });
   }
-  if (pathname.endsWith('/admin/api/news') && method === 'POST') {
+  if (pathname.endsWith('/admin/api/stream/catalogue')) {
     const body = calls.at(-1).body || {};
-    const item = { ...body, id: 'news_test', createdAt: Date.now(), updatedAt: Date.now() };
-    snapshot.adminNews.unshift(item);
-    writePayloads.push({ endpoint: 'news', body });
-    return reply({ success: true, news: item, durable: true }, 201);
-  }
-  if (pathname.endsWith('/admin/api/news/news_test') && method === 'PATCH') {
-    return reply({ success: true, news: { ...calls.at(-1).body, id: 'news_test', createdAt: Date.now(), updatedAt: Date.now() }, durable: true });
+    snapshot.sources = body;
+    snapshot.sourceList = [...FEED_SOURCES.filter(x => !body.removed.includes(x.id)), ...body.custom.map(x => ({ ...x, isCustom:true, customLabel:x.label, customUrl:x.url }))].sort((a,b) => body.order.indexOf(a.id)-body.order.indexOf(b.id));
+    writePayloads.push({ endpoint:'sources', body });
+    return reply({ success:true, sources:snapshot.sources, sourceList:snapshot.sourceList, durable:true, store:'upstash' });
   }
   return reply({ error: `unexpected ${method} ${pathname}` }, 404);
 };
@@ -123,7 +120,7 @@ window.fetch = async (url, options = {}) => {
   check('initialization makes only status and one config request', calls.length === 2 && calls[0].pathname.endsWith('/status') && calls[1].pathname.endsWith('/config'), JSON.stringify(calls.map(call => call.pathname)));
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
-  check('source instructions say to save draft switch changes', /Toggle the sources[\s\S]*Save source settings/i.test(html));
+  check('source instructions say to save draft switch changes', /Changes remain a draft until you save[\s\S]*Save source settings/i.test(html));
   check('no visitor, analytics, SSE, or recurring API request is made', calls.every(call => !/visitor|analytics|events|status\?/.test(call.pathname)));
 
   await new Promise(resolve => setTimeout(resolve, 120));
@@ -160,12 +157,13 @@ window.fetch = async (url, options = {}) => {
   await new Promise(resolve => setTimeout(resolve, 30));
   check('stream override is an explicit admin POST', snapshot.streamOverride.active === true && calls.at(-1).pathname.endsWith('/stream/override'));
 
-  $('newsHeadline').value = 'Test update';
-  $('newsTag').value = 'Race Control';
-  $('newsBody').value = 'A short update.';
-  $('newsForm').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
-  await new Promise(resolve => setTimeout(resolve, 40));
-  check('news form posts sanitized text to the admin API', snapshot.adminNews[0]?.title === 'Test update' && writePayloads.some(item => item.endpoint === 'news'));
+  $('newSourceName').value = 'Test feed'; $('newSourceUrl').value = 'https://example.com/player';
+  $('addSourceForm').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true }));
+  check('custom source is added to the draft', [...$('sourceList').querySelectorAll('.source-name')].some(el => el.textContent.includes('Test feed')));
+  $('saveSources').dispatchEvent(new window.MouseEvent('click', { bubbles:true }));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('custom source is published in an atomic catalogue update', snapshot.sources.custom?.some(source => source.label === 'Test feed'));
+  check('news controls are absent', !$('newsSection') && !$('newsForm'));
   check('no runtime errors', runtimeErrors.length === 0, runtimeErrors.join(' | '));
 
   let failed = 0;
