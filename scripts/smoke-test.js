@@ -536,8 +536,8 @@ function nextConfigEvent(reader) {
     check('ppv-embed and ppv-m3u8 strip ads, enforce Referer/SSRF rules, edge-cache playlists, and keep TikTok segments direct',
       okPpvEmbed.response.status === 200 &&
       okPpvEmbed.response.headers.get('access-control-allow-origin') === '*' &&
-      /public, s-maxage=60/.test(okPpvEmbed.response.headers.get('netlify-cdn-cache-control') || '') &&
-      okPpvEmbed.response.headers.get('netlify-vary') === 'query=slug|host|mute|tile' &&
+      okPpvEmbed.response.headers.get('netlify-cdn-cache-control') === 'no-store' &&
+      /referer/i.test(okPpvEmbed.response.headers.get('vary') || '') &&
       okPpvEmbed.text.includes('/api/stream/ppv-m3u8/index.m3u8?slug=') &&
       okPpvEmbed.text.includes('TsSyncLoader') &&
       !okPpvEmbed.text.includes('aclib') &&

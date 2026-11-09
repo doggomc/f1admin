@@ -69,14 +69,13 @@ const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
   ? 'https://freef1.netlify.app,https://freef1-live.vercel.app'
   : 'https://freef1.netlify.app,https://freef1-live.vercel.app,http://localhost:4173,http://127.0.0.1:4173';
 const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGINS));
-// Relay framing uses exact origins; list additional preview domains explicitly.
-const RELAY_ORIGINS = new Set(parseOrigins([
-  'https://freef1.netlify.app', 'https://freef1-live.vercel.app', 'https://freef1.vercel.app',
-  'https://freef1-git-design-modern-cockpit-motion-f4-ac7f.vercel.app',
-  process.env.ALLOWED_ORIGIN || '', process.env.RELAY_ALLOWED_ORIGINS || ''
-].join(',')));
+// Vercel assigns a fresh hostname to each deployment. The team suffix is
+// required; frame-ancestors is generated per request from the approved referrer.
+const RELAY_LIVE_ORIGIN = 'https://freef1-live.vercel.app';
+const RELAY_PREVIEW = /^https:\/\/freef1-[a-z0-9-]+-f4-ac7f\.vercel\.app$/;
 function isRelayOrigin(origin) {
-  return RELAY_ORIGINS.has(origin) || (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin));
+  return origin === RELAY_LIVE_ORIGIN || RELAY_PREVIEW.test(origin)
+    || (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin));
 }
 
 const SITE_CONFIG_MAX_AGE_SECONDS = 300;
@@ -973,11 +972,19 @@ app.get('/api/stream/weelo', async (req, res) => {
 /* Stripped (ad-free) weellz.live embed document + 16-byte AES-128 key relay.
    Video manifests and segments stream directly from weelo.live to the viewer's browser;
    only the cached player HTML shell and 16-byte decryption keys touch this process. */
-const WEELLZ_EMBED_FRAME_ANCESTORS = [...new Set([
-  "'self'",
-  ...RELAY_ORIGINS,
-  ...(PRODUCTION ? [] : ['http://localhost:*', 'http://127.0.0.1:*', 'https://*.e2b.app'])
-])].join(' ');
+const WEELLZ_EMBED_FRAME_ANCESTORS = "https://freef1-live.vercel.app";
+function relayEmbedPolicy(req, res, policy) {
+  const refererOrigin = normalizeOrigin(req.headers.referer || '');
+  const preview = refererOrigin && isRelayOrigin(refererOrigin) && refererOrigin !== RELAY_LIVE_ORIGIN
+    ? ` ${refererOrigin}` : '';
+  res.setHeader('Content-Security-Policy', policy.replace(
+    `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}`,
+    `frame-ancestors ${WEELLZ_EMBED_FRAME_ANCESTORS}${preview}`
+  ));
+  // Policies vary by requesting page; never share a cached response across sites.
+  res.append('Vary', 'Referer');
+  setNoStore(res);
+}
 
 const WEELLZ_EMBED_CSP = [
   "default-src 'self' https: blob: data:",
@@ -1046,7 +1053,7 @@ const PPV_EMBED_CSP = [
 app.get('/api/stream/strmfree-embed', async (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', STRMFREE_EMBED_CSP);
+  relayEmbedPolicy(req, res, STRMFREE_EMBED_CSP);
   const variant = String(req.query.variant || 'skyf11080p').trim();
   const host = String(req.query.host || 'strmfree.st').trim();
   if (/2160p|540p/i.test(variant) || !/^(?:skyf11080p|skyf1)$/i.test(variant)) {
@@ -1062,8 +1069,6 @@ app.get('/api/stream/strmfree-embed', async (req, res) => {
     }
     return res.status(status).json({ error: result.error || 'Stripped player unavailable.', code: 'unavailable' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
-  setNetlifyEdgeCache(res, 300, { swr: 60, varyQuery: 'variant|host' });
   if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
@@ -1085,7 +1090,7 @@ app.get('/api/stream/strmfree-m3u8/:mode/:variant/index.m3u8', async (req, res) 
 app.get('/api/stream/ppv-embed', (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', PPV_EMBED_CSP);
+  relayEmbedPolicy(req, res, PPV_EMBED_CSP);
   const slug = String(req.query.slug || '').trim();
   const host = String(req.query.host || '').trim();
   const result = streamResolver.ppvStrippedHtml(slug, host);
@@ -1093,8 +1098,6 @@ app.get('/api/stream/ppv-embed', (req, res) => {
     setNoStore(res);
     return res.status(result.status || 400).json({ error: result.error || 'A valid HD PPV stream slug is required.', code: 'bad-request' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
-  setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'slug|host|mute|tile' });
   if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
@@ -1130,15 +1133,13 @@ app.get('/api/stream/ppv-m3u8/sub.m3u8', async (req, res) => {
 app.get('/api/stream/embdlol-embed', (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', EMBDLOL_EMBED_CSP);
+  relayEmbedPolicy(req, res, EMBDLOL_EMBED_CSP);
   const id = String(req.query.id || '').trim();
   const result = streamResolver.embdlolStrippedHtml(id);
   if (!result.ok) {
     setNoStore(res);
     return res.status(result.status || 400).json({ error: result.error || 'A valid EMB channel id is required.', code: 'bad-request' });
   }
-  res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
-  setNetlifyEdgeCache(res, 60, { swr: 30, varyQuery: 'id|mute|tile' });
   if (sendPacked(req, res, result.pack, 'text/html; charset=utf-8')) return;
   return res.type('html').send(result.html);
 });
@@ -1146,7 +1147,7 @@ app.get('/api/stream/embdlol-embed', (req, res) => {
 app.get('/api/stream/weellz-embed', async (req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Security-Policy', WEELLZ_EMBED_CSP);
+  relayEmbedPolicy(req, res, WEELLZ_EMBED_CSP);
   res.append('Vary', 'Sec-Fetch-Dest, Referer');
   const rawStream = req.query.stream;
   if (rawStream !== undefined && !/^[A-Za-z0-9_-]{4,160}$/.test(String(rawStream).trim())) {
@@ -1159,8 +1160,6 @@ app.get('/api/stream/weellz-embed', async (req, res) => {
   }
   try {
     const { html, pack } = await streamResolver.weellzStrippedHtml();
-    res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=86400');
-    setNetlifyEdgeCache(res, 900, { swr: 300, varyQuery: 'v', varyHeader: 'sec-fetch-dest|referer' });
     if (sendPacked(req, res, pack, 'text/html; charset=utf-8')) return;
     res.type('html').send(html);
   } catch (error) {
