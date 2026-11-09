@@ -545,6 +545,8 @@ const WEELO_FEEDS = [
   ['shows', 'F1 TV (Shows)', 'feed', 'gebdacefgfacicdfigpghhdhjcacieee', 'en']
 ];
 
+const { mutedAutoplayScript } = require('./weellz-autoplay');
+
 function stripWeellzHtml(rawHtml) {
   let html = String(rawHtml || '');
   html = html.replace(/<template\b[^>]*\bid=["']rl-pu["'][^>]*>[\s\S]*?<\/template>/gi, '');
@@ -561,6 +563,7 @@ function stripWeellzHtml(rawHtml) {
     "XMLHttpRequest.prototype.open=function(m,u){if(typeof u==='string'&&u.indexOf('https://rewnd.live/k/')===0){arguments[1]=keyBase+u.slice(21);}return origOpen.apply(this,arguments);};",
     "var origFetch=window.fetch;if(origFetch){window.fetch=function(i,o){if(typeof i==='string'&&i.indexOf('https://rewnd.live/k/')===0){i=keyBase+i.slice(21);}return origFetch.call(this,i,o);};}",
     'window.open=function(){return null;};',
+    mutedAutoplayScript,
     "window.addEventListener('message',function(ev){try{var d=typeof ev.data==='string'?JSON.parse(ev.data):ev.data;if(d&&d.type==='freef1-audio'){var m=Boolean(d.muted);if(typeof window.jwplayer==='function'){var p=window.jwplayer();if(p&&typeof p.setMute==='function')p.setMute(m);}document.querySelectorAll('video').forEach(function(v){v.muted=m;});}}catch(_){}});",
     '})();</script>'
   ].join('');
