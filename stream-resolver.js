@@ -13,6 +13,7 @@
    GET /api/stream/health
      Per-provider status. Only providers that actually answer with something meaningful are
      reported as live; a 200 that is really an error page is not counted as healthy.
+   Resolver map and operational notes: docs/stream-resolver.md.
    --------------------------------------------------------------------------- */
 
 const crypto = require('crypto');
@@ -81,6 +82,11 @@ function feedKey(name) {
   return match ? (FEED_ALIASES[match[1]] || match[1]) : '';
 }
 const isUhdChannel = (name) => feedKey(name) === 'uhd';
+/* The provider may list dated recordings next to a row explicitly marked live. */
+function isEmbdlolRecording(name) {
+  const text = String(name || '').toLowerCase();
+  return !/live/.test(text) && /(mon|tue|wed|thu|fri|sat|sun|replay|highlights)/.test(text);
+}
 const CDNLIVE_CATALOGUE = 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free';
 
 /* How long the published channel list is trusted. This used to be 30 minutes, which is far too
@@ -746,7 +752,8 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
         const response = await fetchWithTimeout(EMBDLOL_STRUCT);
         if (!response.ok) throw new Error(`struct responded ${response.status}`);
         const json = await response.json();
-        const channel = (json?.channels || []).find((entry) => isUhdChannel(entry?.channelname));
+        const uhdChannels = (Array.isArray(json?.channels) ? json.channels : []).filter(entry => entry?.id && isUhdChannel(entry.channelname));
+        const channel = uhdChannels.find(entry => !isEmbdlolRecording(entry.channelname)) || uhdChannels[0];
         if (channel?.id) {
           uhd.url = `${EMBDLOL_EMBED}${channel.id}`;
           uhd.at = Date.now();
@@ -879,17 +886,17 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
         return catalogueChannels;
       }
       const next = new Map();
-      const seen = new Map();
       for (const channel of rows) {
         const key = feedKey(channel?.channelname);
         if (!key || !channel?.id) continue;
         /* The directory can list the same feed twice: once as a finished catch-up recording and once
            as the live channel. The recording cannot be watched as live, so a name carrying a day
            prefix and no 'live' marker loses to a plain live row. */
-        const name = String(channel.channelname || '').toLowerCase();
-        const recording = !/live/.test(name) && /(mon|tue|wed|thu|fri|sat|sun|replay|highlights)/.test(name);
-        if (recording && !seen.get(key)) { if (!next.has(key)) next.set(key, String(channel.id)); continue; }
-        seen.set(key, true);
+        const recording = isEmbdlolRecording(channel.channelname);
+        if (recording) {
+          if (!next.has(key)) next.set(key, String(channel.id));
+          continue;
+        }
         next.set(key, String(channel.id));
       }
       /* When embdlol names its two English HD feeds 'Sky' and 'ATV'/'Apple' rather than
