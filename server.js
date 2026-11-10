@@ -252,7 +252,7 @@ function normalizeSources(raw = {}, { migrateWiki = false } = {}) {
     if (removed.includes('wikisport')) removed.push(...additions);
   }
   const order = Array.isArray(raw.order) ? raw.order.map(String).filter(id => ids.has(id)) : [];
-  return { wikiSplitVersion: 1, autoStreams: raw.autoStreams === true, disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
+  return { wikiSplitVersion: 1, autoStreams: raw.autoStreams === true, relaysDisabled: raw.relaysDisabled === true, disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
 }
 
 function normalizePages(raw = {}) {
@@ -797,6 +797,18 @@ const sessionMiddleware = cookieSession({
 app.use('/admin/api', sessionMiddleware);
 
 let stateReady = loadSiteState();
+
+// Block all stripped-player documents, playlist relays and key relays before
+// any resolver or upstream fetch. Metadata and direct embeds remain available.
+const RELAY_PATH = /^\/api\/stream\/(?:weellz-embed\/?|weellz-key(?:\/|$)|embdlol-embed\/?|strmfree-embed\/?|strmfree-m3u8(?:\/|$)|ppv-embed\/?|ppv-m3u8(?:\/|$))/i;
+app.use(async (req, res, next) => {
+  if (!RELAY_PATH.test(req.path)) return next();
+  await stateReady;
+  if (!state.sources.relaysDisabled) return next();
+  setNoStore(res);
+  res.setHeader('Netlify-CDN-Cache-Control', 'no-store');
+  return res.status(503).json({ error: 'Stream relays are disabled by Race Control.', code: 'relays-disabled' });
+});
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
@@ -1565,6 +1577,14 @@ app.post('/admin/api/stream/auto', async (req, res) => {
   res.json({ success: true, sources: adminSourcesState(), ...persisted });
 });
 
+app.post('/admin/api/stream/relays', async (req, res) => {
+  await stateReady;
+  if (typeof req.body?.disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be a boolean.' });
+  state.sources = normalizeSources({ ...state.sources, relaysDisabled: req.body.disabled, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, sources: adminSourcesState(), ...persisted });
+});
+
 app.get('/admin/api/stream/sources', async (_req, res) => {
   await stateReady;
   res.json({ sources: FEED_SOURCES, ...state.sources, ...storageSummary() });
@@ -1598,7 +1618,7 @@ app.post('/admin/api/stream/catalogue', async (req, res) => {
   for (const [id, entry] of Object.entries(body.overrides)) {
     if (!FEED_SOURCE_IDS.has(id) || !entry || typeof entry !== 'object' || (entry.url && (!httpsUrl(entry.url) || String(entry.url).length > 500))) return res.status(400).json({ error: 'Custom links must be full HTTPS addresses.' });
   }
-  state.sources = normalizeSources({ ...body, autoStreams: state.sources.autoStreams, updatedAt: Date.now() });
+  state.sources = normalizeSources({ ...body, autoStreams: state.sources.autoStreams, relaysDisabled: state.sources.relaysDisabled, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: adminSourcesState(), sourceList: adminSourceList(), ...persisted });
 });

@@ -739,6 +739,7 @@ function renderConfig() {
   renderFilterChips();
   renderSources();
   renderAutoStreams();
+  renderRelayControl();
   updateStorage();
   updateKpiStrip();
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
@@ -932,6 +933,24 @@ $('autoStreamsToggle').addEventListener('click', async () => {
     const result = await api('/stream/auto', { method: 'POST', body: JSON.stringify({ enabled: !config?.sources?.autoStreams }) });
     config.sources = result.sources; renderAutoStreams();
     acceptWrite(result, 'Stream mode updated.', 'sourcesMessage');
+  } catch (error) { setStatusLine('sourcesMessage', error.message, 'error'); }
+  finally { button.disabled = false; }
+});
+
+function renderRelayControl() {
+  const disabled = config?.sources?.relaysDisabled === true;
+  $('relayControlToggle').textContent = disabled ? 'Enable stream relays' : 'Disable stream relays';
+  $('relayControlToggle').setAttribute('aria-pressed', String(disabled));
+  $('relayControlDetail').textContent = disabled
+    ? 'Relays are off. Stripped feeds stop; Sky HD and Other Streams use direct embeds. Direct players may show ads.'
+    : 'Stripped players and playlist/key relays are available. Disabling them preserves your source settings.';
+}
+$('relayControlToggle').addEventListener('click', async () => {
+  const button = $('relayControlToggle'); button.disabled = true;
+  try {
+    const result = await api('/stream/relays', { method: 'POST', body: JSON.stringify({ disabled: config?.sources?.relaysDisabled !== true }) });
+    config.sources = result.sources; renderRelayControl();
+    acceptWrite(result, 'Stream relay setting updated.', 'sourcesMessage');
   } catch (error) { setStatusLine('sourcesMessage', error.message, 'error'); }
   finally { button.disabled = false; }
 });

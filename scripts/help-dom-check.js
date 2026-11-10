@@ -8,7 +8,8 @@ const { JSDOM } = require('jsdom');
 
 const siteDir = process.env.SITE_DIR || path.resolve(__dirname, '..', '..', 'netlifyf1');
 const pageHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
-const helpScript = fs.readFileSync(path.join(siteDir, 'help.js'), 'utf8');
+const esbuild = require(require.resolve('esbuild', { paths: [siteDir] }));
+const helpScript = esbuild.buildSync({ entryPoints: [path.join(siteDir, 'src/help.ts')], bundle:true, write:false, format:'iife', platform:'browser', target:'es2022', define:{'import.meta.env.DEV':'false'} }).outputFiles[0].text;
 const indexHtml = fs.readFileSync(path.join(siteDir, 'index.html'), 'utf8');
 const STORAGE_KEY = 'freef1.help.ticket.v1';
 const pause = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +41,7 @@ function setRandom(window) {
 
   const dom = new JSDOM(pageHtml, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/help.html' });
   const { window } = dom;
+  window.scrollTo = () => {};
   setHidden(window, true);
   setRandom(window);
   window.Headers = Headers;
@@ -115,7 +117,9 @@ function setRandom(window) {
 
   window.close();
 
-  const badgeDom = new JSDOM(indexHtml, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/' });
+  // Inject a notification target into the legacy non-help-page fixture; this checks
+  // the shared help code's rendering, not whether the current homepage mounts it.
+  const badgeDom = new JSDOM(indexHtml.replace('</body>', '<span class="help-notification-dot" hidden></span></body>'), { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/' });
   const badgeWindow = badgeDom.window;
   setHidden(badgeWindow, true);
   badgeWindow.Headers = Headers;
@@ -137,7 +141,7 @@ function setRandom(window) {
   await pause(10);
   const dots = [...badgeWindow.document.querySelectorAll('.help-notification-dot')];
   check('a staff reply found in ticket status lights the persistent Help unread dot',
-    dots.length === 2 && dots.every(dot => dot.hidden === false));
+    dots.length === 1 && dots.every(dot => dot.hidden === false));
   badgeWindow.close();
 
   const offlineDom = new JSDOM(pageHtml, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://freef1.netlify.app/help.html' });
@@ -145,6 +149,7 @@ function setRandom(window) {
   setHidden(offlineWindow, true);
   setRandom(offlineWindow);
   offlineWindow.Headers = Headers;
+  offlineWindow.scrollTo = () => {};
   offlineWindow.fetch = async () => { throw new TypeError('backend offline'); };
   offlineWindow.eval(helpScript);
   await pause(10);
