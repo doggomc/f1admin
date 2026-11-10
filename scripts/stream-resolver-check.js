@@ -40,5 +40,29 @@ function resolverFor(channels) {
   assert.equal(new Set(ids).size, ids.length, 'source IDs must be unique');
   assert.ok(STREAM_SOURCES.every(item => item.id && item.label && item.provider && Array.isArray(item.links)), 'every source needs complete catalogue metadata');
   assert.equal((await empty.resolver.resolveDynamic('unknown/path')).code, 'unknown-provider');
-  console.log('stream-resolver: source catalogue, live EMB precedence, cache and dynamic allowlist checks passed');
+  const pages = {
+    'https://wikisport.info/strm/f1.php': '<iframe src="https://wikisport.info/strm/30.php"></iframe>',
+    'https://wikisport.info/strm/30.php': '<iframe src="https://siempreon.shop/fslivepro.php?stream=F81"></iframe>',
+    'https://wikisport.info/fsl/f1s2.php': '<iframe src="https://taifood-blog.asia/embed/f1/2026/brazil/race"></iframe>',
+    'https://wikisport.info/fsl/f1s3.php': '<iframe src="https://embedsports.me/streams/sky-sports-f1-sky-f1-stream-1"></iframe>',
+    'https://wikisport.info/fsl/f1s4.php': '<iframe src="https://thedaddy.li/stream/stream-60.php"></iframe>',
+    'https://wikisport.info/fsl/f1s5.php': '<iframe src="https://tvpclive.com/embed/stream-60.php"></iframe>'
+  };
+  const wiki = createStreamResolver({ log: { warn() {} }, fetchImpl: async (url, options) => {
+    assert.equal(options.redirect, 'manual', 'WikiSport lookups never follow arbitrary redirects');
+    assert.ok(Object.hasOwn(pages, String(url)), 'lookups are restricted to the known WikiSport pages');
+    return { ok: true, status: 200, text: async () => pages[String(url)] };
+  } });
+  const expected = ['https://siempreon.shop/fslivepro.php?stream=F81', 'https://taifood-blog.asia/embed/f1/2026/brazil/race', 'https://embedsports.me/streams/sky-sports-f1-sky-f1-stream-1', 'https://thedaddy.li/stream/stream-60.php', 'https://tvpclive.com/embed/stream-60.php'];
+  for (let i = 1; i <= 5; i++) {
+    const result = await wiki.resolveDynamic(`wikisport/${i}`);
+    assert.equal(result.url, expected[i - 1], 'return the direct embed, not WikiSport HTML');
+    assert.equal((await wiki.resolveDynamic(`wikisport/${i}`)).cached, true);
+  }
+  assert.equal((await wiki.resolveDynamic('wikisport/6')).code, 'unknown-provider');
+  const hostile = createStreamResolver({ log: { warn() {} }, fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<iframe src="https://evil.example/embed/stream-60.php"></iframe>' }) });
+  assert.equal((await hostile.resolveDynamic('wikisport/5')).code, 'unsupported-embed');
+  const redirected = createStreamResolver({ log: { warn() {} }, fetchImpl: async () => ({ ok: false, status: 302 }) });
+  assert.equal((await redirected.resolveDynamic('wikisport/2')).code, 'provider-302');
+  console.log('stream-resolver: source catalogue, live EMB precedence, cache and dynamic allowlist and direct WikiSport checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -16,7 +16,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freef1-control-data-'));
 fs.writeFileSync(path.join(dataDir, 'stream-window.json'), JSON.stringify({
   active: true, reason: 'Migrated legacy setting', startedAt: 1_761_900_000_000, updatedAt: 1_761_900_100_000
 }));
-fs.writeFileSync(path.join(dataDir, 'race-control.json'), JSON.stringify({ news: [{ id: 'old', title: 'Old', body: 'remove' }], maintenance: { active: false, message: 'keep me', eta: 'Soon' } }));
+fs.writeFileSync(path.join(dataDir, 'race-control.json'), JSON.stringify({ news: [{ id: 'old', title: 'Old', body: 'remove' }], maintenance: { active: false, message: 'keep me', eta: 'Soon' }, sources: { disabled: ['wikisport'], removed: [], order: [] } }));
 fs.writeFileSync(path.join(dataDir, 'news.json'), JSON.stringify([{ title: 'legacy' }]));
 const base = `http://127.0.0.1:${port}`;
 const origin = base;
@@ -195,6 +195,7 @@ function nextConfigEvent(reader) {
     check('Page Control lists Other, Replays and Other streams', ['other','replays','other-streams'].every(id => dashboardConfig.body.pageList.some(page => page.id === id)));
     const sourceIds = Array.isArray(dashboardConfig.body.sourceList) ? dashboardConfig.body.sourceList.map(source => source.id) : [];
     check('Hakuna Sky Sports uses the clean embed', require('../stream-resolver').STREAM_SOURCES.find(source => source.id === 'sky-sports')?.links?.[0]?.url === 'https://hakunamatata5.org/sky-main-event/clean.html');
+    check('previously disabled WikiSport stays disabled across all split sources', ['wikisport','wikisport-2','wikisport-3','wikisport-4','wikisport-5'].every(id => dashboardConfig.body.sources.disabled.includes(id)));
     check('retired Sky and Fly 44 source IDs are not registered', !sourceIds.includes('sky-sports-f1') && !sourceIds.includes('sky-uk-2'));
     check('local-only state is explicitly marked non-durable', dashboardConfig.body.storage?.store === 'local' && dashboardConfig.body.storage?.durable === false);
 

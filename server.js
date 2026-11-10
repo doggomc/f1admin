@@ -98,7 +98,7 @@ function staticChipUrl(source) {
       ? `/api/stream/weellz-embed?stream=${source.weelo}`
       : `https://weellz.live/beta?stream=${source.weelo}`;
   }
-  const first = (source.links || []).find((entry) => entry && entry.url);
+  const first = (source.links || []).find((entry) => entry && entry.url && !(source.provider === 'wikisport' && entry.addressing === 'dynamic'));
   return first?.url || '';
 }
 
@@ -226,7 +226,7 @@ function normalizeOverrides(raw = {}) {
   return out;
 }
 
-function normalizeSources(raw = {}) {
+function normalizeSources(raw = {}, { migrateWiki = false } = {}) {
   const custom = [];
   const customIds = new Set();
   for (const item of Array.isArray(raw.custom) ? raw.custom.slice(0, 50) : []) {
@@ -241,8 +241,14 @@ function normalizeSources(raw = {}) {
   const ids = new Set([...FEED_SOURCE_IDS, ...customIds]);
   const disabled = Array.isArray(raw.disabled) ? raw.disabled.map(String).filter(id => ids.has(id)) : [];
   const removed = Array.isArray(raw.removed) ? raw.removed.map(String).filter(id => FEED_SOURCE_IDS.has(id)) : [];
+  /* Preserve the previous WikiSport visibility/removal when upgrading to separate feeds. */
+  if (migrateWiki && raw.wikiSplitVersion !== 1) {
+    const additions = [2, 3, 4, 5].map(n => `wikisport-${n}`);
+    if (disabled.includes('wikisport')) disabled.push(...additions);
+    if (removed.includes('wikisport')) removed.push(...additions);
+  }
   const order = Array.isArray(raw.order) ? raw.order.map(String).filter(id => ids.has(id)) : [];
-  return { disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
+  return { wikiSplitVersion: 1, disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
 }
 
 function normalizePages(raw = {}) {
@@ -322,7 +328,7 @@ function applySnapshot(raw) {
   if (!raw || typeof raw !== 'object') return;
   if (raw.maintenance) state.maintenance = normalizeMaintenance(raw.maintenance);
   if (raw.pages) state.pages = normalizePages(raw.pages);
-  if (raw.sources) state.sources = normalizeSources(raw.sources);
+  if (raw.sources) state.sources = normalizeSources(raw.sources, { migrateWiki: true });
   if (raw.streamOverride || raw.override) state.streamOverride = normalizeOverride(raw.streamOverride || raw.override);
   if (raw.streamWindow) state.streamWindow = normalizeStreamWindow(raw.streamWindow);
   if (raw.experimental !== undefined) state.experimental = normalizeExperimental(raw.experimental);
@@ -498,7 +504,7 @@ function applyLegacyLocalState() {
   const streamOverride = readLocalJson(LEGACY_FILES.streamOverride);
   const streamWindow = readLocalJson(LEGACY_FILES.streamWindow);
   if (maintenance) state.maintenance = normalizeMaintenance(maintenance);
-  if (sources) state.sources = normalizeSources(sources);
+  if (sources) state.sources = normalizeSources(sources, { migrateWiki: true });
   if (streamOverride) state.streamOverride = normalizeOverride(streamOverride);
   if (streamWindow) state.streamWindow = normalizeStreamWindow(streamWindow);
 }
@@ -541,7 +547,7 @@ async function loadSiteState() {
       if (values[0].streamWindow === undefined && values[5]) state.streamWindow = normalizeStreamWindow(values[5]);
     } else {
       if (values[1]) state.maintenance = normalizeMaintenance(values[1]);
-      if (values[3]) state.sources = normalizeSources(values[3]);
+      if (values[3]) state.sources = normalizeSources(values[3], { migrateWiki: true });
       if (values[4]) state.streamOverride = normalizeOverride(values[4]);
       if (values[5]) state.streamWindow = normalizeStreamWindow(values[5]);
     }

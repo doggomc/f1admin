@@ -108,7 +108,33 @@ const FETCH_TIMEOUT_MS = 9000;
 const HEALTH_TIMEOUT_MS = 6000;
 
 /* ehgembxe paths are opaque to the client, so they are allowlisted here instead. */
-const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089', 'ehgembxe/f596f98r-5690']);
+const WIKISPORT_PAGES = Object.freeze({
+  'wikisport/1': 'https://wikisport.info/strm/f1.php',
+  'wikisport/2': 'https://wikisport.info/fsl/f1s2.php',
+  'wikisport/3': 'https://wikisport.info/fsl/f1s3.php',
+  'wikisport/4': 'https://wikisport.info/fsl/f1s4.php',
+  'wikisport/5': 'https://wikisport.info/fsl/f1s5.php'
+});
+const DYNAMIC_ALLOWLIST = new Set(['ehgembxe/f596f98r-7758', 'ehgembxe/f596f98r-4089', 'ehgembxe/f596f98r-5690', ...Object.keys(WIKISPORT_PAGES)]);
+const WIKISPORT_TARGETS = Object.freeze({
+  'wikisport/1': ['siempreon.shop', /^\/fslivepro\.php$/i],
+  'wikisport/2': ['taifood-blog.asia', /^\/embed\/[a-z0-9_/%-]+$/i],
+  'wikisport/3': ['embedsports.me', /^\/streams\/[a-z0-9_-]+$/i],
+  'wikisport/4': ['thedaddy.li', /^\/stream\/stream-[0-9]+\.php$/i],
+  'wikisport/5': ['tvpclive.com', /^\/embed\/stream-[0-9]+\.php$/i]
+});
+function iframeSrc(html) {
+  return String(html || '').match(/<iframe\b[^>]*\ssrc\s*=\s*["']([^"']+)["']/i)?.[1] || '';
+}
+function wikiTarget(path, raw) {
+  const rule = WIKISPORT_TARGETS[path];
+  if (!rule) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.hostname !== rule[0] || url.port || url.username || url.password || url.hash || !rule[1].test(url.pathname)) return '';
+    return url.href;
+  } catch { return ''; }
+}
 
 /* The embdlol feeds whose commentary is not English. */
 const EMB_OTHER = ['dazn', 'skyit', 'skyde', 'german', 'spanish', 'italian'];
@@ -681,11 +707,12 @@ const STREAM_SOURCES = [
   { id: 'nova-stripped', label: 'Nova Sport CZ (PPV Stripped)', provider: 'ppv-stripped', stripped: true, minQuality: 720, tab: 'other', links: [
     { quality: 1080, taid: 31872 }, { quality: 1080, taid: 31861 }
   ] },
-  { id: 'wikisport', label: 'WikiSport', provider: 'wikisport', minQuality: 0, links: [
-    { quality: 0, url: 'https://wikisport.info/strm/f1.php' },
-    { quality: 0, url: 'https://wikisport.info/fsl/f1s2.php' },
-    { quality: 0, url: 'https://wikisport.info/fsl/f1s3.php' }
-  ] },
+  /* Resolve the real player behind each WikiSport wrapper on demand; no WikiSport page is embedded. */
+  ...[1, 2, 3, 4, 5].map(number => ({
+    id: number === 1 ? 'wikisport' : `wikisport-${number}`,
+    label: `WikiSport · Stream ${number}`, provider: 'wikisport', minQuality: 0,
+    links: [{ quality: 0, addressing: 'dynamic', url: `wikisport/${number}` }]
+  })),
   { id: 'westream', label: 'WeStream F1', provider: 'westream', minQuality: 0, links: [
     { quality: 0, url: 'https://westreamf1.com/westreamf1.php' }
   ] }
@@ -698,7 +725,6 @@ const MIRROR_KEYS = { skyf1: ['https://strmfree.st', 'https://streamfree.top'] }
 const PROVIDER_PROBES = [
   { provider: 'strmfree', label: 'strmfree 1080p', url: 'https://strmfree.st/embed/racing/skyf11080p' },
   { provider: 'streamfree', label: 'streamfree 1080p', url: 'https://streamfree.top/embed/racing/skyf11080p' },
-  { provider: 'wikisport', label: 'WikiSport 1', url: 'https://wikisport.info/strm/f1.php' },
   { provider: 'westream', label: 'WeStream', url: 'https://westreamf1.com/westreamf1.php' },
   { provider: 'hakunamatata', label: 'hakunamatata', url: 'https://hakunamatata5.org/sky-main-event/clean.html' },
   { provider: 'ehgembxe', label: 'ehgembxe', url: 'https://ehgembxe.cfd/f596f98r-4089', follow: true }
@@ -775,13 +801,17 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
      after the catalogue is consulted (taifood ids rotate per session, embdlol ids per race, and weelo
      publishes its own). This resolves the same way the player does and reports what it found. */
   async function chipAddresses() {
-    const [channels, uhdUrl, state, taifood] = await Promise.all([embdlolChannels(), resolveUhdUrl(), weeloState(), taifoodChannels().catch(() => ({}))]);
+    const [channels, uhdUrl, state, taifood, wiki] = await Promise.all([embdlolChannels(), resolveUhdUrl(), weeloState(), taifoodChannels().catch(() => ({})), Promise.all(Object.keys(WIKISPORT_PAGES).map(path => resolveDynamic(path)))]);
+    const wikiUrls = Object.fromEntries(Object.keys(WIKISPORT_PAGES).map((path, i) => [path, wiki[i]?.url || '']));
     return STREAM_SOURCES.map((source) => {
       const addresses = [];
       /* A fixed list: the shipped addresses, already ordered. A taid entry is a PPV id, which
          only becomes an address once the session is known, so it is shown as the id it will ask for. */
       for (const link of source.links || []) {
-        if (link.url) addresses.push({ url: link.url, quality: link.quality || 0, from: 'shipped' });
+        if (link.addressing === 'dynamic' && source.provider === 'wikisport') {
+          const resolved = wikiUrls[link.url];
+          if (resolved) addresses.push({ url: resolved, quality: link.quality || 0, from: 'provider embed' });
+        } else if (link.url) addresses.push({ url: link.url, quality: link.quality || 0, from: 'shipped' });
         else if (link.taid) addresses.push({ url: `ppv id ${link.taid}`, quality: link.quality || 0, from: 'ppv-id' });
       }
       /* What https://api.ppv.st/api/streams publishes for this chip right now (never 540p). */
@@ -1151,6 +1181,26 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
 
     const cached = dynamic.get(path);
     if (cached && Date.now() - cached.at < RESOLVE_TTL_MS) return { url: cached.url, cached: true };
+
+    if (WIKISPORT_PAGES[path]) {
+      try {
+        const first = await fetchWithTimeout(WIKISPORT_PAGES[path], { redirect: 'manual', timeoutMs: 4000 });
+        if (!first.ok) return { url: '', code: `provider-${first.status}` };
+        let src = iframeSrc(await first.text());
+        if (path === 'wikisport/1' && src === 'https://wikisport.info/strm/30.php') {
+          const nested = await fetchWithTimeout('https://wikisport.info/strm/30.php', { redirect: 'manual', timeoutMs: 4000 });
+          if (!nested.ok) return { url: '', code: `provider-${nested.status}` };
+          src = iframeSrc(await nested.text());
+        }
+        const url = wikiTarget(path, src);
+        if (!url) return { url: '', code: 'unsupported-embed' };
+        dynamic.set(path, { url, at: Date.now() });
+        return { url, cached: false };
+      } catch (error) {
+        log.warn?.('[streams] WikiSport source lookup failed:', error.message);
+        return { url: '', code: 'unreachable' };
+      }
+    }
 
     const origin = String(process.env.EHGEMBXE_ORIGIN || 'https://ehgembxe.cfd').replace(/\/+$/, '');
     const entry = `${origin}/${path.slice('ehgembxe/'.length)}`;

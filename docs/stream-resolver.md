@@ -19,3 +19,7 @@ Caches, timeouts and URL allowlists are declared near the top of the resolver. A
 Run `SITE_DIR=/path/to/frontend npm run check`. `scripts/stream-resolver-check.js` covers catalogue integrity, EMB duplicate precedence, 4K selection, caching and dynamic path rejection. The smoke tests exercise mock PPV, Weelo, EMB and StreamFree paths, playlist rewriting, admin reporting and relay policies. Frontend tests cover player selection separately.
 
 When testing real providers, distinguish (1) API or catalogue reachable, (2) player document reachable, and (3) actual video playback. Offline events, expiring tokens, CORS, provider restrictions and browser autoplay can prevent playback even when a shell answers HTTP 200. Do not claim a feed plays unless a browser playback check confirms it.
+
+## WikiSport discovery
+
+WikiSport's five feed pages are used only for discovery. `wikisport/1` through `wikisport/5` resolve to direct provider embeds, not the WikiSport page. The first path follows one fixed intermediate WikiSport page; all fetched pages, accepted destination hosts and destination paths are explicitly allowlisted, and redirects are not followed. If the provider changes an embed to an unsupported host, resolution fails closed until reviewed. The URL and whether a provider allows direct embedding can change between sessions; successful extraction is not proof of playback. Existing hidden/removed WikiSport settings are carried over when the old single feed is split into five.
