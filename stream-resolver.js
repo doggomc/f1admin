@@ -620,7 +620,7 @@ const STREAM_SOURCES = [
     { quality: 1080, url: 'ehgembxe/f596f98r-5690' }
   ] },
   { id: 'sky-sports', label: 'Sky Sports', provider: 'hakunamatata', minQuality: 0, links: [
-    { quality: 0, url: 'https://hakunamatata5.org/hakunamatata5.html' }
+    { quality: 0, url: 'https://hakunamatata5.org/sky-main-event/clean.html' }
   ] },
   /* PPV streams built from https://api.ppv.st/api/streams (main HD feed + non-540p substreams).
      Fallback ids rotate every session, so they are only a parachute under the live PPV catalogue. */
@@ -694,7 +694,7 @@ const PROVIDER_PROBES = [
   { provider: 'streamfree', label: 'streamfree 1080p', url: 'https://streamfree.top/embed/racing/skyf11080p' },
   { provider: 'wikisport', label: 'WikiSport 1', url: 'https://wikisport.info/strm/f1.php' },
   { provider: 'westream', label: 'WeStream', url: 'https://westreamf1.com/westreamf1.php' },
-  { provider: 'hakunamatata', label: 'hakunamatata', url: 'https://hakunamatata5.org/hakunamatata5.html' },
+  { provider: 'hakunamatata', label: 'hakunamatata', url: 'https://hakunamatata5.org/sky-main-event/clean.html' },
   { provider: 'ehgembxe', label: 'ehgembxe', url: 'https://ehgembxe.cfd/f596f98r-4089', follow: true }
 ];
 

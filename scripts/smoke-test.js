@@ -194,6 +194,7 @@ function nextConfigEvent(reader) {
     check('legacy Force Live state migrates into the admin config snapshot', dashboardConfig.body.streamWindow?.active === true && dashboardConfig.body.streamWindow?.reason === 'Migrated legacy setting');
     check('Page Control lists Other, Replays and Other streams', ['other','replays','other-streams'].every(id => dashboardConfig.body.pageList.some(page => page.id === id)));
     const sourceIds = Array.isArray(dashboardConfig.body.sourceList) ? dashboardConfig.body.sourceList.map(source => source.id) : [];
+    check('Hakuna Sky Sports uses the clean embed', require('../stream-resolver').STREAM_SOURCES.find(source => source.id === 'sky-sports')?.links?.[0]?.url === 'https://hakunamatata5.org/sky-main-event/clean.html');
     check('retired Sky and Fly 44 source IDs are not registered', !sourceIds.includes('sky-sports-f1') && !sourceIds.includes('sky-uk-2'));
     check('local-only state is explicitly marked non-durable', dashboardConfig.body.storage?.store === 'local' && dashboardConfig.body.storage?.durable === false);
 
