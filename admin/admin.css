@@ -1134,6 +1134,18 @@ button {
   color: var(--ink-2);
 }
 
+.addr-fallbacks { min-width: 0; max-width: 100%; }
+.addr-fallbacks[open] { flex-basis: 100%; }
+.addr-more { cursor: pointer; display: inline-block; padding: 5px 8px; }
+.addr-more::before { content: '▸ '; }
+.addr-fallbacks[open] .addr-more::before { content: '▾ '; }
+.addr-more:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.addr-fallback-list { margin: 8px 0 0; padding-left: 24px; }
+.addr-fallback-list li { padding: 4px 0; overflow-wrap: anywhere; }
+.addr-fallback-list .addr-from { margin-left: 6px; }
+.addr-fallback-url { font-family: var(--font-mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.addr-fallback-url:hover { color: var(--ink); }
+
 .addr-empty {
   color: var(--ink-3);
   font-size: 12px;

@@ -25,7 +25,7 @@ const siteConfigStreams = new Set();
 
 const PORT = Number(process.env.PORT) || 3000;
 const PRODUCTION = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
-const SITE_URL = String(process.env.SITE_URL || 'https://freef1.netlify.app').replace(/\/+$/, '');
+const SITE_URL = String(process.env.SITE_URL || 'https://freef1-live.vercel.app').replace(/\/+$/, '');
 const ADMIN_USER = String(process.env.ADMIN_USER || (PRODUCTION ? '' : 'admin')).trim();
 const ADMIN_PASS = String(process.env.ADMIN_PASS || (PRODUCTION ? '' : 'admin'));
 const ADMIN_SECRET = String(process.env.ADMIN_SECRET || (PRODUCTION ? '' : 'local-development-only-change-before-deploy'));

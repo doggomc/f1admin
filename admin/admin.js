@@ -32,14 +32,20 @@ let customDraft = {};
 let removedDraft = new Set();
 let linkReport = {};
 let linkCheckedAt = 0;
-let linkSiteUrl = 'https://freef1.netlify.app';
+const PUBLIC_SITE_URL = 'https://freef1-live.vercel.app';
+let linkSiteUrl = PUBLIC_SITE_URL;
+
+function publicSiteUrl(value) {
+  const url = String(value || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/freef1\.netlify\.app$/i.test(url) ? PUBLIC_SITE_URL : (url || PUBLIC_SITE_URL);
+}
 let sourceFilter = 'all';
 
 function fullStreamUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
-  if (value.startsWith('/')) return `${String(linkSiteUrl || 'https://freef1.netlify.app').replace(/\/+$/, '')}${value}`;
+  if (value.startsWith('/')) return `${publicSiteUrl(linkSiteUrl)}${value}`;
   return value;
 }
 let sourceQuery = '';
@@ -437,7 +443,7 @@ async function loadLinks({ quiet = false } = {}) {
   if (!quiet) setStatusLine('sourcesMessage', 'Checking live provider links…');
   try {
     const report = await api('/stream/links');
-    if (report.siteUrl) linkSiteUrl = report.siteUrl;
+    if (report.siteUrl) linkSiteUrl = publicSiteUrl(report.siteUrl);
     linkReport = {};
     for (const row of report.streams || []) linkReport[row.id] = row;
     linkCheckedAt = Number(report.checkedAt) || Date.now();
@@ -594,10 +600,35 @@ function renderSources() {
       address.innerHTML = '<span class="addr-empty">No live address reported right now — press “Refresh live links” during a session.</span>';
     }
     if (live?.shipped?.length > 1) {
-      const more = document.createElement('span');
-      more.className = 'addr-more';
-      more.textContent = `+${live.shipped.length - 1} fallback${live.shipped.length > 2 ? 's' : ''}`;
-      more.title = live.shipped.slice(1).map((e) => e.url).join('\n');
+      const more = document.createElement('details');
+      more.className = 'addr-fallbacks';
+      const summary = document.createElement('summary');
+      summary.className = 'addr-more';
+      summary.textContent = `+${live.shipped.length - 1} fallback${live.shipped.length > 2 ? 's' : ''}`;
+      const list = document.createElement('ol');
+      list.className = 'addr-fallback-list';
+      for (const entry of live.shipped.slice(1)) {
+        const item = document.createElement('li');
+        const url = fullStreamUrl(entry.url);
+        const isWebUrl = /^https?:\/\//i.test(url);
+        const value = document.createElement(isWebUrl ? 'a' : 'span');
+        value.className = 'addr-fallback-url';
+        value.textContent = url;
+        if (isWebUrl) {
+          value.href = url;
+          value.target = '_blank';
+          value.rel = 'noopener noreferrer';
+        }
+        item.append(value);
+        if (entry.from) {
+          const from = document.createElement('em');
+          from.className = 'addr-from';
+          from.textContent = entry.from;
+          item.append(from);
+        }
+        list.append(item);
+      }
+      more.append(summary, list);
       address.append(more);
     }
 
@@ -656,7 +687,7 @@ function renderConfig() {
 
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
-  if (payload.linkReport?.siteUrl) linkSiteUrl = payload.linkReport.siteUrl;
+  if (payload.linkReport?.siteUrl) linkSiteUrl = publicSiteUrl(payload.linkReport.siteUrl);
   if (Array.isArray(payload.linkReport?.streams)) {
     linkReport = {};
     for (const row of payload.linkReport.streams) linkReport[row.id] = row;

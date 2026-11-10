@@ -44,6 +44,15 @@ let snapshot = {
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
   experimental: { enabled: true }, sourceList: FEED_SOURCES,
+  linkReport: { siteUrl: 'https://freef1.netlify.app', streams: [
+    { id: FEED_SOURCES[0].id, online: true, current: 'https://custom.example/player', customUrl: 'https://custom.example/player', shipped: [
+      { url: 'https://primary.example/', from: 'shipped' },
+      { url: '/fallback?x=1&y=2', from: 'provider <safe>' },
+      { url: 'https://second.example/path', from: 'ppv-live' },
+      { url: 'javascript:alert(1)', from: 'ppv-id' }
+    ] },
+    { id: FEED_SOURCES[1].id, shipped: [{ url: 'https://single.example/' }] }
+  ] },
   storage: { store: 'upstash', durable: true, redisConfigured: true, localWritable: true }
 };
 const calls = [];
@@ -123,6 +132,18 @@ window.fetch = async (url, options = {}) => {
   check('initialization makes only status and one config request', calls.length === 2 && calls[0].pathname.endsWith('/status') && calls[1].pathname.endsWith('/config'), JSON.stringify(calls.map(call => call.pathname)));
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
+  const fallbackRow = $('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[0].id}"]`);
+  const disclosure = fallbackRow.querySelector('details.addr-fallbacks');
+  const fallbackItems = [...disclosure.querySelectorAll('li')];
+  check('fallback disclosure shows the correct count and begins closed', disclosure.querySelector('summary').textContent === '+3 fallbacks' && !disclosure.open);
+  check('fallback addresses are complete, ordered and safely rendered', fallbackItems.map(item => item.querySelector('.addr-fallback-url').textContent).join('|') === 'https://freef1-live.vercel.app/fallback?x=1&y=2|https://second.example/path|javascript:alert(1)' && fallbackItems[0].querySelector('em').textContent === 'provider <safe>' && !fallbackItems[0].querySelector('safe'));
+  check('only HTTP fallback addresses are links and open safely', fallbackItems.slice(0, 2).every(item => item.querySelector('a[target="_blank"][rel="noopener noreferrer"]')) && !fallbackItems[2].querySelector('a'));
+  disclosure.querySelector('summary').click();
+  check('fallback disclosure opens without a write', disclosure.open && writePayloads.length === 0);
+  disclosure.querySelector('summary').click();
+  check('fallback disclosure closes without a write', !disclosure.open && writePayloads.length === 0);
+  check('single or missing addresses have no fallback disclosure', !$('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[1].id}"] details`) && !$('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[2].id}"] details`));
+  check('admin public links use the current site', [...window.document.querySelectorAll('a[href*="freef1-live.vercel.app"]')].length >= 3 && ![...window.document.querySelectorAll('a')].some(a => a.href.includes('freef1.netlify.app')));
   check('source instructions say to save draft switch changes', /Changes remain a draft until you save[\s\S]*Save source settings/i.test(html));
   check('no visitor, analytics, SSE, or recurring API request is made', calls.every(call => !/visitor|analytics|events|status\?/.test(call.pathname)));
 
