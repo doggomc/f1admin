@@ -23,7 +23,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
 
 /* The live list, straight from the resolver - the dashboard renders exactly the controls the
    backend serves, so this check cannot go stale. */
-const FEED_SOURCES = require('../stream-resolver').STREAM_SOURCES.map(({ id, label }) => ({ id, label }));
+const FEED_SOURCES = require('../stream-resolver').STREAM_SOURCES.map(({ id, label, provider, tab, special, stripped }) => ({ id, label, provider, tab: tab || 'en', special, stripped }));
 const PAGE_LIST = [
   { id: 'cockpit', label: 'Cockpit', path: '/cockpit.html', description: 'Live stream player, sources & multiviewer' },
   { id: 'schedule', label: 'Schedule', path: '/schedule.html', description: 'Season calendar & weekend session times' },
@@ -160,6 +160,24 @@ window.fetch = async (url, options = {}) => {
 
   await new Promise(resolve => setTimeout(resolve, 120));
   check('idle dashboard does not poll or heartbeat', calls.length === 2, `${calls.length} request(s)`);
+
+  const group = id => $('sourceBulk').querySelector(`[data-group="${id}"]`);
+  const groupButton = (id, action) => group(id).querySelector(`button[aria-label^="${action}"]`);
+  const weeloIds = FEED_SOURCES.filter(s => s.provider === 'weelo').map(s => s.id);
+  const embIds = FEED_SOURCES.filter(s => s.provider === 'embdlol').map(s => s.id);
+  check('provider controls are visible and have independent state', $('sourceBulk').closest('details').open && weeloIds.length > 0 && embIds.length > 0 && Boolean(group('special')));
+  groupButton('weelo', 'Disable').click();
+  check('disabling Weelo changes only Weelo in the draft', weeloIds.every(id => $('sourceList').querySelector(`[data-source-id="${id}"] .source-switch`).getAttribute('aria-pressed') === 'false') && embIds.every(id => $('sourceList').querySelector(`[data-source-id="${id}"] .source-switch`).getAttribute('aria-pressed') === 'true') && groupButton('weelo', 'Disable').getAttribute('aria-pressed') === 'true' && writePayloads.length === 0);
+  groupButton('emb', 'Disable').click();
+  groupButton('weelo', 'Enable').click();
+  check('enabling Weelo leaves EMB disabled', weeloIds.every(id => $('sourceList').querySelector(`[data-source-id="${id}"] .source-switch`).getAttribute('aria-pressed') === 'true') && embIds.every(id => $('sourceList').querySelector(`[data-source-id="${id}"] .source-switch`).getAttribute('aria-pressed') === 'false'));
+  $('saveSources').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('saving group changes publishes only the selected provider', embIds.every(id => snapshot.sources.disabled.includes(id)) && weeloIds.every(id => !snapshot.sources.disabled.includes(id)));
+  groupButton('emb', 'Enable').click();
+  $('saveSources').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('provider groups can be restored independently', embIds.every(id => !snapshot.sources.disabled.includes(id)) && weeloIds.every(id => !snapshot.sources.disabled.includes(id)));
 
   const standingsSwitch = $('pageControlList').querySelector('[data-page-id="standings"] .page-switch');
   standingsSwitch.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

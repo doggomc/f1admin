@@ -371,16 +371,25 @@ const FILTER_GROUPS = [
 ];
 
 const BULK_GROUPS = [
-  ['emb', 'EMB'],
-  ['embdlol-stripped', 'EMB Stripped'],
-  ['weelo', 'Weelo'],
-  ['weelo-stripped', 'Weelo Stripped'],
-  ['ppv', 'PPV'],
-  ['ppv-stripped', 'PPV Stripped'],
-  ['strmfree', 'StreamFree'],
-  ['other', 'Other langs'],
+  ['emb', 'EMB'], ['embdlol-stripped', 'EMB Stripped'],
+  ['weelo', 'Weelo'], ['weelo-stripped', 'Weelo Stripped'],
+  ['ppv', 'PPV'], ['ppv-stripped', 'PPV Stripped'],
+  ['strmfree', 'StreamFree'], ['cdnlivetv', 'CDN Live TV'],
+  ['ehgembxe', 'EHG'], ['hakunamatata', 'Hakuna Matata'],
+  ['wikisport', 'WikiSport'], ['westream', 'WeStream'],
+  ['custom', 'Custom'], ['other', 'Other languages'], ['special', 'Special feeds'],
   ['all', 'Every source']
 ];
+
+function sourceMatchesBulkGroup(source, group) {
+  if (group === 'all') return true;
+  if (group === 'other') return source.tab === 'other';
+  if (group === 'special') return Boolean(source.special);
+  if (group === 'custom') return Boolean(source.isCustom);
+  if (group === 'emb') return source.provider === 'embdlol';
+  if (group === 'ppv') return source.provider === 'ppv' || source.provider === 'taifood';
+  return source.provider === group;
+}
 
 function renderFilterChips() {
   const bar = $('sourceFilters');
@@ -403,35 +412,47 @@ function renderFilterChips() {
     });
     (['all', 'on', 'off', 'live', 'custom'].includes(key) ? main : providers).append(chip);
   }
+  renderBulkGroups();
 }
 
 function renderBulkGroups() {
   const bar = $('sourceBulk');
   if (!bar) return;
   bar.replaceChildren();
+  const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   for (const [group, label] of BULK_GROUPS) {
-    const wrap = document.createElement('span');
+    const items = sources.filter(source => sourceMatchesBulkGroup(source, group));
+    if (!items.length && group !== 'all') continue;
+    const visible = items.filter(source => !sourceDraft.has(source.id)).length;
+    const wrap = document.createElement('div');
     wrap.className = 'bulk-group';
-    const title = document.createElement('span');
+    wrap.dataset.group = group;
+    const info = document.createElement('div');
+    info.className = 'bulk-group-info';
+    const title = document.createElement('strong');
     title.textContent = label;
-    const on = document.createElement('button');
-    on.type = 'button';
-    on.textContent = 'On';
-    on.title = `Enable all ${label} sources in the draft`;
-    on.addEventListener('click', () => bulkGroup(group, 'enable', label));
-    const off = document.createElement('button');
-    off.type = 'button';
-    off.textContent = 'Off';
-    off.title = `Disable all ${label} sources in the draft`;
-    off.addEventListener('click', () => bulkGroup(group, 'disable', label));
-    wrap.append(title, on, off);
+    const count = document.createElement('small');
+    count.textContent = `${visible} / ${items.length} visible`;
+    info.append(title, count);
+    const actions = document.createElement('div');
+    actions.className = 'bulk-group-actions';
+    for (const [action, text] of [['enable', 'On'], ['disable', 'Off']]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = text;
+      button.setAttribute('aria-label', `${action === 'enable' ? 'Enable' : 'Disable'} ${label} sources in draft`);
+      button.setAttribute('aria-pressed', String(items.length > 0 && (action === 'enable' ? visible === items.length : visible === 0)));
+      button.disabled = items.length === 0;
+      button.addEventListener('click', () => bulkGroup(group, action, label));
+      actions.append(button);
+    }
+    wrap.append(info, actions);
     bar.append(wrap);
   }
 }
 
-async function bulkGroup(group, action, label) {
-  const match = (source) => group === 'all' || (group === 'other' && source.tab === 'other') || (group === 'emb' && source.provider === 'embdlol') || (group === 'ppv' && (source.provider === 'ppv' || source.provider === 'taifood')) || source.provider === group;
-  const items = (config?.sourceList || []).filter(match);
+function bulkGroup(group, action, label) {
+  const items = (config?.sourceList || []).filter(source => sourceMatchesBulkGroup(source, group));
   for (const item of items) { if (action === 'disable') sourceDraft.add(item.id); else sourceDraft.delete(item.id); }
   renderFilterChips(); renderSources();
   setStatusLine('sourcesMessage', `${label}: ${items.length} updated in draft. Save to publish.`);
@@ -715,7 +736,6 @@ function renderConfig() {
   renderMaintenance();
   renderOverride();
   renderForceLive();
-  renderBulkGroups();
   renderFilterChips();
   renderSources();
   updateStorage();
