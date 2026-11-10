@@ -45,7 +45,8 @@ function fullStreamUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
-  if (value.startsWith('/')) return `${publicSiteUrl(linkSiteUrl)}${value}`;
+  if (/^\/api\/stream(?:\/|\?|$)/i.test(value)) return `${window.location.origin}${value}`;
+  if (value.startsWith('/') && !value.startsWith('//')) return `${publicSiteUrl(linkSiteUrl)}${value}`;
   return value;
 }
 let sourceQuery = '';
@@ -384,20 +385,23 @@ const BULK_GROUPS = [
 function renderFilterChips() {
   const bar = $('sourceFilters');
   if (!bar) return;
-  bar.replaceChildren();
+  const main = $('sourceMainFilters');
+  const providers = $('sourceProviderFilters');
+  main.replaceChildren(); providers.replaceChildren();
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
   for (const [key, label, match] of FILTER_GROUPS) {
     const count = sources.filter(match).length;
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = `filter-chip${sourceFilter === key ? ' is-active' : ''}`;
+    chip.setAttribute('aria-pressed', String(sourceFilter === key));
     chip.innerHTML = `${label} <em>${count}</em>`;
     chip.addEventListener('click', () => {
       sourceFilter = key;
       renderFilterChips();
       renderSources();
     });
-    bar.append(chip);
+    (['all', 'on', 'off', 'live', 'custom'].includes(key) ? main : providers).append(chip);
   }
 }
 
@@ -413,12 +417,12 @@ function renderBulkGroups() {
     const on = document.createElement('button');
     on.type = 'button';
     on.textContent = 'On';
-    on.title = `Enable all ${label} sources immediately`;
+    on.title = `Enable all ${label} sources in the draft`;
     on.addEventListener('click', () => bulkGroup(group, 'enable', label));
     const off = document.createElement('button');
     off.type = 'button';
     off.textContent = 'Off';
-    off.title = `Disable all ${label} sources immediately`;
+    off.title = `Disable all ${label} sources in the draft`;
     off.addEventListener('click', () => bulkGroup(group, 'disable', label));
     wrap.append(title, on, off);
     bar.append(wrap);
@@ -487,6 +491,10 @@ function renderSources() {
       : Boolean(source.special);
   });
 
+  $('sourceResults').textContent = `${visible.length} of ${sources.length} sources`;
+  $('sourceVisibleCount').textContent = String(sources.filter(s => !sourceDraft.has(s.id)).length);
+  $('sourceHiddenCount').textContent = String(sources.filter(s => sourceDraft.has(s.id)).length);
+  $('sourceLinkCount').textContent = String(sources.filter(s => linkReport[s.id]?.online || s.isCustom).length);
   if (!visible.length) {
     const empty = document.createElement('p');
     empty.className = 'section-note';
@@ -525,7 +533,7 @@ function renderSources() {
 
     const status = document.createElement('span');
     status.className = 'source-state';
-    status.textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
+    status.textContent = enabled ? 'Visible' : 'Hidden';
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -651,20 +659,50 @@ function renderSources() {
       setStatusLine('sourcesMessage', 'Source removed from draft. Save to publish.');
     });
     tools.append(remove);
-    row.append(name, id, status, button, custom, address, tools);
+    const heading = document.createElement('div');
+    heading.className = 'source-heading';
+    const identity = document.createElement('div');
+    identity.className = 'source-identity';
+    const meta = document.createElement('div');
+    meta.className = 'source-meta';
+    meta.append(id);
+    if (source.provider) {
+      const provider = document.createElement('span');
+      provider.textContent = source.provider;
+      meta.append(provider);
+    }
+    identity.append(name, meta);
+    const visibility = document.createElement('div');
+    visibility.className = 'source-visibility';
+    visibility.append(status, button);
+    heading.append(identity, visibility);
+
+    const addressLabel = document.createElement('span');
+    addressLabel.className = 'source-address-label';
+    addressLabel.textContent = 'SOURCE ADDRESS';
+    address.prepend(addressLabel);
+
+    const editor = document.createElement('details');
+    editor.className = 'source-editor';
+    const editorSummary = document.createElement('summary');
+    editorSummary.textContent = 'Edit source';
+    editor.append(editorSummary, custom, tools);
+    row.append(heading, address, editor);
     list.append(row);
   }
 }
 
 function renderSourcesFromDraft() {
   const sources = Array.isArray(config?.sourceList) ? config.sourceList : [];
+  $('sourceVisibleCount').textContent = String(sources.filter(s => !sourceDraft.has(s.id)).length);
+  $('sourceHiddenCount').textContent = String(sources.filter(s => sourceDraft.has(s.id)).length);
   const list = $('sourceList');
   [...list.children].forEach((row) => {
     const source = sources.find((entry) => entry.id === row.dataset.sourceId);
     if (!source) return;
     const enabled = !sourceDraft.has(source.id);
     row.classList.toggle('is-off', !enabled);
-    row.querySelector('.source-state').textContent = enabled ? (source.state ? String(source.state) : 'Available') : 'Hidden';
+    row.querySelector('.source-state').textContent = enabled ? 'Visible' : 'Hidden';
     const button = row.querySelector('.source-switch');
     button.classList.toggle('on', enabled);
     button.setAttribute('aria-pressed', String(enabled));

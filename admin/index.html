@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#0e0f11">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23E10600'/%3E%3Cpath d='M5 22L10.5 10H27L24.8 14.5H13.6L12.5 17H22.6L20.5 21.2H10.6L10.2 22H5Z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/admin/fonts.css?v=4">
-  <link rel="stylesheet" href="/admin/admin.css?v=5">
+  <link rel="stylesheet" href="/admin/admin.css?v=6">
 </head>
 <body>
   <section id="authScreen" class="auth-screen">
@@ -184,6 +184,11 @@
               <button class="btn btn-sm" id="refreshLinks" type="button">Refresh live links</button>
             </div>
             <p class="section-note">Add your own HTTPS feeds, edit names and links, reorder or remove sources, and choose what viewers see. Changes remain a draft until you save. Broadcasts and special feeds appear in separate cockpit groups.</p>
+            <div class="source-overview" aria-label="Source overview">
+              <div><strong id="sourceVisibleCount">0</strong><span>Visible</span></div>
+              <div><strong id="sourceHiddenCount">0</strong><span>Hidden</span></div>
+              <div><strong id="sourceLinkCount">0</strong><span>Has link</span></div>
+            </div>
             <details class="source-add">
               <summary>＋ Add a custom source</summary>
               <form id="addSourceForm" class="source-add-form">
@@ -195,11 +200,18 @@
             </details>
             <div class="source-toolbar">
               <input id="sourceSearch" class="source-search" type="search" placeholder="Filter by label, source ID, or provider…" autocomplete="off" aria-label="Filter stream sources">
-              <div id="sourceFilters" class="source-filters" role="group" aria-label="Filter sources"></div>
+              <div id="sourceFilters" role="group" aria-label="Filter sources">
+                <div id="sourceMainFilters" class="source-filters"></div>
+                <details class="source-provider-filters"><summary>Filter by provider or group</summary><div id="sourceProviderFilters" class="source-filters"></div></details>
+              </div>
             </div>
-            <div id="sourceBulk" class="source-bulk" role="group" aria-label="Bulk provider actions"></div>
+            <details class="source-bulk-panel">
+              <summary>Bulk visibility controls <span>Change groups in draft</span></summary>
+              <div id="sourceBulk" class="source-bulk" role="group" aria-label="Bulk provider actions"></div>
+            </details>
+            <div class="source-list-heading"><span>YOUR SOURCES</span><span id="sourceResults"></span></div>
             <div id="sourceList" class="source-list" aria-live="polite"></div>
-            <div class="action-row">
+            <div class="action-row source-actions">
               <button class="btn btn-primary" id="saveSources" type="button">Save source settings</button>
               <button class="btn" id="enableAllSources" type="button">Enable all</button>
               <button class="btn btn-ghost" id="clearCustomSources" type="button">Clear custom names &amp; links</button>
@@ -296,6 +308,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/admin.js?v=5" defer></script>
+  <script src="/admin/admin.js?v=6" defer></script>
 </body>
 </html>
