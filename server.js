@@ -1,4 +1,6 @@
 'use strict';
+const { createAutoResolver } = require('./auto-streams');
+const autoResolver = createAutoResolver();
 
 /* FreeF1 Race Control API
  * The public site is a static Netlify app. This Render process serves the
@@ -248,7 +250,7 @@ function normalizeSources(raw = {}, { migrateWiki = false } = {}) {
     if (removed.includes('wikisport')) removed.push(...additions);
   }
   const order = Array.isArray(raw.order) ? raw.order.map(String).filter(id => ids.has(id)) : [];
-  return { wikiSplitVersion: 1, disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
+  return { wikiSplitVersion: 1, autoStreams: raw.autoStreams === true, disabled: [...new Set(disabled)], removed: [...new Set(removed)], overrides: normalizeOverrides(raw.overrides), custom, order: [...new Set(order)], updatedAt: Number(raw.updatedAt) || null };
 }
 
 function normalizePages(raw = {}) {
@@ -913,6 +915,12 @@ app.get('/api/stream/health', async (_req, res) => {
    "is the backend in step with the site": one list, published by the server, matched 1:1 with the
    chips in netlifyf1/src/app.ts. Providers that publish mirrors (strmfree) contribute their
    current ones on top of the static pool. */
+app.get('/api/stream/auto', async (_req, res) => {
+  const result = await autoResolver.list();
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json(result);
+});
+
 app.get('/api/stream/sources', async (_req, res) => {
   try {
     const sources = await streamResolver.listSources();
@@ -1541,6 +1549,14 @@ app.post('/admin/api/stream/normal', async (_req, res) => {
   res.json({ success: true, override: state.streamOverride, ...persisted });
 });
 
+app.post('/admin/api/stream/auto', async (req, res) => {
+  await stateReady;
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean.' });
+  state.sources = normalizeSources({ ...state.sources, autoStreams: req.body.enabled, updatedAt: Date.now() });
+  const persisted = await persistState();
+  res.json({ success: true, sources: adminSourcesState(), ...persisted });
+});
+
 app.get('/admin/api/stream/sources', async (_req, res) => {
   await stateReady;
   res.json({ sources: FEED_SOURCES, ...state.sources, ...storageSummary() });
@@ -1574,7 +1590,7 @@ app.post('/admin/api/stream/catalogue', async (req, res) => {
   for (const [id, entry] of Object.entries(body.overrides)) {
     if (!FEED_SOURCE_IDS.has(id) || !entry || typeof entry !== 'object' || (entry.url && (!httpsUrl(entry.url) || String(entry.url).length > 500))) return res.status(400).json({ error: 'Custom links must be full HTTPS addresses.' });
   }
-  state.sources = normalizeSources({ ...body, updatedAt: Date.now() });
+  state.sources = normalizeSources({ ...body, autoStreams: state.sources.autoStreams, updatedAt: Date.now() });
   const persisted = await persistState();
   res.json({ success: true, sources: adminSourcesState(), sourceList: adminSourceList(), ...persisted });
 });

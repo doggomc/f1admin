@@ -1395,3 +1395,8 @@ button {
 .bulk-group-actions button { min-width: 34px; min-height: 30px; }
 .bulk-group-actions button[aria-pressed="true"] { color: #a1f0bd; border-color: rgba(37,211,102,.45); background: rgba(37,211,102,.14); }
 .bulk-group-actions button[aria-label^="Disable"][aria-pressed="true"] { color: var(--ink-2); border-color: var(--line-strong); background: var(--surface-3); }
+
+.auto-stream-control { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px; margin:16px 0; border:1px solid #ffffff24; border-radius:14px; background:#ffffff08; }
+.auto-stream-control strong { color:#fff; }
+.auto-stream-control p { color:#aaa; margin:5px 0 0; font-size:13px; }
+@media(max-width:520px) { .auto-stream-control { align-items:flex-start; flex-direction:column; } }

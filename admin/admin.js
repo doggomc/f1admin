@@ -738,6 +738,7 @@ function renderConfig() {
   renderForceLive();
   renderFilterChips();
   renderSources();
+  renderAutoStreams();
   updateStorage();
   updateKpiStrip();
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
@@ -917,6 +918,22 @@ $('forceLiveForm').addEventListener('submit', (event) => {
 
 $('disableForceLive').addEventListener('click', () => {
   saveForceLive(false);
+});
+
+function renderAutoStreams() {
+  const enabled = config?.sources?.autoStreams === true;
+  $('autoStreamsToggle').textContent = enabled ? 'Disable Auto-Streams' : 'Enable Auto-Streams';
+  $('autoStreamsToggle').setAttribute('aria-pressed', String(enabled));
+  $('autoStreamsDetail').textContent = enabled ? 'Automatic provider feeds are active. Your manual settings are preserved.' : 'Manual sources are active. Auto-Streams uses provider feeds without a video relay.';
+}
+$('autoStreamsToggle').addEventListener('click', async () => {
+  const button = $('autoStreamsToggle'); button.disabled = true;
+  try {
+    const result = await api('/stream/auto', { method: 'POST', body: JSON.stringify({ enabled: !config?.sources?.autoStreams }) });
+    config.sources = result.sources; renderAutoStreams();
+    acceptWrite(result, 'Stream mode updated.', 'sourcesMessage');
+  } catch (error) { setStatusLine('sourcesMessage', error.message, 'error'); }
+  finally { button.disabled = false; }
 });
 
 $('saveSources').addEventListener('click', async () => {
