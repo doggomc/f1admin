@@ -68,7 +68,7 @@ function parseEmb(data) {
   }
   return result;
 }
-function createAutoResolver({ fetcher = fetch, ttl = 120000, clock = Date.now } = {}) {
+function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now } = {}) {
   let cached=null, expires=0, pending=null;
   async function list() {
     if(cached && clock()<expires)return cached;

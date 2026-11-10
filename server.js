@@ -1,5 +1,7 @@
 'use strict';
 const { createAutoResolver } = require('./auto-streams');
+const { createRaceWeekend, resolveAutoStreams } = require('./race-weekend');
+const raceWeekend = createRaceWeekend();
 const autoResolver = createAutoResolver();
 
 /* FreeF1 Race Control API
@@ -916,9 +918,15 @@ app.get('/api/stream/health', async (_req, res) => {
    chips in netlifyf1/src/app.ts. Providers that publish mirrors (strmfree) contribute their
    current ones on top of the static pool. */
 app.get('/api/stream/auto', async (_req, res) => {
-  const result = await autoResolver.list();
-  res.setHeader('Cache-Control', 'public, max-age=60');
-  res.json(result);
+  await stateReady;
+  const result = await resolveAutoStreams({ enabled:state.sources.autoStreams === true, weekend:raceWeekend, resolver:autoResolver });
+  const window = result.window;
+  if (window.reason === 'mode-disabled') res.setHeader('Cache-Control', 'no-store');
+  else {
+    const remaining = Math.max(0, Math.floor((window.nextCheckAt - Date.now()) / 1000));
+    res.setHeader('Cache-Control', `public, max-age=${Math.min(window.active ? 600 : 60, remaining)}`);
+  }
+  return res.json(result);
 });
 
 app.get('/api/stream/sources', async (_req, res) => {

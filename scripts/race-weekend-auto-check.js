@@ -1,0 +1,20 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {createRaceWeekend,parseWeekendWindows,windowAt,resolveAutoStreams,REFRESH_MS}=require('../race-weekend');
+(async()=>{
+ const h=3600000, fp=Date.parse('2026-11-06T15:30:00Z'), race=Date.parse('2026-11-08T17:00:00Z');
+ const fixture={MRData:{RaceTable:{Races:[{raceName:'Brazil',date:'2026-11-08',time:'17:00:00Z',FirstPractice:{date:'2026-11-06',time:'15:30:00Z'}},{raceName:'Missing practice',date:'2026-11-15',time:'17:00:00Z'}]}}};
+ const windows=parseWeekendWindows(fixture);assert.equal(windows.length,1);assert.equal(windows[0].start,fp-3*h);assert.equal(windows[0].end,race+5*h);
+ assert.equal(windowAt(windows,fp-3*h-1).active,false);assert.equal(windowAt(windows,fp-3*h).active,true);
+ assert.equal(windowAt(windows,race+5*h-1).active,true);assert.equal(windowAt(windows,race+5*h).active,false);
+ assert.equal(windowAt(windows,fp).nextCheckAt,fp+REFRESH_MS);assert.equal(windowAt(windows,race+5*h-1).nextCheckAt,race+5*h);
+ let count=0, now=fp;const weekend=createRaceWeekend({clock:()=>now,fetcher:async()=>{count++;return {ok:true,text:async()=>JSON.stringify(fixture)}}});
+ await Promise.all([weekend.getWindow(),weekend.getWindow()]);await weekend.getWindow();assert.equal(count,1);
+ let calls=0;const resolver={list:async()=>{calls++;return {streams:[1],providers:[],updatedAt:now}}};
+ let r=await resolveAutoStreams({enabled:false,weekend,resolver,clock:()=>now});assert.equal(calls,0);assert.equal(r.window.reason,'mode-disabled');
+ now=fp-3*h-1;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,0);assert.equal(r.window.active,false);
+ now=fp;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,1);assert.equal(r.streams.length,1);
+ now=race+5*h;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,1);assert.equal(r.window.active,false);
+ let errors=0;const offline=createRaceWeekend({clock:()=>fp,fetcher:async()=>{errors++;throw Error('offline')}});await Promise.all([offline.getWindow(),offline.getWindow()]);await offline.getWindow();assert.equal(errors,1);assert.equal((await offline.getWindow()).reason,'schedule-unavailable');
+ console.log('Weekend boundaries, failure-safe gating, refresh and shared calendar passed');
+})().catch(e=>{console.error(e);process.exit(1)});

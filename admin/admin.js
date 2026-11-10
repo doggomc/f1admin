@@ -924,7 +924,7 @@ function renderAutoStreams() {
   const enabled = config?.sources?.autoStreams === true;
   $('autoStreamsToggle').textContent = enabled ? 'Disable Auto-Streams' : 'Enable Auto-Streams';
   $('autoStreamsToggle').setAttribute('aria-pressed', String(enabled));
-  $('autoStreamsDetail').textContent = enabled ? 'Automatic provider feeds are active. Your manual settings are preserved.' : 'Manual sources are active. Auto-Streams uses provider feeds without a video relay.';
+  $('autoStreamsDetail').textContent = enabled ? 'Automatic feeds refresh every 10 minutes from 3 hours before Practice 1 until about 3 hours after the race. Manual settings are preserved.' : 'Manual sources are active. Auto-Streams checks providers only during race weekends and uses no video relay.';
 }
 $('autoStreamsToggle').addEventListener('click', async () => {
   const button = $('autoStreamsToggle'); button.disabled = true;
