@@ -49,7 +49,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { renderAlertImage } = require('./alert-image');
+const { renderAlertImage, renderAlertsPanelImage } = require('./alert-image');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
@@ -243,6 +243,15 @@ function gridRows(st) {
     rows.push(row);
   }
   return rows;
+}
+
+async function alertsPanelPayload({ edit = false } = {}) {
+  return {
+    files: [{ attachment: await renderAlertsPanelImage(), name: 'freef1-alerts-panel.png', description: 'Stream Alerts. Get pinged when a session is starting. Use the button to opt in or out.' }],
+    components: [alertsRow()],
+    ...(edit ? { embeds: [], attachments: [] } : {}),
+    allowedMentions: { parse: [] },
+  };
 }
 
 function alertsRow() {
@@ -700,10 +709,26 @@ function start(deps) {
       }
     }
     await deleteStoredPanel(guild, st, 'alerts');
-    const msg = await channel.send({ embeds: [alertsPanelEmbed(deps.siteUrl)], components: [alertsRow()] });
+    const msg = await channel.send(await alertsPanelPayload());
     st.panels.alerts = { channelId: channel.id, messageId: msg.id };
     st.alerts = { channelId: (alertsChannel || channel).id, roleId: target.id };
     await store.save();
+  }
+
+  // Replace the saved embed in place without changing the configured channel, role, or memberships.
+  async function refreshAlertsPanel(guild, st) {
+    const saved = st.panels?.alerts;
+    if (!saved) return;
+    try {
+      const channel = guild.channels.cache.get(saved.channelId) || await guild.channels.fetch(saved.channelId);
+      const message = await channel?.messages.fetch(saved.messageId);
+      if (!message) return;
+      if (message.attachments?.some(attachment => attachment.name === 'freef1-alerts-panel.png')) return;
+      await message.edit(await alertsPanelPayload({ edit: true }));
+      log(`updated Stream Alerts panel for ${guild.name}`);
+    } catch (error) {
+      log(`Stream Alerts panel update failed for ${guild.name}; re-run /alertsmenu:`, error.message);
+    }
   }
 
   /* ── role toggling (buttons now, legacy reactions below) ── */
@@ -1145,6 +1170,7 @@ function start(deps) {
       const st = await store.guild(guild.id);
       discoverDriverRoles(guild, st);
       await refreshGridPanel(guild, st);
+      await refreshAlertsPanel(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 
@@ -1211,7 +1237,7 @@ module.exports = {
   start,
   _test: {
     driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed, testAlertPayload, imageAlertPayload,
-    gridRows, alertsRow,
+    gridRows, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,
     TEAMS, ALL_DRIVERS, OWNER_ID, DEFAULT_SOON_MINUTES, SESSION_MIN,

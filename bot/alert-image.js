@@ -41,9 +41,24 @@ function alertSvg(event, session, state) {
   <text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text>
   </g></svg>`;
 }
-async function renderAlertImage(event, session, state) {
-  const source = new Resvg(alertSvg(event, session, state), { font: { fontFiles: [FONT, BRAND_FONT], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' } }).render().asPng();
+function alertsPanelSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1c2027"/><stop offset="1" stop-color="#090b0e"/></linearGradient><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e10600"/><stop offset="1" stop-color="#8b0400"/></linearGradient><linearGradient id="red" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ff3b32"/><stop offset="1" stop-color="#a80000"/></linearGradient><clipPath id="clip"><rect width="1200" height="630" rx="28"/></clipPath></defs>
+  <g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/><path d="M750 -40 L1220 -40 L945 670 L475 670 Z" fill="#fff" opacity=".022"/><path d="M905 -40 L1040 -40 L765 670 L630 670 Z" fill="#fff" opacity=".025"/><path d="M1030 0 L1200 0 L1200 630 L785 630 Z" fill="#e10600" opacity=".065"/><path d="M0 0 H1200 V7 H0 Z" fill="url(#red)"/>
+  <rect x="74" y="75" width="78" height="78" rx="20" fill="url(#brand)"/><svg x="90" y="91" width="46" height="46" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg>
+  <text x="171" y="128" fill="#f8f8fa" font-family="Archivo, sans-serif" font-size="40" font-weight="700" letter-spacing="-.4">FreeF1</text><text x="1124" y="118" fill="#8f949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="700" letter-spacing="3">RACE CONTROL</text>
+  <rect x="74" y="195" width="310" height="48" rx="24" fill="#e10600" opacity=".16"/><circle cx="101" cy="219" r="6" fill="#ff5650"/><text x="120" y="226" fill="#ff7067" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="800" letter-spacing="2">STAY IN THE LOOP</text>
+  <text x="74" y="326" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="60" font-weight="800" letter-spacing="-1.6">Stream Alerts</text>
+  <text x="76" y="386" fill="#bec2cb" font-family="DejaVu Sans, sans-serif" font-size="27" font-weight="600">Get pinged when a session is starting.</text>
+  <path d="M76 427H1124" stroke="#ffffff" stroke-opacity=".1"/><text x="76" y="484" fill="#a6abb5" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">Use the button below to opt in or out.</text>
+  <text x="76" y="555" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">NEVER MISS LIGHTS OUT</text><text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text></g></svg>`;
+}
+function renderPng(svg) {
+  const source = new Resvg(svg, { font: { fontFiles: [FONT, BRAND_FONT], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' } }).render().asPng();
   // PNG re-encoding is lossless: only filtering/DEFLATE settings change.
   return PNG.sync.write(PNG.sync.read(source), { filterType: -1, deflateLevel: 9, deflateStrategy: constants.Z_DEFAULT_STRATEGY });
 }
-module.exports = { alertSvg, renderAlertImage, STATES };
+async function renderAlertImage(event, session, state) { return renderPng(alertSvg(event, session, state)); }
+let panelImage;
+async function renderAlertsPanelImage() { return panelImage || (panelImage = renderPng(alertsPanelSvg())); }
+module.exports = { alertSvg, renderAlertImage, alertsPanelSvg, renderAlertsPanelImage, STATES };

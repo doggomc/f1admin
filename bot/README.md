@@ -59,7 +59,7 @@ other privileged intents for this feature.
 |---|---|---|
 | `/emojis` | owner | Uploads missing driver-number and alert emojis; this also runs automatically when panels are posted. |
 | `/rolemenu` | owner | Posts one compact driver-grid embed with 22 buttons. Clicking a button toggles that driver's `NN \| CODE` role. Re-running replaces the previous panel. |
-| `/alertsmenu [channel] [role]` | owner | Posts the alert opt-in panel. It can bind a channel for session alerts and a role to ping. |
+| `/alertsmenu [channel] [role]` | owner | Posts the PNG alert opt-in panel with a toggle button. It can bind a channel for session alerts and a role to ping. |
 | `/config view` | owner | Shows the alerts channel and role, soon-alert lead time, and panel links. |
 | `/config set` | owner | Changes `alerts_channel`, `alerts_role`, or `soon_minutes` (1–120) without reposting panels. |
 | `/status` | owner | Shows the live/next session, bindings, panels, mapped roles, and storage backend. |
