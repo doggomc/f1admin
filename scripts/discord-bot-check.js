@@ -68,6 +68,15 @@ check('session-alert scheduler deduplicates across overlapping instances and edi
   /channel\.messages\.edit\(soonMsgId/.test(bot) &&
   /10008/.test(bot));
 const { _test: botTest } = require('../bot/discord-bot');
+const grid = botTest.driverPanelEmbed('https://freef1-live.vercel.app');
+const gridButtons = botTest.gridRows({ emojiIds: { '51': '123456789012345678' } }).flatMap(row => row.toJSON().components);
+check('Haas grid offers Camara 51 instead of Ocon and has a matching emoji asset',
+  botTest.ALL_DRIVERS.some(d => d.num === 51 && d.code === 'CAM' && d.team === 'Haas') &&
+  !botTest.ALL_DRIVERS.some(d => d.num === 31) && grid.description.includes('51 CAM') &&
+  gridButtons.some(b => b.custom_id === 'freef1:grid:51' && b.label === 'CAM' && b.emoji?.id === '123456789012345678') &&
+  !gridButtons.some(b => b.custom_id === 'freef1:grid:31') && fs.existsSync(path.join(root, 'assets/emoji/n51.png')));
+check('existing grid panel refreshes in place at startup without deleting roles',
+  /await refreshGridPanel\(guild, st\)/.test(bot) && /message\.edit\(\{ embeds: \[driverPanelEmbed/.test(bot) && /freef1:grid:31/.test(bot));
 const sampleWebsiteEmbed = botTest.websiteEmbed('https://freef1.netlify.app');
 check('/website embed has clickable blue FreeF1 title, tagline, link, hero image, and no footer',
   sampleWebsiteEmbed.title === 'FreeF1' &&

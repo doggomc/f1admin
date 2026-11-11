@@ -99,7 +99,7 @@ const TEAMS = [
   { name: 'Red Bull',        color: 0x1E41FF, drivers: [[3, 'VER'], [6, 'HAD']] },
   { name: 'Aston Martin',    color: 0x006F62, drivers: [[14, 'ALO'], [18, 'STR']] },
   { name: 'Williams',        color: 0x005AFF, drivers: [[23, 'ALB'], [55, 'SAI']] },
-  { name: 'Haas',            color: 0xE6E6E6, drivers: [[31, 'OCO'], [87, 'BEA']] },
+  { name: 'Haas',            color: 0xE6E6E6, drivers: [[51, 'CAM'], [87, 'BEA']] },
   { name: 'Audi',            color: 0xE62213, drivers: [[5, 'BOR'], [27, 'HUL']] },
   { name: 'Racing Bulls',    color: 0x6692FF, drivers: [[30, 'LAW'], [41, 'LIN']] },
   { name: 'Alpine',          color: 0xFF0080, drivers: [[10, 'GAS'], [43, 'COL']] },
@@ -585,8 +585,9 @@ function start(deps) {
   }
 
   /* ── emoji management ── */
-  async function ensureEmojis(guild, st) {
-    const wanted = [...ALL_DRIVERS.map(d => ({ key: String(d.num), file: `n${d.num}.png` })), { key: 'live', file: 'freef1live.png' }];
+  async function ensureEmojis(guild, st, onlyKeys = null) {
+    const all = [...ALL_DRIVERS.map(d => ({ key: String(d.num), file: `n${d.num}.png` })), { key: 'live', file: 'freef1live.png' }];
+    const wanted = onlyKeys ? all.filter(item => onlyKeys.includes(item.key)) : all;
     for (const w of wanted) {
       const name = w.key === 'live' ? 'freef1live' : `n${w.key}`;
       const existing = guild.emojis.cache.find(e => e.name === name);
@@ -608,7 +609,8 @@ function start(deps) {
     const map = {};
     for (const role of guild.roles.cache.values()) {
       const m = ROLE_NAME_RE.exec(role.name);
-      if (m) map[m[1]] = role.id;
+      // Never assign another driver's old role to Câmara just because the number matches.
+      if (m && (m[1] !== '51' || m[2] === 'CAM')) map[m[1]] = role.id;
     }
     st.driverRoles = map;
     return map;
@@ -638,6 +640,27 @@ function start(deps) {
     const msg = await channel.send({ embeds: [driverPanelEmbed(deps.siteUrl)], components: gridRows(st) });
     st.panels.grid = { channelId: channel.id, messageId: msg.id };
     await store.save();
+  }
+
+  // Refresh an existing panel in place when deploying the updated grid.
+  // Do not post a duplicate or remove any roles members already hold.
+  async function refreshGridPanel(guild, st) {
+    const saved = st.panels?.grid;
+    if (!saved) return;
+    try {
+      const channel = guild.channels.cache.get(saved.channelId) || await guild.channels.fetch(saved.channelId);
+      const message = await channel?.messages.fetch(saved.messageId);
+      if (!message) return;
+      const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
+      if (!hasOldOcon) return;
+      await ensureEmojis(guild, st, ['51']);
+      discoverDriverRoles(guild, st);
+      await message.edit({ embeds: [driverPanelEmbed(deps.siteUrl)], components: gridRows(st) });
+      await store.save();
+      log(`updated grid panel for ${guild.name}: 51 CAM replaces 31 OCO`);
+    } catch (error) {
+      log(`grid panel update failed for ${guild.name}; re-run /rolemenu:`, error.message);
+    }
   }
 
   async function postAlertsPanel(guild, channel, st, role, alertsChannel) {
@@ -1092,6 +1115,7 @@ function start(deps) {
     for (const guild of client.guilds.cache.values()) {
       const st = await store.guild(guild.id);
       discoverDriverRoles(guild, st);
+      await refreshGridPanel(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 

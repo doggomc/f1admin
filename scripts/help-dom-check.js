@@ -9,7 +9,7 @@ const { JSDOM } = require('jsdom');
 const siteDir = process.env.SITE_DIR || path.resolve(__dirname, '..', '..', 'netlifyf1');
 const pageHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
 const esbuild = require(require.resolve('esbuild', { paths: [siteDir] }));
-const helpScript = esbuild.buildSync({ entryPoints: [path.join(siteDir, 'src/help.ts')], bundle:true, write:false, format:'iife', platform:'browser', target:'es2022', define:{'import.meta.env.DEV':'false'} }).outputFiles[0].text;
+const helpScript = esbuild.buildSync({ entryPoints: [path.join(siteDir, 'src/help.ts')], bundle:true, write:false, format:'iife', platform:'browser', target:'es2022', loader:{'.css':'empty'}, define:{'import.meta.env.DEV':'false'} }).outputFiles[0].text;
 const indexHtml = fs.readFileSync(path.join(siteDir, 'index.html'), 'utf8');
 const STORAGE_KEY = 'freef1.help.ticket.v1';
 const pause = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
