@@ -14,7 +14,7 @@
     "check:security": "node scripts/security-check.js",
     "check:motion": "node scripts/motion-check.js",
     "check:csp": "node scripts/csp-check.js",
-    "check:discord": "node scripts/discord-bot-check.js",
+    "check:discord": "node scripts/discord-bot-check.js && node scripts/discord-test-alert-check.js",
     "smoke": "node scripts/smoke-test.js",
     "dom": "node scripts/admin-dom-check.js",
     "site": "npm run check:site",
@@ -26,6 +26,7 @@
     "node": ">=18.11"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "compression": "^1.8.1",
     "cookie-session": "^2.1.1",
     "discord.js": "^14.27.0",

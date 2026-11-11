@@ -20,7 +20,7 @@ const commandBlock = commandStart >= 0 && commandEnd > commandStart
 
 const results = [];
 const check = (label, pass, detail = '') => results.push({ label, pass: Boolean(pass), detail });
-const retainedCommands = ['rolemenu', 'alertsmenu', 'config', 'status', 'live', 'emojis', 'website'];
+const retainedCommands = ['rolemenu', 'alertsmenu', 'config', 'status', 'live', 'test', 'emojis', 'website'];
 
 const isRegistered = name => commandBlock.includes(`name: '${name}'`);
 check('command registration retains every non-relay bot command', Boolean(commandBlock) &&

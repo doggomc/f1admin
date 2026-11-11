@@ -49,6 +49,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { renderAlertImage } = require('./alert-image');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
@@ -166,6 +167,19 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
       // site link under Round / Format, which is where the old footer sat.
       { name: '\u200b', value: `**[${SITE_LABEL}](${siteUrl})**` },
     ],
+  };
+}
+
+async function testAlertPayload(event, session, state, siteUrl) {
+  const states = { start: 'STARTING SOON', live: 'LIVE NOW', end: 'SESSION ENDED' };
+  if (!Object.hasOwn(states, state)) throw new Error('Unknown test state');
+  const timestamp = Math.floor(session.ts / 1000);
+  const image = await renderAlertImage(event, session, state);
+  return {
+    content: `**TEST · ${states[state]}**\n${event.name} · ${session.name} · <t:${timestamp}:F>`,
+    files: [{ attachment: image, name: `freef1-test-${state}.png`, description: `Test alert: ${states[state]}, ${event.name}, ${session.name}` }],
+    components: [watchRow(siteUrl, state === 'end' ? 'Results on FreeF1' : 'Watch on FreeF1')],
+    allowedMentions: { parse: [] },
   };
 }
 
@@ -951,6 +965,14 @@ function start(deps) {
         },
       ],
     },
+    {
+      name: 'test', description: 'Owner: send a test image alert in this channel.', dm_permission: false,
+      options: [
+        { name: 'start', type: 1, description: 'Test the starting-soon image' },
+        { name: 'live', type: 1, description: 'Test the live image' },
+        { name: 'end', type: 1, description: 'Test the session-ended image' },
+      ],
+    },
     { name: 'status', description: 'Owner: bindings, panels, next session and store at a glance.', dm_permission: false },
     {
       name: 'live', description: 'Owner: test-fire an alert embed into the alerts channel.', dm_permission: false,
@@ -988,6 +1010,17 @@ function start(deps) {
 
       if (cmd === 'website') {
         return interaction.reply({ embeds: [websiteEmbed(deps.siteUrl, deps.discordInvite)], components: [websiteRow(deps.siteUrl, deps.discordInvite)] });
+      }
+
+      if (cmd === 'test') {
+        await interaction.deferReply({ ephemeral: true });
+        const state = interaction.options.getSubcommand();
+        const fallback = SEASON[SEASON.length - 1];
+        const found = liveSession() || nextSession() || (fallback && { ev: fallback, sess: fallback.sessions[fallback.sessions.length - 1] });
+        if (!found?.sess) return interaction.editReply({ content: 'No session is available for the test.' });
+        if (!interaction.channel?.send) return interaction.editReply({ content: 'I cannot send messages in this channel.' });
+        const msg = await interaction.channel.send(await testAlertPayload(found.ev, found.sess, state, deps.siteUrl));
+        return interaction.editReply({ content: `Test alert sent in this channel: ${msg.url}` });
       }
 
       const st = await store.guild(guild.id);
@@ -1181,7 +1214,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed,
+    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed, testAlertPayload,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,
