@@ -35,8 +35,8 @@ check('session-alert scheduler and bot presence remain',
 check('driver-role and alert-panel interactions remain',
   /async function handleGridButton\s*\(/.test(bot) && /async function handleAlertsButton\s*\(/.test(bot) &&
   /client\.on\(Events\.MessageReactionAdd/.test(bot));
-check('website and session-alert link embeds remain',
-  /function websiteEmbed\s*\(/.test(bot) && /function sessionEmbed\s*\(/.test(bot));
+check('website image and session-alert helper remain',
+  /function websitePayload\s*\(/.test(bot) && /function sessionEmbed\s*\(/.test(bot));
 check('voice relay runtime and slash command are removed',
   !/relayModule|\brelay\.(?:start|stop|status|setPaused|stopAll)|name:\s*['"]watchparty['"]|GuildVoiceStates|VoiceStateUpdate/.test(bot));
 check('voice dependencies and deployment settings are removed',
@@ -77,14 +77,9 @@ check('Haas grid offers Camara 51 instead of Ocon and has a matching emoji asset
   !gridButtons.some(b => b.custom_id === 'freef1:grid:31') && fs.existsSync(path.join(root, 'assets/emoji/n51.png')));
 check('existing grid panel refreshes in place at startup without deleting roles',
   /await refreshGridPanel\(guild, st\)/.test(bot) && /message\.edit\(\{ embeds: \[driverPanelEmbed/.test(bot) && /freef1:grid:31/.test(bot));
-const sampleWebsiteEmbed = botTest.websiteEmbed('https://freef1.netlify.app');
-check('/website embed has clickable blue FreeF1 title, tagline, link, hero image, and no footer',
-  sampleWebsiteEmbed.title === 'FreeF1' &&
-  sampleWebsiteEmbed.url === 'https://freef1.netlify.app' &&
-  sampleWebsiteEmbed.description === 'One Cockpit, Every Session, All for Free.\n\n**[freef1.netlify.app](https://freef1.netlify.app)**' &&
-  !sampleWebsiteEmbed.footer &&
-  !sampleWebsiteEmbed.fields &&
-  sampleWebsiteEmbed.image?.url === 'https://freef1.netlify.app/assets/hero-freef1.jpg');
+check('/website sends a PNG with the existing link buttons',
+  /await interaction\.deferReply\(\)/.test(bot) && /interaction\.editReply\(await websitePayload\(/.test(bot) &&
+  /freef1-website\.png/.test(bot) && /websiteRow\(siteUrl, inviteUrl\)/.test(bot));
 check('ticket staff role 1566540793794134226 is granted access on new and existing ticket channels',
   Array.isArray(botTest.DEFAULT_TICKET_STAFF_ROLE_IDS) &&
   botTest.DEFAULT_TICKET_STAFF_ROLE_IDS.includes('1566540793794134226') &&

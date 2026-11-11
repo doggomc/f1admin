@@ -65,7 +65,7 @@ other privileged intents for this feature.
 | `/status` | owner | Shows the live/next session, bindings, panels, mapped roles, and storage backend. |
 | `/test start`, `/test live`, `/test end` | owner | Posts a clearly labelled image test in the channel where the command is run, using the current or next session. It does not ping roles or change real alert history. |
 | `/live [round] [session] [state]` | owner | Test-posts an alert image (`soon`, `live`, or `ended`) to the alerts channel without pinging a role. An invalid round or slug is reported rather than silently choosing another session. |
-| `/website` | everyone | Posts the FreeF1 link embed with site and Discord invite buttons. |
+| `/website` | everyone | Posts a lightweight PNG with site and Discord invite buttons. |
 
 Scheduled alerts use the same image design as the test commands. The bot needs permission to send messages and attach files in the alerts and test channels. The test commands do not ping roles or modify the scheduled alert history.
 

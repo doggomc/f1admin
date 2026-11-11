@@ -30,7 +30,7 @@
      /live        owner — test-fires an alert image (any state:
                           soon / live / ended) into the alerts channel.
      /emojis      owner — uploads any missing custom number emojis.
-     /website     everyone — stylish link embed for the site.
+     /website     everyone — lightweight image and links for the site.
      scheduler    — per session: STARTING SOON (amber) image + role
                     ping at T-minus config; the same message edits
                     itself into LIVE NOW (green) at lights out, and
@@ -49,7 +49,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { renderAlertImage, renderAlertsPanelImage } = require('./alert-image');
+const { renderAlertImage, renderAlertsPanelImage, renderWebsiteImage } = require('./alert-image');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
@@ -196,18 +196,11 @@ async function testAlertPayload(event, session, state, siteUrl) {
   };
 }
 
-function websiteEmbed(siteUrl) {
-  const cleanUrl = String(siteUrl || `https://${SITE_LABEL}`).replace(/\/+$/, '');
+async function websitePayload(siteUrl, inviteUrl) {
   return {
-    color: FREEF1_RED,
-    title: 'FreeF1',
-    url: cleanUrl,
-    description:
-      `One Cockpit, Every Session, All for Free.\n\n` +
-      `**[${SITE_LABEL}](${cleanUrl})**`,
-    image: {
-      url: `${cleanUrl}/assets/hero-freef1.jpg`,
-    },
+    files: [{ attachment: await renderWebsiteImage(), name: 'freef1-website.png', description: 'FreeF1: One Cockpit. Every Session. All for Free.' }],
+    components: [websiteRow(siteUrl, inviteUrl)],
+    allowedMentions: { parse: [] },
   };
 }
 
@@ -1013,7 +1006,7 @@ function start(deps) {
       ],
     },
     { name: 'emojis', description: 'Owner: upload any missing number emojis to this server.', dm_permission: false },
-    { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
+    { name: 'website', description: 'The FreeF1 stream hub and links.' },
   ];
 
   /* ── interactions ── */
@@ -1032,7 +1025,8 @@ function start(deps) {
       const guild = interaction.guild;
 
       if (cmd === 'website') {
-        return interaction.reply({ embeds: [websiteEmbed(deps.siteUrl, deps.discordInvite)], components: [websiteRow(deps.siteUrl, deps.discordInvite)] });
+        await interaction.deferReply();
+        return interaction.editReply(await websitePayload(deps.siteUrl, deps.discordInvite));
       }
 
       if (cmd === 'test') {
@@ -1236,7 +1230,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed, testAlertPayload, imageAlertPayload,
+    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
     gridRows, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,

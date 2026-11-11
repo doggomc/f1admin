@@ -53,6 +53,20 @@ function alertsPanelSvg() {
   <path d="M76 427H1124" stroke="#ffffff" stroke-opacity=".1"/><text x="76" y="484" fill="#a6abb5" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">Use the button below to opt in or out.</text>
   <text x="76" y="555" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">NEVER MISS LIGHTS OUT</text><text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text></g></svg>`;
 }
+function websiteSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="280" viewBox="0 0 720 280">
+  <rect width="720" height="280" rx="20" fill="#101216"/>
+  <rect width="720" height="5" fill="#e10600"/>
+  <rect x="43" y="38" width="56" height="56" rx="14" fill="#d00600"/>
+  <svg x="54" y="49" width="34" height="34" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg>
+  <text x="114" y="78" fill="#f7f8fa" font-family="Archivo, sans-serif" font-size="37" font-weight="700">FreeF1</text>
+  <text x="44" y="153" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="25" font-weight="700">One Cockpit. Every Session.</text>
+  <text x="44" y="190" fill="#b5b9c1" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">All for Free.</text>
+  <path d="M44 219H676" stroke="#303238"/>
+  <text x="44" y="251" fill="#9298a4" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="700">freef1-live.vercel.app</text>
+  </svg>`;
+}
+
 function renderPng(svg) {
   const source = new Resvg(svg, { font: { fontFiles: [FONT, BRAND_FONT], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' } }).render().asPng();
   // PNG re-encoding is lossless: only filtering/DEFLATE settings change.
@@ -61,4 +75,6 @@ function renderPng(svg) {
 async function renderAlertImage(event, session, state) { return renderPng(alertSvg(event, session, state)); }
 let panelImage;
 async function renderAlertsPanelImage() { return panelImage || (panelImage = renderPng(alertsPanelSvg())); }
-module.exports = { alertSvg, renderAlertImage, alertsPanelSvg, renderAlertsPanelImage, STATES };
+let websiteImage;
+async function renderWebsiteImage() { return websiteImage || (websiteImage = renderPng(websiteSvg())); }
+module.exports = { alertSvg, renderAlertImage, alertsPanelSvg, renderAlertsPanelImage, websiteSvg, renderWebsiteImage, STATES };
