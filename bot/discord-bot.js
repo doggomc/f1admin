@@ -27,11 +27,11 @@
                           Everything editable without re-posting panels.
      /status      owner — one glance at bindings, panels, next session,
                           and store backend.
-     /live        owner — test-fires an alert embed (any state:
+     /live        owner — test-fires an alert image (any state:
                           soon / live / ended) into the alerts channel.
      /emojis      owner — uploads any missing custom number emojis.
      /website     everyone — stylish link embed for the site.
-     scheduler    — per session: STARTING SOON (amber) embed + role
+     scheduler    — per session: STARTING SOON (amber) image + role
                     ping at T-minus config; the same message edits
                     itself into LIVE NOW (green) at lights out, and
                     into ENDED (red) at the chequered flag. Deduped
@@ -167,6 +167,19 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
       // site link under Round / Format, which is where the old footer sat.
       { name: '\u200b', value: `**[${SITE_LABEL}](${siteUrl})**` },
     ],
+  };
+}
+
+/* Only the image and configured role are sent in scheduled alerts. Edits
+   explicitly clear previous embeds/attachments and never re-ping the role. */
+async function imageAlertPayload(event, session, state, roleId, { edit = false, ping = false } = {}) {
+  const image = await renderAlertImage(event, session, state);
+  const labels = { start: 'starting soon', live: 'live now', end: 'session ended' };
+  return {
+    content: roleId ? `<@&${roleId}>` : '',
+    files: [{ attachment: image, name: `freef1-${state}.png`, description: `${event.name}, ${session.name}: ${labels[state]}` }],
+    ...(edit ? { embeds: [], components: [], attachments: [] } : {}),
+    allowedMentions: { parse: [], roles: ping && roleId ? [String(roleId)] : [] },
   };
 }
 
@@ -851,13 +864,7 @@ function start(deps) {
             continue;
           }
           try {
-            const content = st.alerts.roleId ? `<@&${st.alerts.roleId}>` : '';
-            const msg = await channel.send({
-              content,
-              embeds: [sessionEmbed(ev, sess, 'soon', deps.siteUrl, soonMin)],
-              components: [watchRow(deps.siteUrl)],
-              allowedMentions: { roles: st.alerts.roleId ? [st.alerts.roleId] : [] },
-            });
+            const msg = await channel.send(await imageAlertPayload(ev, sess, 'start', st.alerts.roleId, { ping: true }));
             st.sent[keySoon] = { messageId: msg.id, at: now };
             log(`soon alert: ${ev.slug}/${sess.slug}`);
             await store.save();
@@ -880,10 +887,7 @@ function start(deps) {
               try {
                 // Edit directly by ID (no messages.fetch needed, so missing
                 // ReadMessageHistory never causes a duplicate live message).
-                const edited = await channel.messages.edit(soonMsgId, {
-                  embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)],
-                  components: [watchRow(deps.siteUrl)],
-                });
+                const edited = await channel.messages.edit(soonMsgId, await imageAlertPayload(ev, sess, 'live', st.alerts.roleId, { edit: true }));
                 liveMsgId = (edited && edited.id) || soonMsgId;
               } catch (editErr) {
                 // Only post a replacement if Discord confirms the soon message
@@ -893,10 +897,7 @@ function start(deps) {
               }
             }
             if (!liveMsgId) {
-              const msg = await channel.send({
-                embeds: [sessionEmbed(ev, sess, 'live', deps.siteUrl, soonMin)],
-                components: [watchRow(deps.siteUrl)],
-              });
+              const msg = await channel.send(await imageAlertPayload(ev, sess, 'live', st.alerts.roleId, { ping: true }));
               liveMsgId = msg.id;
             }
             st.sent[keyLive] = { messageId: liveMsgId, at: now };
@@ -919,10 +920,7 @@ function start(deps) {
           st.sent[keyEnded] = { messageId: existingId || 'none', at: now };
           if (existingId && existingId !== 'none') {
             try {
-              await channel.messages.edit(existingId, {
-                embeds: [sessionEmbed(ev, sess, 'ended', deps.siteUrl, soonMin)],
-                components: [watchRow(deps.siteUrl, 'Results on FreeF1')],
-              });
+              await channel.messages.edit(existingId, await imageAlertPayload(ev, sess, 'end', st.alerts.roleId, { edit: true }));
               log(`ended alert: ${ev.slug}/${sess.slug}`);
             } catch (e) { log('ended edit failed (message gone?):', e.message); }
           }
@@ -975,12 +973,12 @@ function start(deps) {
     },
     { name: 'status', description: 'Owner: bindings, panels, next session and store at a glance.', dm_permission: false },
     {
-      name: 'live', description: 'Owner: test-fire an alert embed into the alerts channel.', dm_permission: false,
+      name: 'live', description: 'Owner: test-fire an image alert into the alerts channel.', dm_permission: false,
       options: [
         { type: 4, name: 'round', description: 'Round number (defaults to current/next)', required: false },
         { type: 3, name: 'session', description: 'Session slug: fp1 fp2 fp3 sprint-qualifying sprint qualifying race', required: false },
         {
-          type: 3, name: 'state', description: 'Which embed state to fire (default live)', required: false,
+          type: 3, name: 'state', description: 'Which image state to fire (default live)', required: false,
           choices: [
             { name: 'starting soon', value: 'soon' },
             { name: 'live now', value: 'live' },
@@ -1114,12 +1112,10 @@ function start(deps) {
         const state = interaction.options.getString('state') || 'live';
         const bound = st.alerts && guild.channels.cache.get(st.alerts.channelId);
         const alertsCh = bound || interaction.channel;
-        const msg = await alertsCh.send({
-          embeds: [sessionEmbed(found.ev, found.sess, state, deps.siteUrl, soonMinutesFor(st))],
-          components: [watchRow(deps.siteUrl, state === 'ended' ? 'Results on FreeF1' : 'Watch on FreeF1')],
-        });
+        const imageState = state === 'soon' ? 'start' : state === 'ended' ? 'end' : 'live';
+        const msg = await alertsCh.send(await imageAlertPayload(found.ev, found.sess, imageState, null));
         const where = bound ? String(alertsCh) : `${alertsCh} (no alerts channel set - posted here)`;
-        return interaction.editReply({ content: `Posted ${state} embed for ${found.ev.name} · ${found.sess.name} to ${where}: ${msg.url}` });
+        return interaction.editReply({ content: `Posted ${state} image for ${found.ev.name} · ${found.sess.name} to ${where}: ${msg.url}` });
       }
     } catch (e) {
       log('command failed:', e.message);
@@ -1214,7 +1210,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed, testAlertPayload,
+    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed, testAlertPayload, imageAlertPayload,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,

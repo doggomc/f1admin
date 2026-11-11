@@ -64,10 +64,10 @@ other privileged intents for this feature.
 | `/config set` | owner | Changes `alerts_channel`, `alerts_role`, or `soon_minutes` (1–120) without reposting panels. |
 | `/status` | owner | Shows the live/next session, bindings, panels, mapped roles, and storage backend. |
 | `/test start`, `/test live`, `/test end` | owner | Posts a clearly labelled image test in the channel where the command is run, using the current or next session. It does not ping roles or change real alert history. |
-| `/live [round] [session] [state]` | owner | Test-posts an alert embed (`soon`, `live`, or `ended`) to the alerts channel. An invalid round or slug is reported rather than silently choosing another session. |
+| `/live [round] [session] [state]` | owner | Test-posts an alert image (`soon`, `live`, or `ended`) to the alerts channel without pinging a role. An invalid round or slug is reported rather than silently choosing another session. |
 | `/website` | everyone | Posts the FreeF1 link embed with site and Discord invite buttons. |
 
-The image commands are previews only: scheduled session alerts still use their existing embeds until the image design is approved. The bot needs permission to send messages and attach files in the test channel.
+Scheduled alerts use the same image design as the test commands. The bot needs permission to send messages and attach files in the alerts and test channels. The test commands do not ping roles or modify the scheduled alert history.
 
 ### Help tickets (optional; disabled by default)
 
@@ -112,11 +112,11 @@ Every 15 seconds, the scheduler checks the 2026 season in
 `bot/schedule-2026.json` (keep it in step with the frontend schedule):
 
 - **T−N minutes** (10 by default; configurable with
-  `/config set soon_minutes:`) posts an amber `STARTING SOON` embed and pings
-the alerts role. The embed includes a **Watch on FreeF1** link.
+  `/config set soon_minutes:`) posts an amber `STARTING SOON` image and pings
+the alerts role. The image includes the FreeF1 site address.
 - **Lights out** edits that same message to green `LIVE NOW`; it does not send a
-second ping or another message.
-- **Chequered flag** edits it to red `ENDED`. End times are estimated per
+second ping or another message. If no earlier message exists, it posts a new image and pings the configured role.
+- **Chequered flag** edits it to a red `SESSION ENDED` image. End times are estimated per
 session because the schedule contains start times only. The bot only edits a
 message it sent; it does not post a missed session as newly ended.
 - While a session is live, the bot's activity shows the Grand Prix name.

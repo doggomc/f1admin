@@ -3,6 +3,8 @@
 /* Render locally: no image-service requests and no video traffic. */
 const path = require('path');
 const { Resvg } = require('@resvg/resvg-js');
+const { PNG } = require('pngjs');
+const { constants } = require('zlib');
 const FONT = path.join(__dirname, '..', 'assets', 'fonts', 'DejaVuSans-Bold.ttf');
 const BRAND_FONT = path.join(__dirname, '..', 'assets', 'fonts', 'Archivo-Bold.ttf');
 const STATES = Object.freeze({
@@ -40,6 +42,8 @@ function alertSvg(event, session, state) {
   </g></svg>`;
 }
 async function renderAlertImage(event, session, state) {
-  return new Resvg(alertSvg(event, session, state), { font: { fontFiles: [FONT, BRAND_FONT], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' } }).render().asPng();
+  const source = new Resvg(alertSvg(event, session, state), { font: { fontFiles: [FONT, BRAND_FONT], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' } }).render().asPng();
+  // PNG re-encoding is lossless: only filtering/DEFLATE settings change.
+  return PNG.sync.write(PNG.sync.read(source), { filterType: -1, deflateLevel: 9, deflateStrategy: constants.Z_DEFAULT_STRATEGY });
 }
 module.exports = { alertSvg, renderAlertImage, STATES };

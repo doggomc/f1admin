@@ -15,7 +15,10 @@ Module._load = function(request, parent, isMain) {
   return originalLoad.apply(this, arguments);
 };
 const bot = require('../bot/discord-bot');
-const { alertSvg } = require('../bot/alert-image');
+const { alertSvg, renderAlertImage } = require('../bot/alert-image');
+const { Resvg } = require('@resvg/resvg-js');
+const { PNG } = require('pngjs');
+const path = require('node:path');
 Module._load = originalLoad;
 (async () => {
   const instance = bot.start({ ownerId:'owner', token:'test', siteUrl:'https://freef1-live.vercel.app', log:()=>{} });
@@ -23,6 +26,25 @@ Module._load = originalLoad;
     const logo = alertSvg({name:'Test Grand Prix',round:1},{name:'Race'},'live');
     assert(logo.includes('M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z'));
     assert(logo.includes('M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z'));
+    const event = { name:'São Paulo Grand Prix', round:20, locality:'São Paulo', country:'Brazil' };
+    const session = {name:'Race', ts:Date.now()};
+    const fonts = ['DejaVuSans-Bold.ttf', 'Archivo-Bold.ttf'].map(f => path.join(__dirname, '..', 'assets', 'fonts', f));
+    for (const state of ['start','live','end']) {
+      const raw = new Resvg(alertSvg(event, session, state), { font: { fontFiles:fonts, loadSystemFonts:false, defaultFontFamily:'DejaVu Sans' } }).render().asPng();
+      const compressed = await renderAlertImage(event, session, state);
+      assert(compressed.length < raw.length, 'PNG optimization reduces file size');
+      assert.deepEqual(PNG.sync.read(compressed).data, PNG.sync.read(raw).data, 'all decoded pixels are identical');
+      const sent = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{ping:true});
+      assert.equal(sent.content, '<@&123456789012345678>');
+      assert.deepEqual(sent.allowedMentions,{parse:[],roles:['123456789012345678']});
+      assert.equal(sent.embeds,undefined); assert.equal(sent.components,undefined); assert.equal(sent.files.length,1);
+      const edit = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{edit:true});
+      assert.deepEqual(edit.allowedMentions,{parse:[],roles:[]});
+      assert.deepEqual(edit.embeds,[]); assert.deepEqual(edit.components,[]); assert.deepEqual(edit.attachments,[]);
+      const noRole = await bot._test.imageAlertPayload(event,session,state,null,{ping:true});
+      assert.equal(noRole.content,''); assert.deepEqual(noRole.allowedMentions,{parse:[],roles:[]});
+      console.log(state, 'optimized', raw.length, '→', compressed.length, 'bytes, pixel-identical');
+    }
     for (const state of ['start','live','end']) {
       let sent = [], deferred, reply;
       let resolveDone; const done = new Promise(resolve => { resolveDone = resolve; });
