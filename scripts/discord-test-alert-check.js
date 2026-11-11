@@ -15,10 +15,14 @@ Module._load = function(request, parent, isMain) {
   return originalLoad.apply(this, arguments);
 };
 const bot = require('../bot/discord-bot');
+const { alertSvg } = require('../bot/alert-image');
 Module._load = originalLoad;
 (async () => {
   const instance = bot.start({ ownerId:'owner', token:'test', siteUrl:'https://freef1-live.vercel.app', log:()=>{} });
   try {
+    const logo = alertSvg({name:'Test Grand Prix',round:1},{name:'Race'},'live');
+    assert(logo.includes('M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z'));
+    assert(logo.includes('M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z'));
     for (const state of ['start','live','end']) {
       let sent = [], deferred, reply;
       let resolveDone; const done = new Promise(resolve => { resolveDone = resolve; });
