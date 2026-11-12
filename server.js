@@ -183,7 +183,8 @@ const state = {
   sources: { disabled: [], removed: [], overrides: {}, custom: [], order: [], updatedAt: null },
   streamOverride: { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: null },
   streamWindow: { active: false, reason: '', startedAt: null, updatedAt: null },
-  experimental: { enabled: true }
+  experimental: { enabled: true },
+  failover: { active: false, updatedAt: null }
 };
 
 let fileStoreReady = false;
@@ -371,6 +372,7 @@ function applySnapshot(raw) {
   if (raw.streamOverride || raw.override) state.streamOverride = normalizeOverride(raw.streamOverride || raw.override);
   if (raw.streamWindow) state.streamWindow = normalizeStreamWindow(raw.streamWindow);
   if (raw.experimental !== undefined) state.experimental = normalizeExperimental(raw.experimental);
+  state.failover = { active: raw.failover?.active === true, updatedAt: Number(raw.failover?.updatedAt) || null };
 }
 
 function currentSnapshot() {
@@ -380,7 +382,8 @@ function currentSnapshot() {
     sources: state.sources,
     streamOverride: state.streamOverride,
     streamWindow: state.streamWindow,
-    experimental: state.experimental
+    experimental: state.experimental,
+    failover: state.failover
   };
 }
 
@@ -751,7 +754,8 @@ function publicConfig() {
     sources: publicSources(),
     streamOverride: publicOverride(),
     streamWindow: state.streamWindow,
-    experimental: state.experimental
+    experimental: state.experimental,
+    failover: state.failover
   };
 }
 
@@ -1647,6 +1651,16 @@ app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
   const linkReport = await buildAdminLinkReport({ fast: true });
   res.json({ controlRole: CONTROL_ROLE, ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
+});
+
+app.post('/admin/api/failover', async (req, res) => {
+  await stateReady;
+  if (CONTROL_ROLE !== 'headquarters') return res.status(403).json({ error: 'Use Headquarters for failover.' });
+  if (typeof req.body?.active !== 'boolean') return res.status(400).json({ error: 'active must be true or false.' });
+  state.failover = { active: req.body.active, updatedAt: Date.now() };
+  const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
+  res.json({ success: true, failover: state.failover, ...persisted });
 });
 
 app.get('/admin/api/pages', async (_req, res) => {

@@ -743,6 +743,7 @@ function renderConfig() {
   renderRelayControl();
   updateStorage();
   updateKpiStrip();
+  renderFailover();
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
 }
 
@@ -756,6 +757,22 @@ function showDelivery(delivery) {
   const banner = $('replicaDelivery');
   if (banner) { banner.textContent = text; banner.hidden = !missed.length && delivery.length > 0; banner.className = 'status-line error'; }
 }
+
+function renderFailover() {
+  const el = $('failoverStatus');
+  if (el) el.textContent = config?.failover?.active ? 'Backup redirect is ON.' : 'Backup redirect is OFF.';
+}
+async function setFailover(active) {
+  if (!confirm(active ? 'Redirect visitors from the main site to the backup?' : 'Stop redirecting visitors to the backup?')) return;
+  try {
+    const result = await api('/failover', { method:'POST', body:JSON.stringify({ active }) });
+    config.failover = result.failover;
+    renderFailover();
+    showToast(active ? 'Backup redirect enabled.' : 'Main site restored.');
+  } catch (error) { showToast(error.message, 'error'); }
+}
+$('activateFailover')?.addEventListener('click', () => setFailover(true));
+$('deactivateFailover')?.addEventListener('click', () => setFailover(false));
 
 async function loadHeadquarters() {
   const result = await api('/headquarters');
@@ -799,6 +816,7 @@ async function loadConfig({ silent = false } = {}) {
     linkCheckedAt = Number(payload.linkReport.checkedAt) || Date.now();
   }
   config = {
+    failover: payload.failover || { active: false },
     maintenance: payload.maintenance || {},
     pages: payload.pages || { disabled: [] },
     pageList: Array.isArray(payload.pageList) && payload.pageList.length ? payload.pageList : DEFAULT_PAGE_LIST,

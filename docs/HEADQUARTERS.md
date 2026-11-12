@@ -51,3 +51,7 @@ For an additional frontend, set Vercel build variable `VITE_BACKEND_URL` to its 
 4. For a deliberately fresh setup only, `HQ_INITIALIZE=true` allows Headquarters to create defaults when the shared key is absent. Remove it after initialization; do not use it instead of importing existing state. It uses `SET NX` and never replaces a populated key.
 
 If rolling back to standalone, first stop Headquarters edits and back up the latest shared state. The old standalone snapshot is not automatically updated, so restore the intended settings explicitly before accepting writes again. Do not allow old and new writers to run concurrently.
+
+## Manual site failover
+
+The Headquarters dashboard can redirect visitors from the main Vercel hostname to the backup when enabled. Existing site-config connections carry the setting; no health polling is added. This is a client-side redirect: it works only while the main frontend loads and can obtain fresh settings from its backend. If either is unreachable, manually share the backup URL instead; a separate entry point outside Vercel would be needed for reliable failover of a fully unavailable main frontend. The backup URL remains directly accessible and does not redirect back to main.
