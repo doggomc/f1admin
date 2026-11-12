@@ -32,7 +32,7 @@ const CONTROL_ROLE = process.env.CONTROL_ROLE || 'standalone';
 if (!['standalone', 'headquarters', 'replica'].includes(CONTROL_ROLE)) throw new Error('Invalid CONTROL_ROLE');
 const HQ_CONTROL_KEY = 'freef1:headquarters:control:v1';
 const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readTargets(process.env.HQ_TARGETS) : [];
-const HQ_SYNC_MS = Math.max(process.env.NODE_ENV === 'test' ? 100 : 15000, Math.min(300000, Number(process.env.HQ_SYNC_MS) || 60000));
+const HQ_SYNC_MS = Math.max(process.env.NODE_ENV === 'test' ? 100 : 15000, Math.min(300000, Number(process.env.HQ_SYNC_MS) || 300000));
 let lastSharedSync = null;
 let sharedInitialized = false;
 let committedSharedSnapshot = null;

@@ -4,7 +4,7 @@ This code supports a separate Headquarters service and multiple backend replicas
 
 ## Architecture and safety
 
-Headquarters is the **single writer** of a shared Race Control snapshot, stored under `freef1:headquarters:control:v1` in a shared Upstash Redis REST database. Backends in `replica` mode read it at startup and every 60 seconds by default (configurable with `HQ_SYNC_MS`, 15–300 seconds). A changed snapshot updates open site tabs via the existing update stream. This creates one small read per replica per interval even with no visitors; estimate Upstash quota and cost before deployment. Propagation is eventual, not instantaneous.
+Headquarters is the **single writer** of a shared Race Control snapshot, stored under `freef1:headquarters:control:v1` in a shared Upstash Redis REST database. Backends in `replica` mode read it at startup and every 5 minutes by default (configurable with `HQ_SYNC_MS`, 15–300 seconds). A changed snapshot updates open site tabs via the existing update stream. This creates one small read per replica per interval even with no visitors; estimate Upstash quota and cost before deployment. Propagation is eventual, not instantaneous.
 
 Replicas keep their last confirmed snapshot in memory and save it to `DATA_DIR/race-control.json`. If Headquarters is offline but Upstash is up, replicas still work. If Upstash is down too, running replicas retain their settings; surviving a replica restart while Upstash is also down requires a persistent local disk. Without a prior valid snapshot, a new replica uses local/default state and is not guaranteed to match Headquarters. Do not rely on ephemeral Render storage for restart survival.
 
