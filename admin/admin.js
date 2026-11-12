@@ -87,6 +87,7 @@ async function api(path, options = {}) {
   if (!response.ok) {
     throw new Error(payload.error || `Request failed (${response.status}).`);
   }
+  if (Array.isArray(payload.delivery)) showDelivery(payload.delivery);
   return payload;
 }
 
@@ -745,6 +746,15 @@ function renderConfig() {
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
 }
 
+function showDelivery(delivery) {
+  const el = $('headquartersDelivery');
+  if (!el) return;
+  if (!delivery.length) { el.textContent = 'No backend update targets configured.'; return; }
+  const missed = delivery.filter(item => !item.delivered).map(item => item.name);
+  el.textContent = missed.length ? `Saved, but update not delivered to: ${missed.join(', ')}. Retry when available.` : `Last update delivered to ${delivery.length} backend${delivery.length === 1 ? '' : 's'}.`;
+  el.className = `status-line${missed.length ? ' error' : ''}`;
+}
+
 async function loadHeadquarters() {
   const result = await api('/headquarters');
   const section = $('headquartersSection');
@@ -761,6 +771,10 @@ async function loadHeadquarters() {
   if (!result.targets?.length) list.textContent = 'No services configured yet.';
   $('headquartersMessage').textContent = `Last shared-store operation: ${result.storageConnected ? 'successful' : 'unavailable'}${result.lastSharedSync ? ` · ${new Date(result.lastSharedSync).toLocaleTimeString()}` : ''} · Services checked ${new Date(result.checkedAt).toLocaleTimeString()}`;
 }
+$('retryHeadquartersSync')?.addEventListener('click', async () => {
+  try { await api('/headquarters/sync', { method: 'POST' }); }
+  catch (error) { setStatusLine('headquartersDelivery', error.message, 'error'); }
+});
 $('refreshHeadquarters')?.addEventListener('click', () => loadHeadquarters().catch(error => setStatusLine('headquartersMessage', error.message, 'error')));
 
 async function loadConfig({ silent = false } = {}) {
@@ -769,7 +783,7 @@ async function loadConfig({ silent = false } = {}) {
     document.title = 'Headquarters — FreeF1';
     document.querySelectorAll('.brand-tag').forEach(el => { el.textContent = 'Headquarters'; });
     const subtitle = document.querySelector('.page-sub');
-    if (subtitle) subtitle.textContent = 'Shared settings reach each backend on its next sync; open tabs update after the backend syncs.';
+    if (subtitle) subtitle.textContent = 'Changes are sent to configured backends when saved; retry any missed updates when the backend is available.';
     if (!silent) loadHeadquarters().catch(() => {});
   }
   if (payload.linkReport?.siteUrl) linkSiteUrl = publicSiteUrl(payload.linkReport.siteUrl);

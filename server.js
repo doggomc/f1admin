@@ -32,7 +32,10 @@ const CONTROL_ROLE = process.env.CONTROL_ROLE || 'standalone';
 if (!['standalone', 'headquarters', 'replica'].includes(CONTROL_ROLE)) throw new Error('Invalid CONTROL_ROLE');
 const HQ_CONTROL_KEY = 'freef1:headquarters:control:v1';
 const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readTargets(process.env.HQ_TARGETS) : [];
-const HQ_SYNC_MS = Math.max(process.env.NODE_ENV === 'test' ? 100 : 15000, Math.min(300000, Number(process.env.HQ_SYNC_MS) || 300000));
+const HQ_PUSH_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readPushTargets(process.env.HQ_PUSH_TARGETS, process.env.NODE_ENV === 'test') : [];
+const HQ_PUSH_SECRET = String(process.env.HQ_PUSH_SECRET || '');
+let lastPushResults = null;
+let replicaSyncTail = Promise.resolve();
 let lastSharedSync = null;
 let sharedInitialized = false;
 let committedSharedSnapshot = null;
@@ -81,6 +84,7 @@ const UPSTASH_ENABLED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
 const HQ_UPSTASH_URL = cleanEnv('HQ_UPSTASH_REDIS_REST_URL', '').replace(/\/+$/, '');
 const HQ_UPSTASH_TOKEN = cleanEnv('HQ_UPSTASH_REDIS_REST_TOKEN', '');
 if (CONTROL_ROLE !== 'standalone' && (!HQ_UPSTASH_URL || !HQ_UPSTASH_TOKEN)) throw new Error('Headquarters and replica modes require HQ_UPSTASH_REDIS_REST_URL and HQ_UPSTASH_REDIS_REST_TOKEN');
+if (CONTROL_ROLE !== 'standalone' && (!HQ_PUSH_SECRET || (PRODUCTION && HQ_PUSH_SECRET.length < 32))) throw new Error('HQ_PUSH_SECRET is required (at least 32 characters in production)');
 if (CONTROL_ROLE !== 'standalone' && PRODUCTION) {
   let url; try { url = new URL(HQ_UPSTASH_URL); } catch { throw new Error('Invalid shared Upstash URL'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Shared Upstash URL must be an HTTPS origin');
@@ -632,15 +636,6 @@ async function loadSharedState() {
   if (local) applySnapshot(local);
   committedSharedSnapshot = JSON.parse(JSON.stringify(currentSnapshot()));
   await syncSharedState({ initialize: CONTROL_ROLE === 'headquarters' && process.env.HQ_INITIALIZE === 'true' });
-  if (CONTROL_ROLE === 'replica') {
-    let busy = false;
-    const timer = setInterval(async () => {
-      if (busy) return;
-      busy = true;
-      try { await syncSharedState(); } finally { busy = false; }
-    }, HQ_SYNC_MS);
-    timer.unref?.();
-  }
 }
 
 let persistQueue = Promise.resolve();
@@ -657,7 +652,9 @@ function persistState() {
         writeLocalJson(CONTROL_FILE, snapshot);
         lastStateWrite = { durable: true, store: 'upstash' };
         broadcastSiteConfig();
-        return { durable: true, store: 'upstash', localSaved: fileStoreReady };
+        // A successful save and a successful delivery are distinct outcomes.
+        lastPushResults = await require('./headquarters').pushUpdates(HQ_PUSH_TARGETS, HQ_PUSH_SECRET);
+        return { durable: true, store: 'upstash', localSaved: fileStoreReady, delivery: lastPushResults };
       } catch (error) {
         if (committedSharedSnapshot) applySnapshot(committedSharedSnapshot);
         redisReady = false; sharedInitialized = false;
@@ -888,6 +885,19 @@ let stateReady = CONTROL_ROLE === 'standalone' ? loadSiteState() : loadSharedSta
 app.use((req, _res, next) => {
   if (CONTROL_ROLE !== 'headquarters' || req.path.startsWith('/admin') || req.path === '/healthz') return next();
   adminWriteTail.then(next, next);
+});
+
+// Incoming authenticated notifications trigger a single shared-store read; no polling.
+app.post('/internal/headquarters/sync', async (req, res) => {
+  if (CONTROL_ROLE !== 'replica') return res.status(404).end();
+  const auth = String(req.headers.authorization || '');
+  if (!isSafeEqual(auth, `Bearer ${HQ_PUSH_SECRET}`)) return res.status(401).json({ error: 'Unauthorized' });
+  await stateReady;
+  const pending = replicaSyncTail.then(() => syncSharedState());
+  replicaSyncTail = pending.catch(() => false);
+  const ok = await pending;
+  res.setHeader('Cache-Control', 'no-store');
+  return ok ? res.json({ ok: true }) : res.status(503).json({ error: 'Shared state unavailable; last confirmed state retained.' });
 });
 
 // Block all stripped-player documents, playlist relays and key relays before
@@ -1550,7 +1560,15 @@ app.use('/admin/api', (req, res, next) => {
 app.get('/admin/api/headquarters', async (_req, res) => {
   if (CONTROL_ROLE !== 'headquarters') return res.json({ enabled: false });
   const targets = await require('./headquarters').checkTargets(HQ_TARGETS);
-  res.json({ enabled: true, checkedAt: Date.now(), storageConnected: redisReady, lastSharedSync, targets });
+  res.json({ enabled: true, checkedAt: Date.now(), storageConnected: redisReady, lastSharedSync, targets, delivery: lastPushResults });
+});
+
+app.post('/admin/api/headquarters/sync', async (_req, res) => {
+  if (CONTROL_ROLE !== 'headquarters') return res.status(404).end();
+  await stateReady;
+  if (!sharedInitialized) return res.status(503).json({ error: 'Shared settings are not initialized.' });
+  lastPushResults = await require('./headquarters').pushUpdates(HQ_PUSH_TARGETS, HQ_PUSH_SECRET);
+  res.json({ success: true, delivery: lastPushResults });
 });
 
 app.post('/admin/api/logout', (req, res) => {
