@@ -10,7 +10,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-permissions-'));
 const server = spawn(process.execPath, ['server.js'], { cwd: path.resolve(__dirname, '..'), env: {
   ...process.env, NODE_ENV: 'production', PORT: String(port), DATA_DIR: dir,
   ADMIN_USER: 'test', ADMIN_PASS: 'test-password', ADMIN_SECRET: 'test-secret-at-least-32-characters',
-  ALLOWED_ORIGIN: 'https://freef1.netlify.app', RELAY_ALLOWED_ORIGINS: 'https://explicit-preview.example',
+  ALLOWED_ORIGIN: 'https://freef1.netlify.app,https://backup.example', RELAY_ALLOWED_ORIGINS: 'https://backup.example',
   UPSTASH_REDIS_REST_URL: '', UPSTASH_REDIS_REST_TOKEN: '', KV_REST_API_URL: '', KV_REST_API_TOKEN: '',
   DISCORD_BOT_TOKEN: ''
 }, stdio: 'ignore' });
@@ -23,8 +23,8 @@ const base = `http://127.0.0.1:${port}`;
     const url = base + '/api/stream/embdlol-embed?id=test';
     const live = 'https://freef1-live.vercel.app';
     const previews = ['https://freef1-mpwk36a5o-f4-ac7f.vercel.app', 'https://freef1-git-design-modern-cockpit-motion-f4-ac7f.vercel.app'];
-    const rejected = ['https://freef1.netlify.app', 'https://freef1.vercel.app', 'https://freef1-impersonator.vercel.app', 'https://freef1-mpwk36a5o-other.vercel.app', 'https://evil.example'];
-    for (const site of [live, ...previews]) {
+    const rejected = ['https://freef1.netlify.app', 'https://freef1.vercel.app', 'https://freef1-impersonator.vercel.app', 'https://freef1-mpwk36a5o-other.vercel.app', 'https://evil.example', 'https://sub.backup.example'];
+    for (const site of [live, ...previews, 'https://backup.example']) {
       const r = await fetch(url, { headers: { Origin: site, Referer: site + '/' } });
       assert.equal(r.status, 200); assert.equal(r.headers.get('access-control-allow-origin'), site);
       const ancestors = r.headers.get('content-security-policy').split(';').map(x => x.trim()).find(x => x.startsWith('frame-ancestors '));

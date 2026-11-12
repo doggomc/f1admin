@@ -28,6 +28,15 @@ let discordBot = null;
 const siteConfigStreams = new Set();
 
 const PORT = Number(process.env.PORT) || 3000;
+const CONTROL_ROLE = process.env.CONTROL_ROLE || 'standalone';
+if (!['standalone', 'headquarters', 'replica'].includes(CONTROL_ROLE)) throw new Error('Invalid CONTROL_ROLE');
+const HQ_CONTROL_KEY = 'freef1:headquarters:control:v1';
+const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readTargets(process.env.HQ_TARGETS) : [];
+const HQ_SYNC_MS = Math.max(process.env.NODE_ENV === 'test' ? 100 : 15000, Math.min(300000, Number(process.env.HQ_SYNC_MS) || 60000));
+let lastSharedSync = null;
+let sharedInitialized = false;
+let committedSharedSnapshot = null;
+let adminWriteTail = Promise.resolve();
 const PRODUCTION = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
 const SITE_URL = String(process.env.SITE_URL || 'https://freef1-live.vercel.app').replace(/\/+$/, '');
 const ADMIN_USER = String(process.env.ADMIN_USER || (PRODUCTION ? '' : 'admin')).trim();
@@ -69,6 +78,20 @@ const LEGACY_REDIS_KEYS = {
 const UPSTASH_URL = cleanEnv('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL').replace(/\/+$/, '');
 const UPSTASH_TOKEN = cleanEnv('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN');
 const UPSTASH_ENABLED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
+const HQ_UPSTASH_URL = cleanEnv('HQ_UPSTASH_REDIS_REST_URL', '').replace(/\/+$/, '');
+const HQ_UPSTASH_TOKEN = cleanEnv('HQ_UPSTASH_REDIS_REST_TOKEN', '');
+if (CONTROL_ROLE !== 'standalone' && (!HQ_UPSTASH_URL || !HQ_UPSTASH_TOKEN)) throw new Error('Headquarters and replica modes require HQ_UPSTASH_REDIS_REST_URL and HQ_UPSTASH_REDIS_REST_TOKEN');
+if (CONTROL_ROLE !== 'standalone' && PRODUCTION) {
+  let url; try { url = new URL(HQ_UPSTASH_URL); } catch { throw new Error('Invalid shared Upstash URL'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Shared Upstash URL must be an HTTPS origin');
+}
+async function sharedStoreRequest(command) {
+  const response = await fetch(HQ_UPSTASH_URL, { method: 'POST', headers: { authorization: `Bearer ${HQ_UPSTASH_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(command), signal: AbortSignal.timeout(5000), cache: 'no-store', redirect: 'error' });
+  if (!response.ok) throw new Error(`Shared store HTTP ${response.status}`);
+  const payload = await response.json();
+  if (payload?.error) throw new Error('Shared store command failed');
+  return payload;
+}
 const DEFAULT_ALLOWED_ORIGINS = PRODUCTION
   ? 'https://freef1.netlify.app,https://freef1-live.vercel.app'
   : 'https://freef1.netlify.app,https://freef1-live.vercel.app,http://localhost:4173,http://127.0.0.1:4173';
@@ -76,9 +99,10 @@ const ALLOWED_ORIGINS = new Set(parseOrigins(process.env.ALLOWED_ORIGIN || DEFAU
 // Vercel assigns a fresh hostname to each deployment. The team suffix is
 // required; frame-ancestors is generated per request from the approved referrer.
 const RELAY_LIVE_ORIGIN = 'https://freef1-live.vercel.app';
+const RELAY_EXTRA_ORIGINS = new Set(parseOrigins(process.env.RELAY_ALLOWED_ORIGINS || ''));
 const RELAY_PREVIEW = /^https:\/\/freef1-[a-z0-9-]+-f4-ac7f\.vercel\.app$/;
 function isRelayOrigin(origin) {
-  return origin === RELAY_LIVE_ORIGIN || RELAY_PREVIEW.test(origin)
+  return origin === RELAY_LIVE_ORIGIN || RELAY_PREVIEW.test(origin) || RELAY_EXTRA_ORIGINS.has(origin)
     || (!PRODUCTION && /^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|https:\/\/[a-z0-9-]+\.e2b\.app)$/i.test(origin));
 }
 
@@ -576,9 +600,72 @@ async function loadSiteState() {
   }
 }
 
+async function syncSharedState({ initialize = false } = {}) {
+  try {
+    let reply = await sharedStoreRequest(['GET', HQ_CONTROL_KEY]);
+    let snapshot = parseRedisJson(reply?.result);
+    if (!snapshot && initialize) {
+      // NX prevents an accidental second Headquarters from replacing existing state.
+      await sharedStoreRequest(['SET', HQ_CONTROL_KEY, JSON.stringify(currentSnapshot()), 'NX']);
+      reply = await sharedStoreRequest(['GET', HQ_CONTROL_KEY]);
+      snapshot = parseRedisJson(reply?.result);
+    }
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) || !snapshot.sources || !snapshot.pages || !snapshot.maintenance) throw new Error('Shared control snapshot is missing or invalid');
+    const before = JSON.stringify(currentSnapshot());
+    applySnapshot(snapshot);
+    committedSharedSnapshot = JSON.parse(JSON.stringify(currentSnapshot()));
+    sharedInitialized = true;
+    redisReady = true;
+    lastSharedSync = Date.now();
+    lastStateWrite = { durable: true, store: 'upstash' };
+    writeLocalJson(CONTROL_FILE, currentSnapshot());
+    if (JSON.stringify(currentSnapshot()) !== before) broadcastSiteConfig();
+    return true;
+  } catch (error) {
+    redisReady = false;
+    console.warn('[Headquarters] Shared state unavailable; retaining last confirmed settings:', error.message);
+    return false;
+  }
+}
+async function loadSharedState() {
+  const local = readLocalJson(CONTROL_FILE);
+  if (local) applySnapshot(local);
+  committedSharedSnapshot = JSON.parse(JSON.stringify(currentSnapshot()));
+  await syncSharedState({ initialize: CONTROL_ROLE === 'headquarters' && process.env.HQ_INITIALIZE === 'true' });
+  if (CONTROL_ROLE === 'replica') {
+    let busy = false;
+    const timer = setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try { await syncSharedState(); } finally { busy = false; }
+    }, HQ_SYNC_MS);
+    timer.unref?.();
+  }
+}
+
 let persistQueue = Promise.resolve();
 function persistState() {
   const snapshot = currentSnapshot();
+  if (CONTROL_ROLE === 'headquarters') {
+    return (async () => {
+      if (!sharedInitialized) { if (committedSharedSnapshot) applySnapshot(committedSharedSnapshot); return { error: 'Shared settings not initialized; restart Headquarters after storage is available.' }; }
+      try {
+        const reply = await sharedStoreRequest(['SET', HQ_CONTROL_KEY, JSON.stringify(snapshot)]);
+        if (reply?.result !== 'OK') throw new Error('Shared store did not acknowledge write');
+        committedSharedSnapshot = JSON.parse(JSON.stringify(snapshot));
+        redisReady = true; lastSharedSync = Date.now();
+        writeLocalJson(CONTROL_FILE, snapshot);
+        lastStateWrite = { durable: true, store: 'upstash' };
+        broadcastSiteConfig();
+        return { durable: true, store: 'upstash', localSaved: fileStoreReady };
+      } catch (error) {
+        if (committedSharedSnapshot) applySnapshot(committedSharedSnapshot);
+        redisReady = false; sharedInitialized = false;
+        console.warn('[Headquarters] Shared write failed:', error.message);
+        return { error: 'Could not save shared settings. No change was confirmed.' };
+      }
+    })();
+  }
   // Publish the compact public snapshot immediately; storage durability work
   // continues independently and does not delay already-open public tabs.
   broadcastSiteConfig();
@@ -611,7 +698,7 @@ function storageSummary() {
   return {
     store: lastStateWrite.store,
     durable: Boolean(lastStateWrite.durable),
-    redisConfigured: UPSTASH_ENABLED,
+    redisConfigured: CONTROL_ROLE === 'standalone' ? UPSTASH_ENABLED : Boolean(HQ_UPSTASH_URL && HQ_UPSTASH_TOKEN),
     localWritable: fileStoreReady
   };
 }
@@ -796,7 +883,12 @@ const sessionMiddleware = cookieSession({
 });
 app.use('/admin/api', sessionMiddleware);
 
-let stateReady = loadSiteState();
+let stateReady = CONTROL_ROLE === 'standalone' ? loadSiteState() : loadSharedState();
+// Headquarters never exposes an unconfirmed in-flight mutation via public APIs.
+app.use((req, _res, next) => {
+  if (CONTROL_ROLE !== 'headquarters' || req.path.startsWith('/admin') || req.path === '/healthz') return next();
+  adminWriteTail.then(next, next);
+});
 
 // Block all stripped-player documents, playlist relays and key relays before
 // any resolver or upstream fetch. Metadata and direct embeds remain available.
@@ -1432,6 +1524,35 @@ app.use('/admin/api', adminSameOrigin, (req, res, next) => {
   return requireAdmin(req, res, next);
 });
 
+// Only Headquarters may change shared Race Control state. Serialize writes so
+// a failed write can safely roll back without erasing a concurrent change.
+app.use('/admin/api', (req, res, next) => {
+  if (req.method !== 'POST' || req.path === '/logout') return next();
+  if (CONTROL_ROLE === 'replica') return res.status(403).json({ error: 'This backend is read-only. Use Headquarters.' });
+  if (CONTROL_ROLE !== 'headquarters') return next();
+  const previous = adminWriteTail;
+  let release;
+  adminWriteTail = new Promise(resolve => { release = resolve; });
+  previous.then(() => {
+    if (res.destroyed || res.writableEnded) return release();
+    // A disconnected client must not release the lock while its write is still running.
+    // Express eventually calls end after the handler has committed or rolled back.
+    const end = res.end;
+    let done = false;
+    res.end = function (...args) {
+      try { return end.apply(this, args); }
+      finally { if (!done) { done = true; release(); } }
+    };
+    next();
+  });
+});
+
+app.get('/admin/api/headquarters', async (_req, res) => {
+  if (CONTROL_ROLE !== 'headquarters') return res.json({ enabled: false });
+  const targets = await require('./headquarters').checkTargets(HQ_TARGETS);
+  res.json({ enabled: true, checkedAt: Date.now(), storageConnected: redisReady, lastSharedSync, targets });
+});
+
 app.post('/admin/api/logout', (req, res) => {
   req.session = null;
   res.json({ success: true });
@@ -1482,7 +1603,7 @@ async function buildAdminLinkReport({ fast = false } = {}) {
 app.get('/admin/api/config', async (_req, res) => {
   await stateReady;
   const linkReport = await buildAdminLinkReport({ fast: true });
-  res.json({ ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
+  res.json({ controlRole: CONTROL_ROLE, ...publicConfig(), sources: adminSourcesState(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), linkReport, storage: storageSummary(), fourK: streamResolver.summary() });
 });
 
 app.get('/admin/api/pages', async (_req, res) => {
@@ -1497,6 +1618,7 @@ app.post('/admin/api/pages', async (req, res) => {
   if (unknown.length) return res.status(400).json({ error: `Unknown page ID(s): ${unknown.join(', ')}` });
   state.pages = normalizePages({ disabled: cleaned, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, pages: publicPages(), pageList: CONTROLLABLE_PAGES, ...persisted });
 });
 
@@ -1517,6 +1639,7 @@ app.post('/admin/api/maintenance', async (req, res) => {
     updatedAt: Date.now()
   });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, maintenance: state.maintenance, ...persisted });
 });
 
@@ -1536,6 +1659,7 @@ app.post('/admin/api/stream/window', async (req, res) => {
     updatedAt: Date.now()
   });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, streamWindow: state.streamWindow, ...persisted });
 });
 
@@ -1554,18 +1678,21 @@ app.post('/admin/api/stream/override', async (req, res) => {
     updatedAt: Date.now()
   };
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, override: state.streamOverride, ...persisted });
 });
 app.post('/admin/api/stream/stop', async (_req, res) => {
   await stateReady;
   state.streamOverride = { ...state.streamOverride, active: false, startedAt: null, updatedAt: Date.now() };
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, override: state.streamOverride, ...persisted });
 });
 app.post('/admin/api/stream/normal', async (_req, res) => {
   await stateReady;
   state.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: Date.now() };
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, override: state.streamOverride, ...persisted });
 });
 
@@ -1574,6 +1701,7 @@ app.post('/admin/api/stream/auto', async (req, res) => {
   if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean.' });
   state.sources = normalizeSources({ ...state.sources, autoStreams: req.body.enabled, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, sources: adminSourcesState(), ...persisted });
 });
 
@@ -1582,6 +1710,7 @@ app.post('/admin/api/stream/relays', async (req, res) => {
   if (typeof req.body?.disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be a boolean.' });
   state.sources = normalizeSources({ ...state.sources, relaysDisabled: req.body.disabled, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, sources: adminSourcesState(), ...persisted });
 });
 
@@ -1598,6 +1727,7 @@ app.post('/admin/api/stream/sources', async (req, res) => {
   if (unknown.length) return res.status(400).json({ error: `Unknown source ID(s): ${unknown.join(', ')}` });
   state.sources = normalizeSources({ ...state.sources, disabled: cleanedDisabled, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, sources: FEED_SOURCES, sourceList: adminSourceList(), ...state.sources, ...persisted });
 });
 
@@ -1620,6 +1750,7 @@ app.post('/admin/api/stream/catalogue', async (req, res) => {
   }
   state.sources = normalizeSources({ ...body, autoStreams: state.sources.autoStreams, relaysDisabled: state.sources.relaysDisabled, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, sources: adminSourcesState(), sourceList: adminSourceList(), ...persisted });
 });
 
@@ -1653,6 +1784,7 @@ app.post('/admin/api/stream/sources/bulk', async (req, res) => {
   if (!touched) return res.status(400).json({ error: 'That group matched no sources.' });
   state.sources = normalizeSources({ ...state.sources, disabled: [...pending], updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, action, group: group || null, touched, sources: FEED_SOURCES, ...state.sources, ...persisted });
 });
 
@@ -1694,6 +1826,7 @@ app.post('/admin/api/stream/chip', async (req, res) => {
   else delete overrides[id];
   state.sources = normalizeSources({ ...state.sources, overrides, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, sourceList: adminSourceList(), ...state.sources, ...persisted });
 });
 
@@ -1706,6 +1839,7 @@ app.post('/admin/api/reset-all', async (_req, res) => {
   state.streamOverride = { active: false, input: null, url: null, type: null, startedAt: null, updatedAt: Date.now() };
   state.maintenance = normalizeMaintenance({ active: false, updatedAt: Date.now() });
   const persisted = await persistState();
+  if (persisted.error) return res.status(503).json({ error: persisted.error });
   res.json({ success: true, ...publicConfig(), pageList: CONTROLLABLE_PAGES, sourceList: adminSourceList(), ...persisted });
 });
 
@@ -1752,7 +1886,7 @@ app.use('/admin', express.static(ADMIN_DIR, {
   }
 }));
 
-app.get('/', (_req, res) => res.redirect(302, `${SITE_URL}/`));
+app.get('/', (_req, res) => res.redirect(302, CONTROL_ROLE === 'headquarters' ? '/admin/' : `${SITE_URL}/`));
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((error, _req, res, _next) => {
   console.error('[Race Control]', error?.message || error);

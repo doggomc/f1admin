@@ -745,8 +745,33 @@ function renderConfig() {
   $('configTime').textContent = `Snapshot loaded · ${new Date().toLocaleString()}`;
 }
 
+async function loadHeadquarters() {
+  const result = await api('/headquarters');
+  const section = $('headquartersSection');
+  if (!section || !result.enabled) return;
+  section.hidden = false;
+  const list = $('headquartersTargets');
+  list.replaceChildren();
+  for (const item of result.targets || []) {
+    const row = document.createElement('p');
+    row.className = 'section-note';
+    row.textContent = `${item.type === 'frontend' ? 'Frontend' : 'Backend'} · ${item.name} — ${item.online ? 'Online' : 'Unavailable'}${item.status ? ` (HTTP ${item.status})` : ''} · ${new Date(item.checkedAt).toLocaleTimeString()}`;
+    list.appendChild(row);
+  }
+  if (!result.targets?.length) list.textContent = 'No services configured yet.';
+  $('headquartersMessage').textContent = `Last shared-store operation: ${result.storageConnected ? 'successful' : 'unavailable'}${result.lastSharedSync ? ` · ${new Date(result.lastSharedSync).toLocaleTimeString()}` : ''} · Services checked ${new Date(result.checkedAt).toLocaleTimeString()}`;
+}
+$('refreshHeadquarters')?.addEventListener('click', () => loadHeadquarters().catch(error => setStatusLine('headquartersMessage', error.message, 'error')));
+
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
+  if (payload.controlRole === 'headquarters') {
+    document.title = 'Headquarters — FreeF1';
+    document.querySelectorAll('.brand-tag').forEach(el => { el.textContent = 'Headquarters'; });
+    const subtitle = document.querySelector('.page-sub');
+    if (subtitle) subtitle.textContent = 'Shared settings reach each backend on its next sync; open tabs update after the backend syncs.';
+    if (!silent) loadHeadquarters().catch(() => {});
+  }
   if (payload.linkReport?.siteUrl) linkSiteUrl = publicSiteUrl(payload.linkReport.siteUrl);
   if (Array.isArray(payload.linkReport?.streams)) {
     linkReport = {};
