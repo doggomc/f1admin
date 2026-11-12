@@ -34,6 +34,8 @@ const HQ_CONTROL_KEY = 'freef1:headquarters:control:v1';
 const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readTargets(process.env.HQ_TARGETS) : [];
 const HQ_PUSH_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readPushTargets(process.env.HQ_PUSH_TARGETS, process.env.NODE_ENV === 'test') : [];
 const HQ_PUSH_SECRET = String(process.env.HQ_PUSH_SECRET || '');
+const HQ_URL = String(process.env.HQ_URL || '').trim().replace(/\/+$/, '');
+const FORWARDABLE_ADMIN_PATHS = new Set(['/pages','/maintenance','/stream/window','/stream/override','/stream/stop','/stream/normal','/stream/auto','/stream/relays','/stream/sources','/stream/catalogue','/stream/sources/bulk','/stream/chip','/reset-all']);
 let lastPushResults = null;
 let replicaSyncTail = Promise.resolve();
 let lastSharedSync = null;
@@ -85,6 +87,11 @@ const HQ_UPSTASH_URL = cleanEnv('HQ_UPSTASH_REDIS_REST_URL', '').replace(/\/+$/,
 const HQ_UPSTASH_TOKEN = cleanEnv('HQ_UPSTASH_REDIS_REST_TOKEN', '');
 if (CONTROL_ROLE !== 'standalone' && (!HQ_UPSTASH_URL || !HQ_UPSTASH_TOKEN)) throw new Error('Headquarters and replica modes require HQ_UPSTASH_REDIS_REST_URL and HQ_UPSTASH_REDIS_REST_TOKEN');
 if (CONTROL_ROLE !== 'standalone' && (!HQ_PUSH_SECRET || (PRODUCTION && HQ_PUSH_SECRET.length < 32))) throw new Error('HQ_PUSH_SECRET is required (at least 32 characters in production)');
+if (CONTROL_ROLE === 'replica' && HQ_URL) {
+  let url; try { url = new URL(HQ_URL); } catch { throw new Error('Invalid HQ_URL'); }
+  const localTest = process.env.NODE_ENV === 'test' && url.protocol === 'http:' && url.hostname === '127.0.0.1';
+  if (!(url.protocol === 'https:' || localTest) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('HQ_URL must be an HTTPS origin');
+}
 if (CONTROL_ROLE !== 'standalone' && PRODUCTION) {
   let url; try { url = new URL(HQ_UPSTASH_URL); } catch { throw new Error('Invalid shared Upstash URL'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Shared Upstash URL must be an HTTPS origin');
@@ -1526,7 +1533,8 @@ app.get('/admin/api/status', (req, res) => {
 });
 
 function requireAdmin(req, res, next) {
-  if (!req.session?.isAdmin) return res.status(401).json({ error: 'Not authenticated' });
+  const trustedForward = CONTROL_ROLE === 'headquarters' && req.method === 'POST' && FORWARDABLE_ADMIN_PATHS.has(req.path) && isSafeEqual(req.headers.authorization || '', `Bearer ${HQ_PUSH_SECRET}`);
+  if (!req.session?.isAdmin && !trustedForward) return res.status(401).json({ error: 'Not authenticated' });
   next();
 }
 app.use('/admin/api', adminSameOrigin, (req, res, next) => {
@@ -1538,7 +1546,24 @@ app.use('/admin/api', adminSameOrigin, (req, res, next) => {
 // a failed write can safely roll back without erasing a concurrent change.
 app.use('/admin/api', (req, res, next) => {
   if (req.method !== 'POST' || req.path === '/logout') return next();
-  if (CONTROL_ROLE === 'replica') return res.status(403).json({ error: 'This backend is read-only. Use Headquarters.' });
+  if (CONTROL_ROLE === 'replica') {
+    if (!FORWARDABLE_ADMIN_PATHS.has(req.path)) return res.status(403).json({ error: 'This action is only available on Headquarters.' });
+    if (!HQ_URL) return res.status(503).json({ error: 'HQ_URL is not configured on this backend.' });
+    // Require the replica's admin session above; forward only whitelisted control operations.
+    return (async () => {
+      try {
+        const response = await fetch(`${HQ_URL}/admin/api${req.path}`, {
+          method: 'POST', headers: { authorization: `Bearer ${HQ_PUSH_SECRET}`, origin: HQ_URL, 'content-type': 'application/json' },
+          body: JSON.stringify(req.body || {}), signal: AbortSignal.timeout(45000), redirect: 'error'
+        });
+        const payload = await response.json();
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(response.status).json(payload);
+      } catch (_) {
+        return res.status(503).json({ error: 'Could not reach Headquarters. Your change was not confirmed; check Headquarters before retrying.' });
+      }
+    })();
+  }
   if (CONTROL_ROLE !== 'headquarters') return next();
   const previous = adminWriteTail;
   let release;

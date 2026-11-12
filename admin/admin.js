@@ -749,10 +749,12 @@ function renderConfig() {
 function showDelivery(delivery) {
   const el = $('headquartersDelivery');
   if (!el) return;
-  if (!delivery.length) { el.textContent = 'No backend update targets configured.'; return; }
   const missed = delivery.filter(item => !item.delivered).map(item => item.name);
-  el.textContent = missed.length ? `Saved, but update not delivered to: ${missed.join(', ')}. Retry when available.` : `Last update delivered to ${delivery.length} backend${delivery.length === 1 ? '' : 's'}.`;
-  el.className = `status-line${missed.length ? ' error' : ''}`;
+  const text = !delivery.length ? 'Saved, but no backend update targets are configured.' : missed.length ? `Saved, but update not delivered to: ${missed.join(', ')}. Retry from Headquarters when available.` : `Last update delivered to ${delivery.length} backend${delivery.length === 1 ? '' : 's'}.`;
+  el.textContent = text;
+  el.className = `status-line${missed.length || !delivery.length ? ' error' : ''}`;
+  const banner = $('replicaDelivery');
+  if (banner) { banner.textContent = text; banner.hidden = !missed.length && delivery.length > 0; banner.className = 'status-line error'; }
 }
 
 async function loadHeadquarters() {
@@ -779,6 +781,10 @@ $('refreshHeadquarters')?.addEventListener('click', () => loadHeadquarters().cat
 
 async function loadConfig({ silent = false } = {}) {
   const payload = await api('/config');
+  if (payload.controlRole === 'replica') {
+    const subtitle = document.querySelector('.page-sub');
+    if (subtitle) subtitle.textContent = 'Changes are saved through Headquarters and sent to the configured backends.';
+  }
   if (payload.controlRole === 'headquarters') {
     document.title = 'Headquarters — FreeF1';
     document.querySelectorAll('.brand-tag').forEach(el => { el.textContent = 'Headquarters'; });
