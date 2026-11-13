@@ -75,8 +75,8 @@ check('Haas grid offers Camara 51 instead of Ocon and has a matching emoji asset
   !botTest.ALL_DRIVERS.some(d => d.num === 31) && grid.description.includes('51 CAM') &&
   gridButtons.some(b => b.custom_id === 'freef1:grid:51' && b.label === '| CAM' && b.emoji?.id === '123456789012345678') &&
   !gridButtons.some(b => b.custom_id === 'freef1:grid:31') && fs.existsSync(path.join(root, 'assets/emoji/n51.png')));
-check('existing grid panel refreshes in place at startup without deleting roles',
-  /await refreshGridPanel\(guild, st\)/.test(bot) && /message\.edit\(gridPanelPayload\(st, \{ edit: true \}\)\)/.test(bot) && /freef1:grid:31/.test(bot));
+check('static panels are not checked or edited at startup',
+  !/refreshGridPanel|refreshAlertsPanel|gridPanelNeedsUpdate/.test(bot));
 check('/website sends a PNG with the existing link buttons',
   /await interaction\.deferReply\(\)/.test(bot) && /interaction\.editReply\(await websitePayload\(/.test(bot) &&
   /freef1-website\.png/.test(bot) && /websiteRow\(siteUrl, inviteUrl\)/.test(bot));

@@ -130,19 +130,12 @@ function driverPanelEmbed(siteUrl) {
   };
 }
 
-function gridPanelPayload(st, { edit = false } = {}) {
+function gridPanelPayload(st) {
   return {
     files: [{ attachment: renderGridImage(TEAMS), name: 'freef1-grid-2026-v2.png', description: gridDescription(TEAMS) }],
     components: gridRows(st),
-    ...(edit ? { embeds: [], attachments: [] } : {}),
     allowedMentions: { parse: [] },
   };
-}
-
-function gridPanelNeedsUpdate(message) {
-  const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
-  const hasGridImage = message.attachments?.some(attachment => attachment.name === 'freef1-grid-2026-v2.png');
-  return !hasGridImage || Boolean(hasOldOcon);
 }
 
 function alertsPanelEmbed(siteUrl) {
@@ -254,11 +247,10 @@ function gridRows(st) {
   return rows;
 }
 
-async function alertsPanelPayload({ edit = false } = {}) {
+async function alertsPanelPayload() {
   return {
     files: [{ attachment: await renderAlertsPanelImage(), name: 'freef1-alerts-panel.png', description: 'Stream Alerts. Get pinged when a session is starting. Use the button to opt in or out.' }],
     components: [alertsRow()],
-    ...(edit ? { embeds: [], attachments: [] } : {}),
     allowedMentions: { parse: [] },
   };
 }
@@ -687,27 +679,6 @@ function start(deps) {
     await store.save();
   }
 
-  // Refresh an existing panel in place when deploying the updated grid.
-  // Do not post a duplicate or remove any roles members already hold.
-  async function refreshGridPanel(guild, st) {
-    const saved = st.panels?.grid;
-    if (!saved) return;
-    try {
-      const channel = guild.channels.cache.get(saved.channelId) || await guild.channels.fetch(saved.channelId);
-      const message = await channel?.messages.fetch(saved.messageId);
-      if (!message) return;
-      const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
-      if (!gridPanelNeedsUpdate(message)) return;
-      if (hasOldOcon) await ensureEmojis(guild, st, ['51']);
-      discoverDriverRoles(guild, st);
-      await message.edit(gridPanelPayload(st, { edit: true }));
-      await store.save();
-      log(`updated grid panel image for ${guild.name}`);
-    } catch (error) {
-      log(`grid panel update failed for ${guild.name}; re-run /rolemenu:`, error.message);
-    }
-  }
-
   async function postAlertsPanel(guild, channel, st, role, alertsChannel) {
     await ensureEmojis(guild, st);
     let target = role;
@@ -722,22 +693,6 @@ function start(deps) {
     st.panels.alerts = { channelId: channel.id, messageId: msg.id };
     st.alerts = { channelId: (alertsChannel || channel).id, roleId: target.id };
     await store.save();
-  }
-
-  // Replace the saved embed in place without changing the configured channel, role, or memberships.
-  async function refreshAlertsPanel(guild, st) {
-    const saved = st.panels?.alerts;
-    if (!saved) return;
-    try {
-      const channel = guild.channels.cache.get(saved.channelId) || await guild.channels.fetch(saved.channelId);
-      const message = await channel?.messages.fetch(saved.messageId);
-      if (!message) return;
-      if (message.attachments?.some(attachment => attachment.name === 'freef1-alerts-panel.png')) return;
-      await message.edit(await alertsPanelPayload({ edit: true }));
-      log(`updated Stream Alerts panel for ${guild.name}`);
-    } catch (error) {
-      log(`Stream Alerts panel update failed for ${guild.name}; re-run /alertsmenu:`, error.message);
-    }
   }
 
   /* ── role toggling (buttons now, legacy reactions below) ── */
@@ -1179,8 +1134,6 @@ function start(deps) {
     for (const guild of client.guilds.cache.values()) {
       const st = await store.guild(guild.id);
       discoverDriverRoles(guild, st);
-      await refreshGridPanel(guild, st);
-      await refreshAlertsPanel(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 
@@ -1246,7 +1199,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    driverPanelEmbed, gridPanelPayload, gridPanelNeedsUpdate, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
+    driverPanelEmbed, gridPanelPayload, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
     gridRows, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,

@@ -130,7 +130,7 @@ restart. History is pruned after seven days.
 ## Panels and roles
 
 Discord caps reactions at 20 per message; the 2026 grid has 22 drivers, so the
-driver panel uses buttons (`freef1:grid:<number>`) below a locally rendered PNG. Existing stored panels are updated once in place, without deleting roles or creating duplicate panels. The alert opt-in is a single
+driver panel uses buttons (`freef1:grid:<number>`) below a locally rendered PNG. Static panels are not checked or refreshed on startup. Use the panel commands when you deliberately want to replace one. The alert opt-in is a single
 `freef1:alerts` toggle button.
 
 Legacy reaction panels already posted in a server continue to work until you
