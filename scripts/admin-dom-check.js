@@ -14,6 +14,14 @@ const html = fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8');
 const source = fs.readFileSync(path.join(adminDir, 'admin.js'), 'utf8');
 const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'https://f1admin.onrender.com/admin/', pretendToBeVisual: true });
 const { window } = dom;
+const favicon = window.document.querySelector('link[rel="icon"]');
+if (!favicon || favicon.getAttribute('href') !== '/admin/favicon.svg?v=freef1' || favicon.getAttribute('type') !== 'image/svg+xml') {
+  throw new Error('Admin favicon must use the bundled FreeF1 SVG');
+}
+const icon = fs.readFileSync(path.join(adminDir, 'favicon.svg'), 'utf8');
+if (!icon.includes('viewBox="0 0 64 64"') || !icon.includes('M10 45 24 17h13')) {
+  throw new Error('Admin favicon does not match the FreeF1 icon');
+}
 const runtimeErrors = [];
 window.console = console;
 window.Headers = global.Headers;
