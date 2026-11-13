@@ -1329,7 +1329,7 @@ app.get('/api/stream/weellz-key/:kid', async (req, res) => {
     return res.status(result.status || 502).json({ error: result.error || 'Key unavailable.', code: 'unavailable' });
   }
   res.setHeader('Cache-Control', 'public, max-age=3600');
-  setNetlifyEdgeCache(res, 7200, { swr: 600, varyQuery: 'v' });
+  setNetlifyEdgeCache(res, 7200, { swr: 600, varyQuery: 't' });
   res.type('application/octet-stream').status(200).send(result.body);
 });
 

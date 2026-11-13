@@ -1296,7 +1296,8 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
 
   /* ── stripped weellz.live embed & 16-byte AES key relay ─────────────── */
   const weellzShell = { html: '', pack: null, at: 0, inFlight: null };
-  const weellzKeys = new Map(); // kid -> { body: Buffer, date: string, at: number }
+  const weellzKeys = new Map(); // key + token -> { body: Buffer, date: string, at: number }
+  const weellzKeyInFlight = new Map();
 
   async function weellzStrippedHtml() {
     if (weellzShell.html && Date.now() - weellzShell.at < WEELLZ_HTML_TTL_MS) {
@@ -1337,10 +1338,13 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     if (!/^[0-9]{4,14}\.[0-9a-f]{16,64}$/i.test(cleanToken)) {
       return { ok: false, status: 400, error: 'Invalid key token.' };
     }
-    const cached = weellzKeys.get(cleanKid);
+    const cacheKey = `${cleanKid}:${cleanToken}`;
+    const cached = weellzKeys.get(cacheKey);
     if (cached && Date.now() - cached.at < WEELLZ_KEY_TTL_MS) {
       return { ok: true, status: 200, body: cached.body, date: cached.date || new Date().toUTCString(), cached: true };
     }
+    if (weellzKeyInFlight.has(cacheKey)) return weellzKeyInFlight.get(cacheKey);
+    const task = (async () => {
     try {
       const target = `${REWND_KEY_BASE}${encodeURIComponent(cleanKid)}?t=${encodeURIComponent(cleanToken)}`;
       const response = await fetchWithTimeout(target, {
@@ -1361,13 +1365,16 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
           const oldest = weellzKeys.keys().next().value;
           if (oldest !== undefined) weellzKeys.delete(oldest);
         }
-        weellzKeys.set(cleanKid, { body, date: dateHeader, at: Date.now() });
+        weellzKeys.set(cacheKey, { body, date: dateHeader, at: Date.now() });
       }
       return { ok: true, status: 200, body, date: dateHeader, cached: false };
     } catch (error) {
       log.warn?.('[streams] weellz key relay failed:', error.message);
       return { ok: false, status: 502, error: 'Upstream key server unreachable.' };
     }
+    })();
+    weellzKeyInFlight.set(cacheKey, task);
+    try { return await task; } finally { weellzKeyInFlight.delete(cacheKey); }
   }
 
   function summary() {

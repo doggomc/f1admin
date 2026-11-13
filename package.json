@@ -8,7 +8,7 @@
     "dev": "node --watch server.js",
     "check": "npm run check:syntax && npm run check:unit && npm run check:site && npm run check:admin && npm run check:security && npm run check:motion && npm run check:csp && npm run check:discord",
     "check:syntax": "node --check server.js && node --check support-tickets.js && node --check admin/admin.js && node --check bot/discord-bot.js",
-    "check:unit": "node scripts/smoke-test.js && node scripts/help-tickets-check.js && node scripts/news-migration-check.js && node scripts/single-flight-check.js && node scripts/stream-resolver-check.js && node scripts/auto-streams-check.js && node scripts/race-weekend-auto-check.js && node scripts/weellz-autoplay-check.js && node scripts/relay-permissions-check.js && node scripts/relay-control-check.js && node scripts/headquarters-check.js",
+    "check:unit": "node scripts/smoke-test.js && node scripts/help-tickets-check.js && node scripts/news-migration-check.js && node scripts/single-flight-check.js && node scripts/stream-resolver-check.js && node scripts/weellz-key-check.js && node scripts/auto-streams-check.js && node scripts/race-weekend-auto-check.js && node scripts/weellz-autoplay-check.js && node scripts/relay-permissions-check.js && node scripts/relay-control-check.js && node scripts/headquarters-check.js",
     "check:site": "node scripts/check-site.js && node scripts/site-dom-check.js && node scripts/race-times-check.js && node scripts/help-dom-check.js",
     "check:admin": "node scripts/admin-dom-check.js",
     "check:security": "node scripts/security-check.js",

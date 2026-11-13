@@ -6,7 +6,19 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const siteDir = process.env.SITE_DIR || path.resolve(__dirname, '..', '..', 'netlifyf1');
+const candidates = process.env.SITE_DIR ? [path.resolve(process.env.SITE_DIR)] : [
+  path.resolve(__dirname, '..', '..', 'vercelf1'),
+  path.resolve(__dirname, '..', '..', 'vercelf1-relay-control'),
+  path.resolve(__dirname, '..', '..', 'netlifyf1'),
+  path.resolve(__dirname, '..', 'vercelf1'),
+  path.resolve(__dirname, '..', 'netlifyf1'),
+];
+const usable = dir => {
+  if (!fs.existsSync(path.join(dir, 'help.html'))) return false;
+  try { require.resolve('esbuild', { paths: [dir] }); return true; } catch { return false; }
+};
+const siteDir = candidates.find(usable);
+if (!siteDir) throw new Error('Public site with help.html and installed dependencies not found. Set SITE_DIR and run npm ci there.');
 const pageHtml = fs.readFileSync(path.join(siteDir, 'help.html'), 'utf8');
 const esbuild = require(require.resolve('esbuild', { paths: [siteDir] }));
 const helpScript = esbuild.buildSync({ entryPoints: [path.join(siteDir, 'src/help.ts')], bundle:true, write:false, format:'iife', platform:'browser', target:'es2022', loader:{'.css':'empty'}, define:{'import.meta.env.DEV':'false', 'import.meta.env.VITE_BACKEND_URL':'""'} }).outputFiles[0].text;
