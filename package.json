@@ -14,7 +14,7 @@
     "check:security": "node scripts/security-check.js",
     "check:motion": "node scripts/motion-check.js",
     "check:csp": "node scripts/csp-check.js",
-    "check:discord": "node scripts/discord-bot-check.js && node scripts/discord-test-alert-check.js && node scripts/discord-alerts-panel-check.js && node scripts/discord-website-image-check.js",
+    "check:discord": "node scripts/discord-bot-check.js && node scripts/discord-grid-image-check.js && node scripts/discord-test-alert-check.js && node scripts/discord-alerts-panel-check.js && node scripts/discord-website-image-check.js",
     "smoke": "node scripts/smoke-test.js",
     "dom": "node scripts/admin-dom-check.js",
     "site": "npm run check:site",

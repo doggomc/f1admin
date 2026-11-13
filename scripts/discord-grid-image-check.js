@@ -1,0 +1,30 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { PNG } = require('pngjs');
+const { _test } = require('../bot/discord-bot');
+const { gridSvg, gridDescription, renderGridImage, NAMES, LOGOS } = require('../bot/grid-image');
+const { TEAMS, ALL_DRIVERS, gridPanelPayload, gridPanelNeedsUpdate } = _test;
+const svg = gridSvg(TEAMS);
+assert.equal(TEAMS.length, 11);
+assert.equal(ALL_DRIVERS.length, 22);
+for (const team of TEAMS) {
+  assert(LOGOS[team.name]);
+  assert(svg.includes('data:image/png;base64,'));
+  for (const [, code] of team.drivers) assert(NAMES[code] && gridDescription(TEAMS).includes(NAMES[code]));
+}
+const image = renderGridImage(TEAMS);
+assert(image.length < 250_000, 'panel image remains small');
+const decoded = PNG.sync.read(image);
+assert.equal(decoded.width, 1100);
+assert(decoded.height > 1000);
+const payload = gridPanelPayload({ emojiIds: {} });
+assert.equal(payload.files[0].name, 'freef1-grid-2026.png');
+assert(payload.files[0].description.length <= 1024);
+assert.equal(payload.components.flatMap(row => row.toJSON().components).length, 22);
+assert.deepEqual(payload.allowedMentions, { parse: [] });
+const edit = gridPanelPayload({ emojiIds: {} }, { edit: true });
+assert.deepEqual(edit.embeds, []); assert.deepEqual(edit.attachments, []);
+assert(gridPanelNeedsUpdate({ components: [], attachments: [] }));
+assert(!gridPanelNeedsUpdate({ components: [], attachments: [{ name: 'freef1-grid-2026.png' }] }));
+assert(gridPanelNeedsUpdate({ components: [{ components: [{ customId: 'freef1:grid:31' }] }], attachments: [{ name: 'freef1-grid-2026.png' }] }));
+console.log(`Discord grid: 11 logos, 22 driver names and buttons, PNG ${image.length} bytes, one-time in-place migration passed`);

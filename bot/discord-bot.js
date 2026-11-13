@@ -13,7 +13,7 @@
 
    Feature set:
      /rolemenu    owner — posts the supporter-role panel: ONE compact
-                          embed plus 22 driver buttons (5 per row, team
+                          image plus 22 driver buttons (5 per row, team
                           order). Clicking a button toggles that
                           driver's "NN | CODE" role. (Buttons replaced
                           the old two-part reaction panels: Discord
@@ -50,6 +50,7 @@
 const fs = require('fs');
 const path = require('path');
 const { renderAlertImage, renderAlertsPanelImage, renderWebsiteImage } = require('./alert-image');
+const { renderGridImage, gridDescription } = require('./grid-image');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
@@ -127,6 +128,21 @@ function driverPanelEmbed(siteUrl) {
       `Tap a driver to wear their colours. Tap again to take them off.\n\n` +
       `**[${SITE_LABEL}](${siteUrl})**`,
   };
+}
+
+function gridPanelPayload(st, { edit = false } = {}) {
+  return {
+    files: [{ attachment: renderGridImage(TEAMS), name: 'freef1-grid-2026.png', description: gridDescription(TEAMS) }],
+    components: gridRows(st),
+    ...(edit ? { embeds: [], attachments: [] } : {}),
+    allowedMentions: { parse: [] },
+  };
+}
+
+function gridPanelNeedsUpdate(message) {
+  const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
+  const hasGridImage = message.attachments?.some(attachment => attachment.name === 'freef1-grid-2026.png');
+  return !hasGridImage || Boolean(hasOldOcon);
 }
 
 function alertsPanelEmbed(siteUrl) {
@@ -666,7 +682,7 @@ function start(deps) {
     // retire previous panels (including legacy two-part reaction panels)
     for (const key of ['d1', 'd2', 'grid']) await deleteStoredPanel(guild, st, key);
 
-    const msg = await channel.send({ embeds: [driverPanelEmbed(deps.siteUrl)], components: gridRows(st) });
+    const msg = await channel.send(gridPanelPayload(st));
     st.panels.grid = { channelId: channel.id, messageId: msg.id };
     await store.save();
   }
@@ -681,12 +697,12 @@ function start(deps) {
       const message = await channel?.messages.fetch(saved.messageId);
       if (!message) return;
       const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
-      if (!hasOldOcon) return;
-      await ensureEmojis(guild, st, ['51']);
+      if (!gridPanelNeedsUpdate(message)) return;
+      if (hasOldOcon) await ensureEmojis(guild, st, ['51']);
       discoverDriverRoles(guild, st);
-      await message.edit({ embeds: [driverPanelEmbed(deps.siteUrl)], components: gridRows(st) });
+      await message.edit(gridPanelPayload(st, { edit: true }));
       await store.save();
-      log(`updated grid panel for ${guild.name}: 51 CAM replaces 31 OCO`);
+      log(`updated grid panel image for ${guild.name}`);
     } catch (error) {
       log(`grid panel update failed for ${guild.name}; re-run /rolemenu:`, error.message);
     }
@@ -1230,7 +1246,7 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
+    driverPanelEmbed, gridPanelPayload, gridPanelNeedsUpdate, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
     gridRows, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,

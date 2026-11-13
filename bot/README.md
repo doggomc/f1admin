@@ -58,7 +58,7 @@ other privileged intents for this feature.
 | Command | Who | What it does |
 |---|---|---|
 | `/emojis` | owner | Uploads missing driver-number and alert emojis; this also runs automatically when panels are posted. |
-| `/rolemenu` | owner | Posts one compact driver-grid embed with 22 buttons. Clicking a button toggles that driver's `NN \| CODE` role. Re-running replaces the previous panel. |
+| `/rolemenu` | owner | Posts one driver-grid PNG with team logos, driver names and 22 buttons. Clicking a button toggles that driver's `NN \| CODE` role. Re-running replaces the previous panel. |
 | `/alertsmenu [channel] [role]` | owner | Posts the PNG alert opt-in panel with a toggle button. It can bind a channel for session alerts and a role to ping. |
 | `/config view` | owner | Shows the alerts channel and role, soon-alert lead time, and panel links. |
 | `/config set` | owner | Changes `alerts_channel`, `alerts_role`, or `soon_minutes` (1–120) without reposting panels. |
@@ -130,7 +130,7 @@ restart. History is pruned after seven days.
 ## Panels and roles
 
 Discord caps reactions at 20 per message; the 2026 grid has 22 drivers, so the
-driver panel uses buttons (`freef1:grid:<number>`). The alert opt-in is a single
+driver panel uses buttons (`freef1:grid:<number>`) below a locally rendered PNG. Existing stored panels are updated once in place, without deleting roles or creating duplicate panels. The alert opt-in is a single
 `freef1:alerts` toggle button.
 
 Legacy reaction panels already posted in a server continue to work until you
