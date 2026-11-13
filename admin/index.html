@@ -115,6 +115,12 @@
 
       <div class="wrap control-grid">
         <div class="control-col">
+          <section class="panel-card inset-hl" aria-labelledby="viewerPeaksHeading">
+            <div class="card-head"><div><span class="card-kicker">Audience</span><h2 id="viewerPeaksHeading">Peak open pages</h2></div><button class="btn btn-sm" type="button" id="loadViewerPeaks">Load peaks</button></div>
+            <p class="section-note">Approximate concurrent open pages, not unique people or verified playback. Main and backup are separate. Loaded only when requested.</p>
+            <p class="status-line" id="viewerPeaksMessage" role="status">Press Load peaks to view the saved breakdown.</p>
+            <div id="viewerPeaksResults"></div>
+          </section>
           <!-- Stream Override -->
           <section class="panel-card inset-hl" id="streamSection" aria-labelledby="overrideHeading">
             <div class="card-head">

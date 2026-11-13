@@ -14,6 +14,13 @@ const html = fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8');
 const source = fs.readFileSync(path.join(adminDir, 'admin.js'), 'utf8');
 const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'https://f1admin.onrender.com/admin/', pretendToBeVisual: true });
 const { window } = dom;
+if (!window.document.getElementById('loadViewerPeaks') || !window.document.getElementById('viewerPeaksResults')) {
+  throw new Error('Viewer peaks must be available from an explicit dashboard action');
+}
+if (!source.includes("$('loadViewerPeaks').addEventListener('click'") || !source.includes("api('/viewer-peaks')")) {
+  throw new Error('Viewer peaks must load only on request');
+}
+
 const favicon = window.document.querySelector('link[rel="icon"]');
 if (!favicon || favicon.getAttribute('href') !== '/admin/favicon.svg?v=freef1' || favicon.getAttribute('type') !== 'image/svg+xml') {
   throw new Error('Admin favicon must use the bundled FreeF1 SVG');

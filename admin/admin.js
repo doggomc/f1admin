@@ -1069,6 +1069,27 @@ $('enableAllSources').addEventListener('click', () => {
   setStatusLine('sourcesMessage', 'All sources enabled in draft. Click Save source settings to publish.');
 });
 
+$('loadViewerPeaks').addEventListener('click', async () => {
+  const button = $('loadViewerPeaks'); button.disabled = true;
+  setStatusLine('viewerPeaksMessage', 'Loading…');
+  try {
+    const data = await api('/viewer-peaks');
+    const container = $('viewerPeaksResults'); container.replaceChildren();
+    for (const site of data.sites || []) {
+      const heading = document.createElement('h3'); heading.textContent = site.site === 'backup' ? 'Backup site' : 'Main site'; container.append(heading);
+      const rows = [...(site.peaks || [])].sort((a, b) => b.at.localeCompare(a.at));
+      if (!rows.length) { const p = document.createElement('p'); p.textContent = 'No peaks recorded yet.'; container.append(p); }
+      for (const row of rows) {
+        const p = document.createElement('p');
+        const label = document.createElement('strong'); label.textContent = `${row.label}: ${row.peak}`;
+        p.append(label, document.createTextNode(` · ${row.kind} · ${new Date(row.at).toLocaleString()}`)); container.append(p);
+      }
+    }
+    setStatusLine('viewerPeaksMessage', 'Peaks loaded.');
+  } catch (error) { setStatusLine('viewerPeaksMessage', error.message, 'error'); }
+  finally { button.disabled = false; }
+});
+
 $('refreshLinks').addEventListener('click', () => {
   void loadLinks({ quiet: false });
 });

@@ -1586,6 +1586,23 @@ app.use('/admin/api', (req, res, next) => {
   });
 });
 
+// On-demand only; the counter secret never reaches the browser.
+app.get('/admin/api/viewer-peaks', async (_req, res) => {
+  const secret = String(process.env.PEAKS_READ_SECRET || '');
+  if (secret.length < 32) return res.status(503).json({ error: 'Viewer peaks are not configured on this service.' });
+  try {
+    const results = await Promise.all(['main', 'backup'].map(async site => {
+      const response = await fetch(`https://freef1-viewer-counter.calvinbotha1julie.workers.dev/admin/peaks?site=${site}`, {
+        headers: { authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(10000), redirect: 'error'
+      });
+      if (!response.ok) throw new Error('Counter unavailable');
+      const data = await response.json();
+      return { site, peaks: Array.isArray(data.peaks) ? data.peaks : [] };
+    }));
+    return res.json({ sites: results });
+  } catch { return res.status(503).json({ error: 'Could not load viewer peaks. Check the counter and matching secret.' }); }
+});
+
 app.get('/admin/api/headquarters', async (_req, res) => {
   if (CONTROL_ROLE !== 'headquarters') return res.json({ enabled: false });
   const targets = await require('./headquarters').checkTargets(HQ_TARGETS);
