@@ -160,3 +160,18 @@ keycaps.
   start a duplicate loop.
 - **Season rollover:** regenerate `schedule-2026.json` from the frontend
   schedule and redeploy. The two copies are not automatically synchronized.
+
+## Session results
+
+The bot posts a compact results PNG to the server's single text channel named
+`results`. It must be able to view the channel and send messages and attachments.
+If that channel is missing or more than one text channel has that name, the bot
+skips posting rather than guessing. On initial enablement it posts the latest
+completed race once; thereafter it posts completed sessions as provider data
+becomes available. It does not backfill old practice or qualifying sessions.
+The session schedule is currently the bundled 2026 calendar. Results are sourced
+from Jolpica for the initial race and OpenF1 for subsequent sessions; availability
+can lag session completion and published classifications can later change. Images
+are sent once, not edited after posting. A persistent per-guild results marker,
+distributed claim, and Discord nonce reduce duplicate posts on restarts or
+overlapping deployments. Like other bot state, this requires persistent storage.

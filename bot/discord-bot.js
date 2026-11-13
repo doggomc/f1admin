@@ -51,6 +51,7 @@ const fs = require('fs');
 const path = require('path');
 const { renderAlertImage, renderAlertsPanelImage, renderWebsiteImage } = require('./alert-image');
 const { renderGridImage, gridDescription } = require('./grid-image');
+const { createResultsService, createResultsPublisher } = require('./results-service');
 const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, EmbedBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
@@ -381,7 +382,7 @@ function start(deps) {
       storeCache = storeCache ? mergeSentMarkers(loaded, storeCache) : loaded;
       return storeCache;
     },
-    async save() {
+    async save({ strict = false } = {}) {
       // Serialized, and the payload is read when the write actually runs,
       // so two overlapping saves cannot clobber a newer one with a stale
       // snapshot.
@@ -402,7 +403,7 @@ function start(deps) {
           } else {
             deps.writeLocalJson(deps.fileKey, storeCache);
           }
-        } catch (e) { log('store save failed:', e.message); }
+        } catch (e) { log('store save failed:', e.message); if (strict) throw e; }
       };
       const prev = savePromise || Promise.resolve();
       savePromise = prev.then(write, write);
@@ -808,6 +809,7 @@ function start(deps) {
     } catch (e) { log('presence update failed:', e.message); }
   }
 
+  const resultsPublisher = createResultsPublisher({ store, client, season: SEASON, service: createResultsService(), log });
   let tickInFlight = false;
   async function tick() {
     // A slow Discord call must not overlap the next 15s tick, or two passes
@@ -821,6 +823,7 @@ function start(deps) {
     for (const guildId of Object.keys(s.guilds)) {
       let st = s.guilds[guildId];
       if (!st.sent) st.sent = {};
+      void resultsPublisher(guildId, st, now).catch(e => log('results update failed:', e.message));
       if (!st.alerts || !st.alerts.channelId) continue;
       const guild = client.guilds.cache.get(guildId);
       if (!guild) continue;
@@ -920,7 +923,7 @@ function start(deps) {
       // prune sent-history older than 7 days
       const cutoff = now - 7 * 86400000;
       let pruned = false;
-      for (const k of Object.keys(st.sent)) if ((st.sent[k].at || 0) < cutoff) { delete st.sent[k]; pruned = true; }
+      for (const k of Object.keys(st.sent)) if (!k.startsWith('results:') && (st.sent[k].at || 0) < cutoff) { delete st.sent[k]; pruned = true; }
       if (pruned) await store.save();
     }
     } finally {
