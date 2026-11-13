@@ -14,11 +14,8 @@ const html = fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8');
 const source = fs.readFileSync(path.join(adminDir, 'admin.js'), 'utf8');
 const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'https://f1admin.onrender.com/admin/', pretendToBeVisual: true });
 const { window } = dom;
-if (!window.document.getElementById('loadViewerPeaks') || !window.document.getElementById('viewerPeaksResults')) {
-  throw new Error('Viewer peaks must be available from an explicit dashboard action');
-}
-if (!source.includes("$('loadViewerPeaks').addEventListener('click'") || !source.includes("api('/viewer-peaks')")) {
-  throw new Error('Viewer peaks must load only on request');
+if (window.document.getElementById('loadViewerPeaks') || source.includes("$('loadViewerPeaks')")) {
+  throw new Error('Audience panel must not appear in Race Control');
 }
 
 const favicon = window.document.querySelector('link[rel="icon"]');
