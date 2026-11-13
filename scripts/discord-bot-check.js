@@ -73,7 +73,7 @@ const gridButtons = botTest.gridRows({ emojiIds: { '51': '123456789012345678' } 
 check('Haas grid offers Camara 51 instead of Ocon and has a matching emoji asset',
   botTest.ALL_DRIVERS.some(d => d.num === 51 && d.code === 'CAM' && d.team === 'Haas') &&
   !botTest.ALL_DRIVERS.some(d => d.num === 31) && grid.description.includes('51 CAM') &&
-  gridButtons.some(b => b.custom_id === 'freef1:grid:51' && b.label === 'CAM' && b.emoji?.id === '123456789012345678') &&
+  gridButtons.some(b => b.custom_id === 'freef1:grid:51' && b.label === '| CAM' && b.emoji?.id === '123456789012345678') &&
   !gridButtons.some(b => b.custom_id === 'freef1:grid:31') && fs.existsSync(path.join(root, 'assets/emoji/n51.png')));
 check('existing grid panel refreshes in place at startup without deleting roles',
   /await refreshGridPanel\(guild, st\)/.test(bot) && /message\.edit\(gridPanelPayload\(st, \{ edit: true \}\)\)/.test(bot) && /freef1:grid:31/.test(bot));

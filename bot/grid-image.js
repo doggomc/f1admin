@@ -30,7 +30,7 @@ function gridSvg(teams) {
     const data = fs.readFileSync(path.join(__dirname, '..', 'assets', 'team-logos', `${slug}.png`)).toString('base64');
     const y = header + i * rowH;
     const color = `#${Number(team.color).toString(16).padStart(6, '0')}`;
-    const drivers = team.drivers.map(([number, code], index) => `<text x="${410 + index * 305}" y="${y + 62}" fill="#f4f5f8" font-family="DejaVu Sans" font-size="21" font-weight="700"><tspan fill="#aeb4bf">${esc(number)} </tspan>${esc(NAMES[code])}</text>`).join('');
+    const drivers = team.drivers.map(([number, code], index) => `<text x="${410 + index * 305}" y="${y + 62}" fill="#f4f5f8" font-family="DejaVu Sans" font-size="21" font-weight="700"><tspan fill="#aeb4bf">${esc(number)} | </tspan>${esc(NAMES[code])}</text>`).join('');
     return `<rect x="42" y="${y}" width="1016" height="92" rx="14" fill="${i % 2 ? '#171a20' : '#1c1f25'}"/><rect x="42" y="${y + 13}" width="5" height="66" rx="2" fill="${color}"/><image x="64" y="${y + 9}" width="74" height="74" href="data:image/png;base64,${data}"/><text x="158" y="${y + 59}" fill="#fff" font-family="DejaVu Sans" font-size="23" font-weight="700">${esc(team.name === 'Mclaren' ? 'McLaren' : team.name)}</text>${drivers}`;
   }).join('');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -51,6 +51,6 @@ function renderGridImage(teams) {
   return image;
 }
 function gridDescription(teams) {
-  return `2026 driver grid. ${teams.map(team => `${team.name}: ${team.drivers.map(([number, code]) => `${number} ${NAMES[code] || code}`).join(' and ')}`).join('; ')}. Choose a driver with the buttons below.`;
+  return `2026 driver grid. ${teams.map(team => `${team.name}: ${team.drivers.map(([number, code]) => `${number} | ${NAMES[code] || code}`).join(' and ')}`).join('; ')}. Choose a driver with the buttons below.`;
 }
 module.exports = { gridSvg, renderGridImage, gridDescription, NAMES, LOGOS };

@@ -132,7 +132,7 @@ function driverPanelEmbed(siteUrl) {
 
 function gridPanelPayload(st, { edit = false } = {}) {
   return {
-    files: [{ attachment: renderGridImage(TEAMS), name: 'freef1-grid-2026.png', description: gridDescription(TEAMS) }],
+    files: [{ attachment: renderGridImage(TEAMS), name: 'freef1-grid-2026-v2.png', description: gridDescription(TEAMS) }],
     components: gridRows(st),
     ...(edit ? { embeds: [], attachments: [] } : {}),
     allowedMentions: { parse: [] },
@@ -141,7 +141,7 @@ function gridPanelPayload(st, { edit = false } = {}) {
 
 function gridPanelNeedsUpdate(message) {
   const hasOldOcon = message.components?.some(row => row.components?.some(button => (button.customId || button.custom_id) === 'freef1:grid:31'));
-  const hasGridImage = message.attachments?.some(attachment => attachment.name === 'freef1-grid-2026.png');
+  const hasGridImage = message.attachments?.some(attachment => attachment.name === 'freef1-grid-2026-v2.png');
   return !hasGridImage || Boolean(hasOldOcon);
 }
 
@@ -241,11 +241,11 @@ function gridRows(st) {
   for (let i = 0; i < ALL_DRIVERS.length; i += 5) {
     const row = new ActionRowBuilder();
     for (const d of ALL_DRIVERS.slice(i, i + 5)) {
+      const emojiId = st.emojiIds && st.emojiIds[String(d.num)];
       const button = new ButtonBuilder()
         .setStyle(ButtonStyle.Secondary)
-        .setLabel(d.code)
+        .setLabel(emojiId ? `| ${d.code}` : `${d.num} | ${d.code}`)
         .setCustomId(`freef1:grid:${d.num}`);
-      const emojiId = st.emojiIds && st.emojiIds[String(d.num)];
       if (emojiId) button.setEmoji({ id: emojiId });
       row.addComponents(button);
     }
