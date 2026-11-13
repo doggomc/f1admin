@@ -233,19 +233,30 @@
         </div>
 
         <div class="control-col">
-          <section class="panel-card inset-hl" id="headquartersSection" hidden aria-labelledby="headquartersHeading">
+          <section class="panel-card inset-hl health-card" id="headquartersSection" hidden aria-labelledby="headquartersHeading">
             <div class="card-head"><div><span class="card-kicker">Service health</span><h2 id="headquartersHeading">Headquarters</h2></div><button class="btn btn-sm" type="button" id="refreshHeadquarters">Check status</button></div>
             <p class="section-note">Checks run only when requested. A response does not guarantee playback or full service functionality.</p>
             <p class="status-line" id="headquartersMessage" role="status"></p>
             <p class="status-line" id="headquartersDelivery" role="status">No backend updates sent yet.</p>
             <button class="btn btn-sm" type="button" id="retryHeadquartersSync">Retry backend updates</button>
-            <div id="headquartersTargets"></div>
-            <hr>
+            <div id="headquartersTargets" class="health-list"></div>
+            <div class="health-divider"></div>
             <h3>Manual site failover</h3>
             <p class="section-note">Redirect the main site to the backup. The main site and its backend must be reachable for visitors to receive this setting.</p>
             <p class="status-line" id="failoverStatus" role="status">Checking…</p>
             <button class="btn btn-sm" type="button" id="activateFailover">Use backup site</button>
             <button class="btn btn-sm" type="button" id="deactivateFailover">Return to main site</button>
+          </section>
+          <section class="panel-card inset-hl audience-card" id="audienceSection" aria-labelledby="audienceHeading">
+            <div class="card-head audience-head">
+              <div><span class="card-kicker">Live presence</span><h2 id="audienceHeading">Audience</h2></div>
+              <button class="btn btn-sm" type="button" id="loadViewerPeaks">Refresh snapshot</button>
+            </div>
+            <p class="section-note">Open page connections and their all-time peaks. Not unique people or confirmed playback. The snapshot only updates when requested.</p>
+            <div class="audience-empty" id="audienceEmpty"><span class="audience-empty-icon" aria-hidden="true">◉</span><div><strong>Ready when you are</strong><small>Load a snapshot to see where pages are open.</small></div></div>
+            <p class="status-line" id="viewerPeaksMessage" role="status"></p>
+            <div class="audience-sites" id="viewerPeaksResults"></div>
+            <p class="audience-footnote">Main and backup are separate. Aggregate statistics are public. Pages without a counter connection are not included.</p>
           </section>
           <!-- NEW: Page Control (Partial Outage per Category) -->
           <section class="panel-card inset-hl" id="pageControlSection" aria-labelledby="pageControlHeading">

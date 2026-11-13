@@ -1595,7 +1595,7 @@ app.get('/admin/api/viewer-peaks', async (_req, res) => {
       });
       if (!response.ok) throw new Error('Counter unavailable');
       const data = await response.json();
-      return { site, peaks: Array.isArray(data.peaks) ? data.peaks : [] };
+      return { site, peaks: Array.isArray(data.peaks) ? data.peaks : [], current: data.current && typeof data.current === 'object' ? data.current : null };
     }));
     return res.json({ sites: results });
   } catch { return res.status(503).json({ error: 'Could not load viewer peaks. Check the counter service.' }); }

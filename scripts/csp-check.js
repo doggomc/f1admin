@@ -105,8 +105,8 @@ function walk(dir) {
   });
   check('every page wires the live-count client to the deployed endpoint',
     wired.length === counterPages.length, 'wired on ' + wired.length + '/' + counterPages.length);
-  check('live-count client sends no application messages or periodic heartbeats',
-    !/\.send\s*\(|setInterval\s*\(/.test(viewerCounterJs));
+  check('live-count sends only bounded page context and no periodic heartbeats',
+    !/setInterval\s*\(/.test(viewerCounterJs) && /type:\s*'page'/.test(viewerCounterJs) && /payload\.pages === true/.test(viewerCounterJs));
   check('site framing and media allow HTTPS embeds directly from hosts', directives.get('frame-src')?.includes('https:') && directives.get('media-src')?.includes('https:'));
   check('site fonts are self-hosted', directives.get('font-src')?.includes("'self'") && !/fonts\.(?:googleapis|gstatic)\.com/.test(sitePolicy));
   check('site does not enable external font stylesheets in CSP', !directives.get('style-src')?.includes('fonts.googleapis.com'));

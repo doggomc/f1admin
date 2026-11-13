@@ -782,10 +782,13 @@ async function loadHeadquarters() {
   const list = $('headquartersTargets');
   list.replaceChildren();
   for (const item of result.targets || []) {
-    const row = document.createElement('p');
-    row.className = 'section-note';
-    row.textContent = `${item.type === 'frontend' ? 'Frontend' : 'Backend'} · ${item.name} — ${item.online ? 'Online' : 'Unavailable'}${item.status ? ` (HTTP ${item.status})` : ''} · ${new Date(item.checkedAt).toLocaleTimeString()}`;
-    list.appendChild(row);
+    const row = document.createElement('div'); row.className = 'health-row';
+    const info = document.createElement('div'); info.className = 'health-row-info';
+    const name = document.createElement('strong'); name.textContent = item.name;
+    const detail = document.createElement('small'); detail.textContent = `${item.type === 'frontend' ? 'Frontend' : 'Backend'}${item.status ? ` · HTTP ${item.status}` : ''} · ${new Date(item.checkedAt).toLocaleTimeString()}`;
+    info.append(name, detail);
+    const badge = document.createElement('span'); badge.className = `health-badge ${item.online ? 'is-online' : 'is-offline'}`;
+    badge.textContent = item.online ? 'Online' : 'Unavailable'; row.append(info, badge); list.appendChild(row);
   }
   if (!result.targets?.length) list.textContent = 'No services configured yet.';
   $('headquartersMessage').textContent = `Last shared-store operation: ${result.storageConnected ? 'successful' : 'unavailable'}${result.lastSharedSync ? ` · ${new Date(result.lastSharedSync).toLocaleTimeString()}` : ''} · Services checked ${new Date(result.checkedAt).toLocaleTimeString()}`;
@@ -1067,6 +1070,72 @@ $('enableAllSources').addEventListener('click', () => {
   if (sourceFilter === 'on' || sourceFilter === 'off') renderSources();
   else renderSourcesFromDraft();
   setStatusLine('sourcesMessage', 'All sources enabled in draft. Click Save source settings to publish.');
+});
+
+const AUDIENCE_PAGE_NAMES = {
+  home:'Home', cockpit:'Cockpit', schedule:'Schedule', standings:'Standings', 'live-timing':'Live timing',
+  drivers:'Drivers', driver:'Driver profiles', teams:'Teams', team:'Team profiles', other:'Other',
+  replays:'Replays', 'other-streams':'Other Streams', 'replay-cockpit':'Replay cockpit',
+  'private-cockpit':'Other Streams cockpit', help:'Help'
+};
+function audienceElement(tag, cls, text) {
+  const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el;
+}
+function renderAudience(sites) {
+  const container = $('viewerPeaksResults'); container.replaceChildren();
+  for (const site of sites) {
+    const section = audienceElement('section', 'audience-site');
+    const heading = audienceElement('div', 'audience-site-head');
+    const title = audienceElement('strong', '', site.site === 'backup' ? 'Backup site' : 'Main site');
+    const current = site.current && Number.isSafeInteger(site.current.total) ? site.current : null;
+    const total = audienceElement('span', 'audience-total', current ? `${current.total.toLocaleString()} open` : 'Unavailable');
+    heading.append(title, total); section.append(heading);
+    const sitePeak = (site.peaks || []).find(p => p.kind === 'site' && p.key === 'overall');
+    if (sitePeak) section.append(audienceElement('p', 'audience-site-peak', `Site peak · ${Number(sitePeak.peak).toLocaleString()} open pages`));
+    if (!current) section.append(audienceElement('p', 'audience-muted', 'Live page breakdown is not available yet.'));
+    const peaks = Array.isArray(site.peaks) ? site.peaks : [];
+    const rows = audienceElement('div', 'audience-rows');
+    const columnHeader = audienceElement('div', 'audience-columns');
+    columnHeader.append(audienceElement('span', '', 'Page'), audienceElement('span', '', 'Open'), audienceElement('span', '', 'Peak'));
+    rows.append(columnHeader);
+    for (const [key, name] of Object.entries(AUDIENCE_PAGE_NAMES)) {
+      const peak = peaks.find(p => p.kind === 'page' && p.key === key);
+      const count = current && Number.isSafeInteger(current.pages?.[key]) ? current.pages[key] : 0;
+      if (!peak && !count) continue;
+      const row = audienceElement('div', 'audience-row');
+      row.append(audienceElement('span', 'audience-page', name), audienceElement('strong', '', current ? count.toLocaleString() : '—'), audienceElement('span', 'audience-peak', peak ? Number(peak.peak).toLocaleString() : '—'));
+      rows.append(row);
+    }
+    if (current?.unclassified) {
+      const row = audienceElement('div', 'audience-row');
+      row.append(audienceElement('span', 'audience-page', 'Unclassified'), audienceElement('strong', '', current.unclassified.toLocaleString()), audienceElement('span', 'audience-peak', '—'));
+      rows.append(row);
+    }
+    if (rows.children.length === 1) rows.append(audienceElement('p', 'audience-muted', 'No page data recorded yet.'));
+    section.append(rows);
+    const sessions = peaks.filter(p => ['live', 'replay', 'other'].includes(p.kind)).sort((a,b) => String(b.at).localeCompare(String(a.at)));
+    if (sessions.length) {
+      const details = audienceElement('details', 'audience-sessions');
+      details.append(audienceElement('summary', '', `Session and stream peaks · ${sessions.length}`));
+      for (const entry of sessions) {
+        const row = audienceElement('div', 'audience-session-row');
+        row.append(audienceElement('span', '', entry.label), audienceElement('strong', '', String(entry.peak))); details.append(row);
+      }
+      section.append(details);
+    }
+    container.append(section);
+  }
+}
+$('loadViewerPeaks').addEventListener('click', async () => {
+  const button = $('loadViewerPeaks'); button.disabled = true;
+  setStatusLine('viewerPeaksMessage', 'Loading snapshot…');
+  try {
+    const data = await api('/viewer-peaks');
+    renderAudience(Array.isArray(data.sites) ? data.sites : []);
+    $('audienceEmpty').hidden = true;
+    setStatusLine('viewerPeaksMessage', `Snapshot taken ${new Date().toLocaleTimeString()}.`);
+  } catch (error) { setStatusLine('viewerPeaksMessage', error.message, 'error'); }
+  finally { button.disabled = false; }
 });
 
 $('refreshLinks').addEventListener('click', () => {

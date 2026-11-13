@@ -1400,3 +1400,44 @@ button {
 .auto-stream-control strong { color:#fff; }
 .auto-stream-control p { color:#aaa; margin:5px 0 0; font-size:13px; }
 @media(max-width:520px) { .auto-stream-control { align-items:flex-start; flex-direction:column; } }
+
+/* Audience and service health share the site's inset cards and status language. */
+.health-list { display: grid; gap: 8px; margin: 14px 0; }
+.health-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-md); }
+.health-row-info { min-width: 0; display: grid; gap: 3px; }
+.health-row-info strong { color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+.health-row-info small { color: var(--ink-3); font-size: 11px; }
+.health-badge { display: inline-flex; align-items: center; gap: 6px; flex: none; border-radius: 999px; padding: 5px 9px; font-size: 11px; font-weight: 700; background: #ffffff0a; color: var(--ink-2); }
+.health-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.health-badge.is-online { color: #79d4a5; background: #4dbc8618; }
+.health-badge.is-offline { color: #f69991; background: #e5554d1a; }
+.health-divider { height: 1px; margin: 20px 0; background: var(--line); }
+.health-card h3 { margin: 0 0 8px; font-size: 14px; }
+.audience-head { align-items: center; }
+.audience-empty { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); background: var(--bg-elev); border-radius: var(--r-md); padding: 15px; }
+.audience-empty[hidden] { display: none; }
+.audience-empty-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 11px; color: #fd827d; background: #e106001c; }
+.audience-empty div { display: grid; gap: 4px; min-width: 0; }
+.audience-empty strong { font-size: 13px; }
+.audience-empty small, .audience-muted, .audience-footnote { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.audience-sites { display: grid; gap: 12px; }
+.audience-site { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--bg-elev); }
+.audience-site-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px; }
+.audience-site-head strong { font-size: 13px; }
+.audience-total { color: #84d7aa; background: #4dbc8618; border-radius: 999px; padding: 5px 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.audience-rows { padding: 0 14px 10px; }
+.audience-columns, .audience-row { display: grid; grid-template-columns: minmax(0,1fr) 48px 48px; align-items: center; gap: 8px; text-align: right; }
+.audience-columns { padding: 9px 0; border-top: 1px solid var(--line); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; font-weight: 700; }
+.audience-columns span:first-child, .audience-page { text-align: left; }
+.audience-row { padding: 8px 0; border-top: 1px solid #ffffff0b; font-size: 12px; }
+.audience-page { min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.audience-row strong { font-variant-numeric: tabular-nums; color: var(--ink); }
+.audience-peak { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.audience-muted { margin: 8px 14px 12px; }
+.audience-sessions { border-top: 1px solid var(--line); padding: 11px 14px; font-size: 12px; }
+.audience-sessions summary { cursor: pointer; color: var(--ink-2); font-weight: 600; }
+.audience-session-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding-top: 9px; color: var(--ink-2); overflow-wrap: anywhere; }
+.audience-session-row strong { color: var(--ink); }
+.audience-footnote { margin: 12px 0 0; }
+
+.audience-site-peak { margin: -4px 14px 12px; color: var(--ink-3); font-size: 11px; }

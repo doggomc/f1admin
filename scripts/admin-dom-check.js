@@ -14,8 +14,8 @@ const html = fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8');
 const source = fs.readFileSync(path.join(adminDir, 'admin.js'), 'utf8');
 const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'https://f1admin.onrender.com/admin/', pretendToBeVisual: true });
 const { window } = dom;
-if (window.document.getElementById('loadViewerPeaks') || source.includes("$('loadViewerPeaks')")) {
-  throw new Error('Audience panel must not appear in Race Control');
+if (!window.document.getElementById('loadViewerPeaks') || !source.includes("api('/viewer-peaks')")) {
+  throw new Error('Audience snapshot must be available on demand');
 }
 
 const favicon = window.document.querySelector('link[rel="icon"]');
@@ -76,6 +76,7 @@ window.fetch = async (url, options = {}) => {
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   if (pathname.endsWith('/admin/api/status')) return reply({ authenticated: true, loginAt: Date.now() });
   if (pathname.endsWith('/admin/api/config')) return reply(structuredClone(snapshot));
+  if (pathname.endsWith('/admin/api/viewer-peaks')) return reply({sites:[{site:'main',current:{total:3,unclassified:1,pages:{home:2}},peaks:[{kind:'site',key:'overall',peak:7},{kind:'page',key:'home',peak:5},{kind:'replay',key:'race',label:'Race',peak:2,at:'2026-01-01T00:00:00.000Z'}]},{site:'backup',current:{total:0,unclassified:0,pages:{}},peaks:[]}]});
   if (pathname.endsWith('/admin/api/pages')) {
     const body = calls.at(-1).body || {};
     snapshot.pages = { disabled: Array.isArray(body.disabled) ? body.disabled : [], updatedAt: Date.now() };
@@ -172,6 +173,10 @@ window.fetch = async (url, options = {}) => {
 
   await new Promise(resolve => setTimeout(resolve, 120));
   check('idle dashboard does not poll or heartbeat', calls.length === 2, `${calls.length} request(s)`);
+  $('loadViewerPeaks').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const audienceText = $('viewerPeaksResults').textContent;
+  check('audience loads only on request and displays page counts, peaks and unclassified connections', calls.at(-1).pathname.endsWith('/viewer-peaks') && /Main site/.test(audienceText) && /3 open/.test(audienceText) && /Home/.test(audienceText) && /Unclassified/.test(audienceText) && /Site peak · 7/.test(audienceText) && /Race/.test(audienceText));
 
   const group = id => $('sourceBulk').querySelector(`[data-group="${id}"]`);
   const groupButton = (id, action) => group(id).querySelector(`button[aria-label^="${action}"]`);
