@@ -1,8 +1,7 @@
 'use strict';
-const { createAutoResolver } = require('./auto-streams');
+const { createAutoResolver, filterDisabledAutoStreams } = require('./auto-streams');
 const { createRaceWeekend, resolveAutoStreams } = require('./race-weekend');
 const raceWeekend = createRaceWeekend();
-const autoResolver = createAutoResolver();
 
 /* FreeF1 Race Control API
  * The public site is a static Netlify app. This Render process serves the
@@ -928,6 +927,7 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 /* 4K feed resolver — public, no Discord membership required. The site asks for the
    address and plays it; joining the Discord is an optional nudge in the UI. */
 const streamResolver = require('./stream-resolver').createStreamResolver();
+const autoResolver = createAutoResolver({ resolveDynamic: path => streamResolver.resolveDynamic(path) });
 const { singleFlight } = require('./single-flight');
 // Prevent a cold catalogue refresh from fanning out to the provider once per
 // concurrent visitor. No result is cached here; existing resolver TTLs apply.
@@ -1045,6 +1045,8 @@ app.get('/api/stream/health', async (_req, res) => {
 app.get('/api/stream/auto', async (_req, res) => {
   await stateReady;
   const result = await resolveAutoStreams({ enabled:state.sources.autoStreams === true, weekend:raceWeekend, resolver:autoResolver });
+  // Respect explicit owner disable/removal settings for mapped backup sources.
+  result.streams = filterDisabledAutoStreams(result.streams, state.sources);
   const window = result.window;
   if (window.reason === 'mode-disabled') res.setHeader('Cache-Control', 'no-store');
   else {

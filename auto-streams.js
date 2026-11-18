@@ -5,9 +5,12 @@ const PROVIDERS = {
   weelo: 'https://weelo.live/players/events.json',
   ppv: 'https://api.ppv.st/api/streams',
   strmfree: 'https://strmfree.st/api/v1/streams',
+  strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
+  cdnlive: 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free',
   embdlol: 'https://api.embdlol.st/struct',
 };
 const isF1 = value => /(?:\bf\s*1\b|\bformula\s*1\b|\bskyf1\b)/i.test(String(value || ''));
+const isLowQuality = value => /(?:^|[^a-z0-9])(?:360|480|540)p(?:$|[^a-z0-9])|(?:^|[^a-z0-9])sd(?:$|[^a-z0-9])/i.test(String(value || '').replace(/_/g, ' '));
 const otherLang = value => { const s = String(value || '').trim().toLowerCase(); return Boolean(s && !/^(en|eng|english|en[-_][a-z]+)$/.test(s)); };
 function safeUrl(value, hosts) {
   try { const u = new URL(String(value || '')); return u.protocol === 'https:' && !u.username && !u.password && hosts.includes(u.hostname.toLowerCase()) ? u.href : ''; } catch { return ''; }
@@ -34,9 +37,9 @@ function parsePpv(data, now) {
   for (const group of Array.isArray(data?.streams) ? data.streams : []) for (const item of Array.isArray(group.streams) ? group.streams : []) {
     const description = `${group.category || ''} ${item.name || ''} ${item.tag || ''} ${item.iframe || ''}`;
     if (/\b(?:moto\s*gp|formula\s*[23e]\b|f[23]\s+championship|indycar|nascar|wrc|wec)\b/i.test(description)) continue;
-    if (!(isF1(description) || /\/embed\/f1\//i.test(description) || /\bgrand\s*prix\b/i.test(description)) || (item.ends_at && Number(item.ends_at) < now - 3600)) continue;
+    if (!(isF1(description) || /\/embed\/f1\//i.test(description) || /\bgrand\s*prix\b/i.test(description)) || (Number(item.starts_at) > now) || (item.ends_at && Number(item.ends_at) < now)) continue;
     for (const row of [item, ...(Array.isArray(item.substreams) ? item.substreams : [])]) {
-      if (/\b(?:360|480|540)p\b/i.test(`${row.uri_name || ''} ${row.source_tag || ''} ${row.name || ''}`)) continue;
+      if (isLowQuality(`${row.uri_name || ''} ${row.iframe || ''} ${row.source_tag || ''} ${row.name || ''}`)) continue;
       const url = safeUrl(row.iframe, ['taifood-blog.asia']);
       const entry = makeEntry('ppv', row.name || item.name, url, row.locale || item.locale, row.source_tag || 'PPV');
       if (entry) result.push(entry);
@@ -48,14 +51,30 @@ function parseStrmfree(data) {
   const result=[];
   for (const row of Array.isArray(data?.streams) ? data.streams : []) {
     if (!isF1(`${row.name || ''} ${row.league || ''} ${row.stream_key || ''}`)) continue;
-    for (const source of Array.isArray(row.sources) ? row.sources : []) {
+    const entries = [row, ...(Array.isArray(row.sources) ? row.sources : []), ...(Array.isArray(row.additional_sources) ? row.additional_sources : [])];
+    for (const source of entries) {
+      if (!source || typeof source !== 'object' || source.live === false) continue;
       const url = safeUrl(source.url || source.iframe || source.embed_url, ['strmfree.st','streamfree.top']);
-      if (/\b(?:360|480|540)p\b|^sd$/i.test(String(source.quality || '') + ' ' + JSON.stringify(source)) || /^sd$/i.test(String(source.quality || ''))) continue;
-      const entry = makeEntry('strmfree', source.name || source.broadcast || row.name, url, source.lang || source.language, source.quality || 'StreamFree');
+      if (!url || isLowQuality(`${source.quality || ''} ${url}`) || !new URL(url).pathname.startsWith('/embed/')) continue;
+      const entry = makeEntry('strmfree', source.broadcast || source.name || row.name, url, source.lang || source.language, source.quality || 'StreamFree');
       if (entry) result.push(entry);
     }
   }
   return result;
+}
+function parseStrmfreeSky(data) {
+  if (String(data?.stream_key || '').toLowerCase() !== 'skyf1') return [];
+  return parseStrmfree({streams:[{name:'Sky Sports F1', sources:(Array.isArray(data.sources) ? data.sources : []).filter(s => s?.live === true)}]});
+}
+const CDN_NAMES = new Set(['Sky Sports F1 FHD UK', 'DAZN F1 FHD']);
+function parseCdnLive(data) {
+  return (Array.isArray(data?.channels) ? data.channels : []).flatMap(row => {
+    if (!CDN_NAMES.has(row?.name) || String(row.status).toLowerCase() !== 'online') return [];
+    const name = row.name;
+    const url = `https://cdnlivetv.tv/api/v1/channels/player/?name=${encodeURIComponent(name)}&code=&user=cdnlivetv&plan=free`;
+    const entry = makeEntry('cdnlive', name, url, /DAZN/.test(name) ? 'es' : 'en', 'CDNLive · Backup', {sourceId:'sky-f1-uk'});
+    return entry ? [entry] : [];
+  });
 }
 function parseEmb(data) {
   const result=[];
@@ -68,7 +87,7 @@ function parseEmb(data) {
   }
   return result;
 }
-function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now } = {}) {
+function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, resolveDynamic = null } = {}) {
   let cached=null, expires=0, pending=null;
   async function list() {
     if(cached && clock()<expires)return cached;
@@ -80,15 +99,39 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now } 
           if(!response.ok)throw Error(`HTTP ${response.status}`);
           const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
           const data=JSON.parse(text); const now=Math.floor(clock()/1000);
-          const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,embdlol:parseEmb})[provider](data,now);
+          const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive})[provider](data,now);
           return {provider, ok:true, entries};
         } catch { return {provider,ok:false,entries:[]}; }
       }));
+      // Keep the known direct Sky F1 player as an unverified fallback only when
+      // its dedicated status endpoint failed; never claim it is live.
+      if (!rows.find(row => row.provider === 'strmfreeSky')?.ok && !rows.some(row => row.provider === 'strmfree' && row.entries.length)) {
+        rows.push({provider:'strmfreeFallback',ok:false,entries:[makeEntry('strmfree', 'Sky Sports F1', 'https://strmfree.st/embed/racing/skyf11080p', 'en', 'StreamFree · Status unknown')]});
+      }
+      // WikiSport is discovery only; resolve fixed, allowlisted pages to player URLs.
+      // Stream 4 points at TheDaddy, which is intentionally not integrated.
+      if (resolveDynamic) {
+        const wiki = await Promise.all([1,2,3,5].map(async n => {
+          try {
+            const resolved = await resolveDynamic(`wikisport/${n}`);
+            const url = resolved?.url || '';
+            const entry = url ? makeEntry('wikisport', `WikiSport · Stream ${n}`, url, 'en', 'WikiSport · Backup', {sourceId:n === 1 ? 'wikisport' : `wikisport-${n}`}) : null;
+            return entry;
+          } catch { return null; }
+        }));
+        rows.push({provider:'wikisport',ok:wiki.some(Boolean),entries:wiki.filter(Boolean)});
+      }
+      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,cdnlive:4,wikisport:5};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
-      const result={streams:[...unique.values()].slice(0,200), providers:rows.map(({provider,ok,entries})=>({provider,ok,count:entries.length})), updatedAt:clock()};
+      const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9));
+      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries})=>({provider,ok,count:entries.length})), updatedAt:clock()};
       cached=result;expires=clock()+ttl;return result;
     })().finally(()=>{pending=null}); return pending;
   }
   return {list};
 }
-module.exports={createAutoResolver,parseWeelo,parsePpv,parseStrmfree,parseEmb};
+function filterDisabledAutoStreams(streams, sources) {
+  const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
+  return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
+}
+module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb};
