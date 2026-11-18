@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb } = require('../auto-streams');
+const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb, parseBinTV } = require('../auto-streams');
 (async () => {
   const now=100000;
   const weelo=parseWeelo({events:[{series_key:'f2',start:now,end:now+30,channels:[{name:'F2',stream:'abcdef'}]}, {series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'International Feed',stream:'abcdef',lang:'EN'}, {name:'Charles Leclerc',stream:'xyzdef',lang:'FR'}]}]},now);
@@ -16,9 +16,15 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(ppvFilter.length,2);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');assert.equal(ppvFilter[1].url,'https://taifood-blog.asia/embed/f1/future');
   const cdn=parseCdnLive({channels:[{name:'Sky Sports F1 FHD UK',status:'online',url:'https://evil.example'},{name:'DAZN F1 FHD',status:'offline'},{name:'F1 Fake',status:'online'}]});
   assert.equal(cdn.length,1);assert.ok(cdn[0].url.startsWith('https://cdnlivetv.tv/'));assert.equal(cdn[0].sourceId,'sky-f1-uk');
+  const encode=x=>Buffer.from(x).toString('base64url');
+  const good=`https://bintv-sources.pages.dev/?id=${encode('https://ehgembxe.cfd/bintv/test-123')}`;
+  const bad=`https://bintv-sources.pages.dev/?id=${encode('https://evil.test/bintv/test')}`;
+  const bintv=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good},{Name:'Italian',Iframe:good},{Name:'German',Iframe:bad},{Name:'4K HEVC',Iframe:good+'&extra=1'}]},{ID:'different',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good}]}]});
+  assert.equal(bintv.length,2);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
+  assert.equal(parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'offline',Streams:[{Name:'English',Iframe:good}]}]}).length,0);
   const emb=parseEmb({channels:[{channelname:'f1frisky',id:'abc'},{channelname:'f1friesp',id:'def'}, {channelname:'f1fri540p',id:'x'}, {channelname:'football',id:'xyz'}]});assert.equal(emb.length,2);assert.equal(emb[1].tab,'other');
   let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>{calls++;return {ok:true,text:async()=>'{"events":[],"streams":[],"channels":[]}'}}});
-  await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,6);
+  await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,7);
   const wikiResolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>({ok:true,text:async()=>'{}'}),resolveDynamic:async path=>({url:path==='wikisport/1'?'https://siempreon.shop/fslivepro.php?stream=F81':''})});
   const wiki=await wikiResolver.list();assert.equal(wiki.streams.filter(x=>x.provider==='wikisport').length,1);assert.equal(wiki.streams.find(x=>x.provider==='wikisport').sourceId,'wikisport');
   assert.equal(filterDisabledAutoStreams(wiki.streams,{disabled:['wikisport']}).filter(x=>x.provider==='wikisport').length,0);

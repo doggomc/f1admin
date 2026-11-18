@@ -6,6 +6,7 @@ const PROVIDERS = {
   ppv: 'https://api.ppv.st/api/streams',
   strmfree: 'https://strmfree.st/api/v1/streams',
   strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
+  bintv: 'https://api.yosintv.fun/api/public/bintvjson',
   cdnlive: 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free',
   embdlol: 'https://api.embdlol.st/struct',
 };
@@ -66,6 +67,32 @@ function parseStrmfreeSky(data) {
   if (String(data?.stream_key || '').toLowerCase() !== 'skyf1') return [];
   return parseStrmfree({streams:[{name:'Sky Sports F1', sources:(Array.isArray(data.sources) ? data.sources : []).filter(s => s?.live === true)}]});
 }
+// BinTV rotates player IDs. Only the known Sky F1 channel and a strictly
+// validated player wrapper are eligible; never relay or fetch the video.
+function parseBinTV(data) {
+  const channels = Array.isArray(data?.['24/7 Channels']) ? data['24/7 Channels'] : [];
+  const result = [];
+  for (const channel of channels) {
+    if (channel?.ID !== 'ch_2e8bd51a1742' || channel.Name !== 'Sky Sports F1' || String(channel.Status || '').toLowerCase() !== 'live') continue;
+    for (const stream of Array.isArray(channel.Streams) ? channel.Streams : []) {
+      const name = String(stream?.Name || '').trim();
+      if (!/^(English|Italian|German|4K HEVC)$/i.test(name)) continue;
+      try {
+        const wrapper = new URL(String(stream.Iframe || ''));
+        if (wrapper.protocol !== 'https:' || wrapper.hostname !== 'bintv-sources.pages.dev' || wrapper.username || wrapper.password || wrapper.port || wrapper.pathname !== '/' || wrapper.hash || [...wrapper.searchParams.keys()].some(k => k !== 'id') || wrapper.searchParams.getAll('id').length !== 1) continue;
+        const id = wrapper.searchParams.get('id') || '';
+        if (!/^[A-Za-z0-9_-]{1,240}$/.test(id)) continue;
+        const decoded = Buffer.from(id, 'base64url').toString('utf8');
+        if (Buffer.from(decoded, 'utf8').toString('base64url') !== id) continue;
+        const player = new URL(decoded);
+        if (player.protocol !== 'https:' || player.hostname !== 'ehgembxe.cfd' || player.port || player.username || player.password || player.search || player.hash || !/^\/bintv\/[a-z0-9-]{1,160}$/i.test(player.pathname)) continue;
+        const entry = makeEntry('bintv', `Sky Sports F1 · ${name}`, `https://bintv-sources.pages.dev/?id=${id}`, /^(Italian|German|4K HEVC)$/i.test(name) ? name : 'en', 'BinTV');
+        if (entry) result.push(entry);
+      } catch { /* Invalid wrapper or embedded player. */ }
+    }
+  }
+  return result;
+}
 const CDN_NAMES = new Set(['Sky Sports F1 FHD UK', 'DAZN F1 FHD']);
 function parseCdnLive(data) {
   return (Array.isArray(data?.channels) ? data.channels : []).flatMap(row => {
@@ -99,7 +126,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
           if(!response.ok)throw Error(`HTTP ${response.status}`);
           const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
           const data=JSON.parse(text); const now=Math.floor(clock()/1000);
-          const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive})[provider](data,now);
+          const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
           return {provider, ok:true, entries};
         } catch { return {provider,ok:false,entries:[]}; }
       }));
@@ -121,7 +148,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
         }));
         rows.push({provider:'wikisport',ok:wiki.some(Boolean),entries:wiki.filter(Boolean)});
       }
-      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,cdnlive:4,wikisport:5};
+      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9));
       const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries})=>({provider,ok,count:entries.length})), updatedAt:clock()};
@@ -134,4 +161,4 @@ function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
   return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
 }
-module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb};
+module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV};
