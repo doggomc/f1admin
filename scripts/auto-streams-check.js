@@ -13,7 +13,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(sky.length,1); assert.equal(sky[0].label,'Sky Sports F1');
   assert.equal(parseStrmfree({streams:[{name:'F1 Grand Prix',iframe:'https://strmfree.st/embed/racing/f1',additional_sources:[{iframe:'https://streamfree.top/embed/racing/f1-alt'}]}]}).length,2);
   const ppvFilter = parsePpv({streams:[{category:'F1',streams:[{name:'F1',starts_at:now-1,ends_at:now+60,iframe:'https://taifood-blog.asia/embed/f1/main',substreams:[{source_tag:'SD | F1',uri_name:'f1/race_540p',iframe:'https://taifood-blog.asia/embed/f1/race_540p'}]},{name:'Future F1',starts_at:now+1,iframe:'https://taifood-blog.asia/embed/f1/future'}]}]},now);
-  assert.equal(ppvFilter.length,1);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');
+  assert.equal(ppvFilter.length,2);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');assert.equal(ppvFilter[1].url,'https://taifood-blog.asia/embed/f1/future');
   const cdn=parseCdnLive({channels:[{name:'Sky Sports F1 FHD UK',status:'online',url:'https://evil.example'},{name:'DAZN F1 FHD',status:'offline'},{name:'F1 Fake',status:'online'}]});
   assert.equal(cdn.length,1);assert.ok(cdn[0].url.startsWith('https://cdnlivetv.tv/'));assert.equal(cdn[0].sourceId,'sky-f1-uk');
   const emb=parseEmb({channels:[{channelname:'f1frisky',id:'abc'},{channelname:'f1friesp',id:'def'}, {channelname:'f1fri540p',id:'x'}, {channelname:'football',id:'xyz'}]});assert.equal(emb.length,2);assert.equal(emb[1].tab,'other');

@@ -37,7 +37,7 @@ function parsePpv(data, now) {
   for (const group of Array.isArray(data?.streams) ? data.streams : []) for (const item of Array.isArray(group.streams) ? group.streams : []) {
     const description = `${group.category || ''} ${item.name || ''} ${item.tag || ''} ${item.iframe || ''}`;
     if (/\b(?:moto\s*gp|formula\s*[23e]\b|f[23]\s+championship|indycar|nascar|wrc|wec)\b/i.test(description)) continue;
-    if (!(isF1(description) || /\/embed\/f1\//i.test(description) || /\bgrand\s*prix\b/i.test(description)) || (Number(item.starts_at) > now) || (item.ends_at && Number(item.ends_at) < now)) continue;
+    if (!(isF1(description) || /\/embed\/f1\//i.test(description) || /\bgrand\s*prix\b/i.test(description)) || (item.ends_at && Number(item.ends_at) < now)) continue;
     for (const row of [item, ...(Array.isArray(item.substreams) ? item.substreams : [])]) {
       if (isLowQuality(`${row.uri_name || ''} ${row.iframe || ''} ${row.source_tag || ''} ${row.name || ''}`)) continue;
       const url = safeUrl(row.iframe, ['taifood-blog.asia']);
