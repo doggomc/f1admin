@@ -1588,6 +1588,24 @@ app.use('/admin/api', (req, res, next) => {
   });
 });
 
+// Owner-only, on-demand diagnostic. A fresh isolated resolver bypasses the
+// weekend gate and production cache without publishing feeds or changing settings.
+const runAutoStreamsTest = singleFlight(async () => {
+  const resolver = require('./stream-resolver').createStreamResolver();
+  return createAutoResolver({ resolveDynamic: path => resolver.resolveDynamic(path) }).list();
+});
+app.get('/admin/api/stream/auto-test', async (_req, res) => {
+  setNoStore(res);
+  try {
+    await stateReady;
+    const result = await runAutoStreamsTest();
+    const allowedIds = new Set(filterDisabledAutoStreams(result.streams, state.sources).map(item => item.id));
+    res.json({ providers: result.providers, streams: result.streams.map(item => ({ ...item, disabledBySettings: !allowedIds.has(item.id) })), checkedAt: result.updatedAt, simulated: true });
+  } catch {
+    res.status(503).json({ error: 'Unable to test Auto-Streams right now.' });
+  }
+});
+
 // Fetch public aggregate statistics on demand for an authenticated dashboard.
 app.get('/admin/api/viewer-peaks', async (_req, res) => {
   try {

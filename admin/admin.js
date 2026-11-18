@@ -1003,6 +1003,44 @@ $('autoStreamsToggle').addEventListener('click', async () => {
   finally { button.disabled = false; }
 });
 
+$('testAutoStreams').addEventListener('click', async () => {
+  const button = $('testAutoStreams'), results = $('autoTestResults');
+  button.disabled = true; results.hidden = true; results.replaceChildren();
+  setStatusLine('autoTestStatus', 'Checking providers…');
+  try {
+    const data = await api('/stream/auto-test', { cache: 'no-store' });
+    const summary = document.createElement('p'); summary.className = 'auto-test-summary';
+    const streams = Array.isArray(data.streams) ? data.streams : [];
+    const allowed = streams.filter(item => !item.disabledBySettings);
+    summary.textContent = `${allowed.length} feeds available under current source settings (${streams.length} discovered). This test ignores the weekend window; it does not publish feeds or verify playback.`;
+    results.append(summary);
+    const providers = document.createElement('p'); providers.className = 'auto-test-providers';
+    providers.textContent = (Array.isArray(data.providers) ? data.providers : []).map(item => `${item.provider}: ${item.ok ? `${item.count} found` : 'unavailable'}`).join('  ·  ');
+    results.append(providers);
+    if (streams.length) {
+      const list = document.createElement('ul'); list.className = 'auto-test-list';
+      for (const stream of streams) {
+        const row = document.createElement('li');
+        const title = document.createElement('span');
+        title.textContent = `${stream.label || 'Feed'} · ${stream.provider || 'provider'}${stream.tag ? ` · ${stream.tag}` : ''}${stream.disabledBySettings ? ' · Disabled in settings' : ''}`;
+        row.append(title);
+        try {
+          const url = new URL(stream.url);
+          const hosts = ['weellz.live','taifood-blog.asia','strmfree.st','streamfree.top','embdlol.st','cdnlivetv.tv','siempreon.shop','embedsports.me','tvpclive.com'];
+          if (url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname)) {
+            const link = document.createElement('a'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open player'; row.append(link);
+          }
+        } catch { /* Invalid provider URLs are never linked. */ }
+        list.append(row);
+      }
+      results.append(list);
+    }
+    results.hidden = false;
+    setStatusLine('autoTestStatus', `Checked ${new Date(data.checkedAt || Date.now()).toLocaleString()}.`);
+  } catch (error) { setStatusLine('autoTestStatus', error.message || 'Test failed.', 'error'); }
+  finally { button.disabled = false; }
+});
+
 function renderRelayControl() {
   const disabled = config?.sources?.relaysDisabled === true;
   $('relayControlToggle').textContent = disabled ? 'Enable stream relays' : 'Disable stream relays';

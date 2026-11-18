@@ -76,6 +76,7 @@ window.fetch = async (url, options = {}) => {
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   if (pathname.endsWith('/admin/api/status')) return reply({ authenticated: true, loginAt: Date.now() });
   if (pathname.endsWith('/admin/api/config')) return reply(structuredClone(snapshot));
+  if (pathname.endsWith('/admin/api/stream/auto-test')) return reply({simulated:true,checkedAt:Date.now(),providers:[{provider:'strmfree',ok:true,count:1}],streams:[{id:'auto-strmfree-1',label:'Sky Sports F1',provider:'strmfree',tag:'FHD',url:'https://strmfree.st/embed/racing/skyf11080p',disabledBySettings:false},{id:'auto-wiki-1',label:'Disabled backup',provider:'wikisport',tag:'Backup',url:'https://siempreon.shop/fslivepro.php?stream=F81',disabledBySettings:true},{id:'auto-bad',label:'Hostile',provider:'strmfree',url:'javascript:alert(1)'}]});
   if (pathname.endsWith('/admin/api/viewer-peaks')) return reply({sites:[{site:'main',current:{total:3,unclassified:1,pages:{home:2}},peaks:[{kind:'site',key:'overall',peak:7},{kind:'page',key:'home',peak:5},{kind:'replay',key:'race',label:'Race',peak:2,at:'2026-01-01T00:00:00.000Z'}]},{site:'backup',current:{total:0,unclassified:0,pages:{}},peaks:[]}]});
   if (pathname.endsWith('/admin/api/pages')) {
     const body = calls.at(-1).body || {};
@@ -221,6 +222,12 @@ window.fetch = async (url, options = {}) => {
   $('sourceList').querySelector('.source-switch').click();
   check('enabling a source immediately removes it from the Hidden filter', $('sourceList').querySelectorAll('.source-row').length === beforeHidden - 1);
   filterChip('All').click();
+
+  const settingsBeforeTest = JSON.stringify(snapshot.sources);
+  $('testAutoStreams').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check('Auto-Streams test is on demand and does not change settings', calls.some(call => call.pathname.endsWith('/stream/auto-test') && call.method === 'GET') && JSON.stringify(snapshot.sources) === settingsBeforeTest);
+  check('Auto-Streams test shows feeds, disabled labels and safe player links', !$('autoTestResults').hidden && $('autoTestResults').textContent.includes('Sky Sports F1') && $('autoTestResults').textContent.includes('Disabled in settings') && $('autoTestResults').querySelectorAll('a').length === 2);
 
   $('forceLiveReason').value = 'Red flag delay';
   $('enableForceLive').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

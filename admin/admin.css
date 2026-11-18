@@ -1441,3 +1441,12 @@ button {
 .audience-footnote { margin: 12px 0 0; }
 
 .audience-site-peak { margin: -4px 14px 12px; color: var(--ink-3); font-size: 11px; }
+
+.auto-test-panel { margin:16px 0; padding:16px; border:1px solid #ffffff24; border-radius:14px; background:#ffffff08; }
+.auto-test-top { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.auto-test-top strong { color:#fff; }
+.auto-test-top p, .auto-test-summary, .auto-test-providers { color:#aaa; font-size:13px; margin:5px 0; }
+.auto-test-list { list-style:none; padding:0; margin:12px 0 0; max-height:300px; overflow:auto; }
+.auto-test-list li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-top:1px solid #ffffff17; font-size:13px; }
+.auto-test-list a { flex:none; color:#f5f5f5; text-decoration:underline; }
+@media(max-width:520px) { .auto-test-top { align-items:flex-start; flex-direction:column; } }
