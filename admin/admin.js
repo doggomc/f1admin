@@ -1027,7 +1027,15 @@ $('testAutoStreams').addEventListener('click', async () => {
         try {
           const url = new URL(stream.url);
           const hosts = ['weellz.live','taifood-blog.asia','strmfree.st','streamfree.top','embdlol.st','cdnlivetv.tv','siempreon.shop','embedsports.me','tvpclive.com'];
-          if (url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname)) {
+          let safe = url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname);
+          if (stream.provider === 'bintv' && url.protocol === 'https:' && url.hostname === 'bintv-sources.pages.dev' && !url.username && !url.password && !url.port && url.pathname === '/' && !url.hash && [...url.searchParams.keys()].every(key => key === 'id') && url.searchParams.getAll('id').length === 1) {
+            const id = url.searchParams.get('id') || '';
+            if (/^[A-Za-z0-9_-]{1,240}$/.test(id)) {
+              const inner = new URL(atob(id.replace(/-/g, '+').replace(/_/g, '/')));
+              safe = inner.protocol === 'https:' && inner.hostname === 'ehgembxe.cfd' && !inner.username && !inner.password && !inner.port && !inner.search && !inner.hash && /^\/bintv\/[a-z0-9-]{1,160}$/i.test(inner.pathname);
+            }
+          }
+          if (safe) {
             const link = document.createElement('a'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open player'; row.append(link);
           }
         } catch { /* Invalid provider URLs are never linked. */ }
