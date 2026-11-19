@@ -8,6 +8,14 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(parseWeelo({events:[{series_key:'f1',end:now-4000}]},now).length,0);
   const ppv=parsePpv({streams:[{category:'Formula 1',streams:[{name:'F1 Race',ends_at:now+100,locale:'en',iframe:'https://taifood-blog.asia/embed/f1/race',substreams:[{name:'Spanish',locale:'es',iframe:'https://taifood-blog.asia/embed/f1/es'},{name:'SD 540p',iframe:'https://taifood-blog.asia/embed/f1/540p'},{name:'bad',iframe:'https://evil.test/embed'}]}]},{category:'Football',streams:[{name:'Soccer',iframe:'https://taifood-blog.asia/embed/x'}]}]},now);
   assert.equal(ppv.length,2);assert.equal(ppv[1].tab,'other');
+  const languages=parsePpv({streams:[{category:'Formula 1',streams:[{name:'Las Vegas Grand Prix - Practice 1',tag:'Formula 1',locale:'en',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-en',source_tag:'HD | Sky Sport F1',substreams:[
+    {name:'Las Vegas Grand Prix - Practice 1',locale:'it',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-32430',source_tag:'HD | Sky Sport F1'},
+    {name:'Las Vegas Grand Prix - Practice 1',locale:'de',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-32429',source_tag:'HD | Sky Sport F1'},
+    {name:'Las Vegas Grand Prix - Practice 1',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-unknown',source_tag:'HD | Sky Sport F1'},
+    {name:'Las Vegas Grand Prix - Practice 1',locale:'it',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-other',source_tag:'HD | Other'}]}]}]},now);
+  assert.deepEqual(languages.map(x=>x.tag), ['HD | Sky Sport F1','HD | Sky Sport F1 · IT','HD | Sky Sport F1 · DE','HD | Sky Sport F1','HD | Other']);
+  assert.deepEqual(languages.map(x=>x.tab), ['en','other','other','en','other']);
+  assert.ok(languages.every(x=>x.label==='Las Vegas Grand Prix - Practice 1'));
   const sf=parseStrmfree({streams:[{name:'Sky Sports F1',sources:[{quality:'FHD',broadcast:'Sky',url:'https://strmfree.st/embed/racing/skyf1'}]},{name:'Football',sources:[{url:'https://strmfree.st/embed/football/x'}]}]});assert.equal(sf.length,1);
   const sky = parseStrmfreeSky({stream_key:'skyf1',sources:[{quality:'FHD',live:true,url:'https://strmfree.st/embed/racing/skyf11080p'},{live:false,url:'https://strmfree.st/embed/racing/offline'}]});
   assert.equal(sky.length,1); assert.equal(sky[0].label,'Sky Sports F1');

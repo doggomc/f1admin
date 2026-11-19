@@ -42,7 +42,15 @@ function parsePpv(data, now) {
     for (const row of [item, ...(Array.isArray(item.substreams) ? item.substreams : [])]) {
       if (isLowQuality(`${row.uri_name || ''} ${row.iframe || ''} ${row.source_tag || ''} ${row.name || ''}`)) continue;
       const url = safeUrl(row.iframe, ['taifood-blog.asia']);
-      const entry = makeEntry('ppv', row.name || item.name, url, row.locale || item.locale, row.source_tag || 'PPV');
+      // PPV uses the same Sky caption for different audio feeds. Only label the
+      // language when this individual row explicitly supplies it; do not infer
+      // a substream's language from its parent event.
+      const tag = String(row.source_tag || 'PPV').trim();
+      const locale = String(row.locale || '').trim().toLowerCase().split(/[-_]/)[0];
+      const language = ({ it: 'IT', de: 'DE' })[locale];
+      const displayTag = language && /\bsky\s+sports?\b/i.test(tag) && !new RegExp(`(?:^|[^a-z])${language}(?:$|[^a-z])`, 'i').test(tag)
+        ? `${tag.slice(0, 35).trimEnd()} · ${language}` : tag;
+      const entry = makeEntry('ppv', row.name || item.name, url, row.locale || item.locale, displayTag);
       if (entry) result.push(entry);
     }
   }
