@@ -37,6 +37,12 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   const wiki=await wikiResolver.list();assert.equal(wiki.streams.filter(x=>x.provider==='wikisport').length,1);assert.equal(wiki.streams.find(x=>x.provider==='wikisport').sourceId,'wikisport');
   assert.equal(filterDisabledAutoStreams(wiki.streams,{disabled:['wikisport']}).filter(x=>x.provider==='wikisport').length,0);
   assert.equal(filterDisabledAutoStreams(cdn,{removed:['sky-f1-uk']}).length,0);
+  const permanentSky = await createAutoResolver({clock:()=>now*1000,fetcher:async url=>({ok:true,text:async()=>String(url).includes('/api/v1/streams') && String(url).includes('strmfree') ? JSON.stringify({streams:[{name:'F1 Other',iframe:'https://strmfree.st/embed/racing/other'}]}) : '{}'})}).list();
+  assert.equal(permanentSky.streams[0].sourceId,'sky-strmfree');
+  assert.equal(permanentSky.streams[0].url,'https://strmfree.st/embed/racing/skyf11080p');
+  assert.equal(permanentSky.streams[0].tag,'StreamFree · Status unknown');
+  assert.equal(filterDisabledAutoStreams(permanentSky.streams,{disabled:['sky-strmfree']}).some(x=>x.sourceId==='sky-strmfree'),false);
+  assert.equal(sky[0].sourceId,'sky-strmfree');
   const fallback = await createAutoResolver({clock:()=>now*1000,fetcher:async url=>{if(String(url).includes('sources/skyf1')) throw Error('offline');return {ok:true,text:async()=>'{}'}}}).list();
   assert.ok(fallback.streams.some(x=>x.provider==='strmfree' && x.tag.includes('Status unknown')));
   console.log('Auto-Streams discovery, filtering, and cache checks passed');

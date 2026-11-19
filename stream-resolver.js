@@ -617,7 +617,11 @@ function taidUrl(event, session, id, mark) {
 
    `minQuality` is the floor a link has to clear to appear in this provider's pool. */
 const STREAM_SOURCES = [
-  { id: 'sky-uk', label: 'Sky HD', main: true, stripped: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+  { id: 'sky-strmfree', label: 'Sky Sports F1 (StreamFree)', main: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
+    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' }
+  ] },
+  { id: 'sky-uk', label: 'Sky HD', stripped: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
     { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=strmfree.st` },
     { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=streamfree.top` },
     { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf1&host=strmfree.st` },

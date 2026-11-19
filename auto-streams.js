@@ -65,7 +65,7 @@ function parseStrmfree(data) {
       if (!source || typeof source !== 'object' || source.live === false) continue;
       const url = safeUrl(source.url || source.iframe || source.embed_url, ['strmfree.st','streamfree.top']);
       if (!url || isLowQuality(`${source.quality || ''} ${url}`) || !new URL(url).pathname.startsWith('/embed/')) continue;
-      const entry = makeEntry('strmfree', source.broadcast || source.name || row.name, url, source.lang || source.language, source.quality || 'StreamFree');
+      const entry = makeEntry('strmfree', source.broadcast || source.name || row.name, url, source.lang || source.language, source.quality || 'StreamFree', url === 'https://strmfree.st/embed/racing/skyf11080p' ? {sourceId:'sky-strmfree'} : {});
       if (entry) result.push(entry);
     }
   }
@@ -73,7 +73,7 @@ function parseStrmfree(data) {
 }
 function parseStrmfreeSky(data) {
   if (String(data?.stream_key || '').toLowerCase() !== 'skyf1') return [];
-  return parseStrmfree({streams:[{name:'Sky Sports F1', sources:(Array.isArray(data.sources) ? data.sources : []).filter(s => s?.live === true)}]});
+  return parseStrmfree({streams:[{name:'Sky Sports F1', sources:(Array.isArray(data.sources) ? data.sources : []).filter(s => s?.live === true)}]}).map(entry => ({...entry, sourceId:'sky-strmfree'}));
 }
 // BinTV rotates player IDs. Only the known Sky F1 channel and a strictly
 // validated player wrapper are eligible; never relay or fetch the video.
@@ -138,10 +138,11 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
           return {provider, ok:true, entries};
         } catch { return {provider,ok:false,entries:[]}; }
       }));
-      // Keep the known direct Sky F1 player as an unverified fallback only when
-      // its dedicated status endpoint failed; never claim it is live.
-      if (!rows.find(row => row.provider === 'strmfreeSky')?.ok && !rows.some(row => row.provider === 'strmfree' && row.entries.length)) {
-        rows.push({provider:'strmfreeFallback',ok:false,entries:[makeEntry('strmfree', 'Sky Sports F1', 'https://strmfree.st/embed/racing/skyf11080p', 'en', 'StreamFree · Status unknown')]});
+      // Keep the permanent direct Sky F1 player even if the dedicated catalogue
+      // fails or has no live entry; this is a fallback, not a playback guarantee.
+      const hasSky = rows.some(row => row.entries.some(entry => entry.provider === 'strmfree' && entry.url === 'https://strmfree.st/embed/racing/skyf11080p'));
+      if (!hasSky) {
+        rows.push({provider:'strmfreeFallback',ok:false,entries:[makeEntry('strmfree', 'Sky Sports F1', 'https://strmfree.st/embed/racing/skyf11080p', 'en', 'StreamFree · Status unknown', {sourceId:'sky-strmfree'})]});
       }
       // WikiSport is discovery only; resolve fixed, allowlisted pages to player URLs.
       // Stream 4 points at TheDaddy, which is intentionally not integrated.
@@ -158,7 +159,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
       }
       const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
-      const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9));
+      const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
       const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries})=>({provider,ok,count:entries.length})), updatedAt:clock()};
       cached=result;expires=clock()+ttl;return result;
     })().finally(()=>{pending=null}); return pending;
