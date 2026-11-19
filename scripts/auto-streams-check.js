@@ -31,6 +31,12 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(bintv.length,2);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
   assert.equal(parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'offline',Streams:[{Name:'English',Iframe:good}]}]}).length,0);
   const emb=parseEmb({channels:[{channelname:'f1frisky',id:'abc'},{channelname:'f1friesp',id:'def'}, {channelname:'f1fri540p',id:'x'}, {channelname:'football',id:'xyz'}]});assert.equal(emb.length,2);assert.equal(emb[1].tab,'other');
+  const currentEmb = parseEmb({channels: ['skyf1_en','f1_appletv','daznf1_hd','skyf1de','skyf1it','skyf1uhd','ssmotorsport_sd','Sky Sport Event 1','skyf1_540p'].map((channelname,i)=>({channelname,id:`id-${i}`}))});
+  assert.equal(currentEmb.length,6);
+  assert.deepEqual(currentEmb.map(x=>x.label),['Sky Sports F1','F1 Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
+  assert.deepEqual(currentEmb.map(x=>x.tab),['en','en','other','other','other','en']);
+  assert.equal(parseEmb({channels:[{channelname:'skyf1_en',id:'../bad'}]}).length,0);
+
   let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>{calls++;return {ok:true,text:async()=>'{"events":[],"streams":[],"channels":[]}'}}});
   await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,7);
   const wikiResolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>({ok:true,text:async()=>'{}'}),resolveDynamic:async path=>({url:path==='wikisport/1'?'https://siempreon.shop/fslivepro.php?stream=F81':''})});

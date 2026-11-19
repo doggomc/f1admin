@@ -113,11 +113,20 @@ function parseCdnLive(data) {
 }
 function parseEmb(data) {
   const result=[];
+  // Explicit current channel aliases plus historical race-prefixed F1 names.
+  // Do not infer that a generic Sky Sports or motorsport channel is F1.
+  const aliases = {
+    skyf1en: ['Sky Sports F1', 'en'], f1appletv: ['F1 Apple TV', 'en'],
+    daznf1hd: ['DAZN F1', 'es'], skyf1de: ['Sky F1 · DE', 'de'],
+    skyf1it: ['Sky F1 · IT', 'it'], skyf1uhd: ['Sky F1 UHD', 'en'],
+  };
   for (const c of Array.isArray(data?.channels) ? data.channels : []) {
-    const name=String(c.channelname || c.name || '');
-    if (!/^f1(?:[\s_-]|[a-z0-9])/i.test(name) || /(?:360|480|540)p|\b(?:replay|recording)\b/i.test(name) || !/^[a-zA-Z0-9_-]{1,100}$/.test(String(c.id || ''))) continue;
+    const name=String(c?.channelname || c?.name || '').trim();
+    const flat=name.toLowerCase().replace(/[\s_-]+/g, '');
+    const alias=aliases[flat];
+    if ((!alias && !/^f1(?:[\s_-]|[a-z0-9])/i.test(name)) || isLowQuality(name) || /(?:360|480|540)p|\b(?:replay|recording)\b/i.test(name) || !/^[a-zA-Z0-9_-]{1,100}$/.test(String(c?.id || ''))) continue;
     const other = /spanish|italian|german|(?:esp|ita|deu|skyit|skyde)$/i.test(name);
-    const entry=makeEntry('embdlol', name, `https://embdlol.st/embed/${encodeURIComponent(c.id)}`, other ? 'other' : 'en', 'EMB');
+    const entry=makeEntry('embdlol', alias?.[0] || name, `https://embdlol.st/embed/${encodeURIComponent(c.id)}`, alias?.[1] || (other ? 'other' : 'en'), 'EMB');
     if(entry)result.push(entry);
   }
   return result;
