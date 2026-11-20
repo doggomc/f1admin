@@ -29,6 +29,8 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   const bad=`https://bintv-sources.pages.dev/?id=${encode('https://evil.test/bintv/test')}`;
   const bintv=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good},{Name:'Italian',Iframe:good},{Name:'German',Iframe:bad},{Name:'4K HEVC',Iframe:good+'&extra=1'}]},{ID:'different',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good}]}]});
   assert.equal(bintv.length,2);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
+  const hevc=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'4K HEVC',Iframe:good},{Name:'German',Iframe:good}]}]});
+  assert.equal(hevc[0].tab,'en');assert.equal(hevc[0].label,'Sky Sports F1 · 4K HEVC');assert.equal(hevc[0].url,good);assert.equal(hevc[1].tab,'other');
   assert.equal(parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'offline',Streams:[{Name:'English',Iframe:good}]}]}).length,0);
   const emb=parseEmb({channels:[{channelname:'f1frisky',id:'abc'},{channelname:'f1friesp',id:'def'}, {channelname:'f1fri540p',id:'x'}, {channelname:'football',id:'xyz'}]});assert.equal(emb.length,2);assert.equal(emb[1].tab,'other');
   const currentEmb = parseEmb({channels: ['skyf1_en','f1_appletv','daznf1_hd','skyf1de','skyf1it','skyf1uhd','ssmotorsport_sd','Sky Sport Event 1','skyf1_540p'].map((channelname,i)=>({channelname,id:`id-${i}`}))});
