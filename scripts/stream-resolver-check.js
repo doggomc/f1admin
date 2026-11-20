@@ -26,6 +26,17 @@ function resolverFor(channels) {
     await resolver.embdlolPublicChannels();
     assert.equal(calls(), 1, 'fresh catalogue should be cached');
   }
+  const current = resolverFor([
+    { id: 'sky-id', channelname: 'skyf1' }, { id: 'apple-id', channelname: 'f1atvp' },
+    { id: 'dazn-id', channelname: 'daznf1' }, { id: 'de-id', channelname: 'skyf1de' },
+    { id: 'it-id', channelname: 'skyf1it' }, { id: 'uhd-id', channelname: 'skyf1uhd' },
+    { id: 'other-id', channelname: 'SkyMainEvent' }
+  ]);
+  const currentMap = (await current.resolver.embdlolPublicChannels()).channels;
+  assert.equal(currentMap.fullhd1, 'sky-id'); assert.equal(currentMap.fullhd3, 'apple-id');
+  assert.equal(currentMap.dazn, 'dazn-id'); assert.equal(currentMap.skyde, 'de-id');
+  assert.equal(currentMap.skyit, 'it-id'); assert.equal(currentMap.uhd, undefined);
+  assert.equal(await current.resolver.resolveUhdUrl(), 'https://embdlol.st/embed/uhd-id');
   const liveUhd = { id: 'live-uhd', channelname: 'F1 - Brazil - Live - UHD' };
   const oldUhd = { id: 'old-uhd', channelname: 'F1 - Brazil - Saturday - UHD' };
   for (const entries of [[liveUhd, oldUhd], [oldUhd, liveUhd]]) {
