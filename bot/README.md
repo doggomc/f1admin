@@ -113,12 +113,12 @@ Every 15 seconds, the scheduler checks the 2026 season in
 
 - **T−N minutes** (10 by default; configurable with
   `/config set soon_minutes:`) posts an amber `STARTING SOON` image and pings
-the alerts role. The image includes the FreeF1 site address.
+the alerts role. A clickable **Watch on FreeF1** button appears below the image.
 - **Lights out** edits that same message to green `LIVE NOW`; it does not send a
 second ping or another message. If no earlier message exists, it posts a new image and pings the configured role.
 - **Chequered flag** edits it to a red `SESSION ENDED` image. End times are estimated per
 session because the schedule contains start times only. The bot only edits a
-message it sent; it does not post a missed session as newly ended.
+message it sent; it does not post a missed session as newly ended. The button changes to **Results on FreeF1**.
 - While a session is live, the bot's activity shows the Grand Prix name.
 Otherwise it shows the next session and a countdown, updating only when that
 text changes.

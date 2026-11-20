@@ -34,15 +34,20 @@ Module._load = originalLoad;
       const compressed = await renderAlertImage(event, session, state);
       assert(compressed.length < raw.length, 'PNG optimization reduces file size');
       assert.deepEqual(PNG.sync.read(compressed).data, PNG.sync.read(raw).data, 'all decoded pixels are identical');
-      const sent = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{ping:true});
+      const sent = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{siteUrl:'https://freef1-live.vercel.app',ping:true});
       assert.equal(sent.content, '<@&123456789012345678>');
       assert.deepEqual(sent.allowedMentions,{parse:[],roles:['123456789012345678']});
-      assert.equal(sent.embeds,undefined); assert.equal(sent.components,undefined); assert.equal(sent.files.length,1);
-      const edit = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{edit:true});
+      assert.equal(sent.embeds,undefined); assert.equal(sent.files.length,1);
+      const button = sent.components[0].toJSON().components[0];
+      assert.equal(button.label, state === 'end' ? 'Results on FreeF1' : 'Watch on FreeF1');
+      assert.equal(button.style, 5); assert.equal(button.url, 'https://freef1-live.vercel.app');
+      const edit = await bot._test.imageAlertPayload(event,session,state,'123456789012345678',{siteUrl:'https://freef1-live.vercel.app',edit:true});
       assert.deepEqual(edit.allowedMentions,{parse:[],roles:[]});
-      assert.deepEqual(edit.embeds,[]); assert.deepEqual(edit.components,[]); assert.deepEqual(edit.attachments,[]);
-      const noRole = await bot._test.imageAlertPayload(event,session,state,null,{ping:true});
+      assert.deepEqual(edit.embeds,[]); assert.deepEqual(edit.attachments,[]);
+      assert.deepEqual(edit.components[0].toJSON().components[0], button);
+      const noRole = await bot._test.imageAlertPayload(event,session,state,null,{siteUrl:'https://freef1-live.vercel.app',ping:true});
       assert.equal(noRole.content,''); assert.deepEqual(noRole.allowedMentions,{parse:[],roles:[]});
+      assert.deepEqual(noRole.components[0].toJSON().components[0], button);
       console.log(state, 'optimized', raw.length, '→', compressed.length, 'bytes, pixel-identical');
     }
     for (const state of ['start','live','end']) {
