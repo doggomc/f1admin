@@ -170,7 +170,7 @@ skips posting rather than guessing. On initial enablement it posts the latest
 completed race once; thereafter it posts completed sessions as provider data
 becomes available. It does not backfill old practice or qualifying sessions.
 The session schedule is currently the bundled 2026 calendar. Results are sourced
-from Jolpica for the initial race and OpenF1 for subsequent sessions; availability
+from Jolpica for the initial race and OpenF1 for subsequent sessions. When OpenF1 is unavailable, finished practice sessions can fall back to BBC Sport after validating the event, start time, final status and complete classification; availability
 can lag session completion and published classifications can later change. Images
 are sent once, not edited after posting. A persistent per-guild results marker,
 distributed claim, and Discord nonce reduce duplicate posts on restarts or

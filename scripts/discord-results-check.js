@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { PNG } = require('pngjs');
-const { createResultsPublisher, createResultsService, jolpiRaceResult, openF1Rows, openF1Time, duration, keyFor, resultsChannel, resultPayload, matchingSession } = require('../bot/results-service');
+const { bbcPracticeResults, createResultsPublisher, createResultsService, jolpiRaceResult, openF1Rows, openF1Time, duration, keyFor, resultsChannel, resultPayload, matchingSession } = require('../bot/results-service');
 const { svgForResults, logoFor } = require('../bot/results-image');
 const fs = require('fs');
 const race = JSON.parse(fs.readFileSync(require('path').join(__dirname,'fixtures','sample-results.json'),'utf8'));
@@ -69,6 +69,24 @@ async function main() {
   const api=createResultsService({fetchImpl:network,now:()=>t+2*3600_000});
   assert((await api.sessionResults({name:'Test'}, {name:'Practice 1',slug:'fp1',ts:t}, t-1000)).rows.length===10);
   assert.equal((await api.sessionResults({name:'Test'}, {name:'Practice 1',slug:'fp1',ts:t}, t+2*3600_000)).skipped,true);
+  // A provider-lockout fallback must only use a finished, matching, complete practice.
+  const bbcEvent={name:'Las Vegas Grand Prix'};
+  const bbcSession={name:'Practice 1',slug:'fp1',ts:Date.parse('2026-11-20T00:30:00Z')};
+  const participants=Array.from({length:22},(_,i)=>({fullName:`Driver ${i+1}`,rank:{value:String(i+1)},team:{fullName:'Ferrari'},practiceTime:{value:'-'}}));
+  const practice={name:'First Practice',status:'PostEvent',isLive:false,eventDateTime:new Date(bbcSession.ts).toISOString(),participants};
+  const htmlFor=(p,stageName=bbcEvent.name)=>`<script>window.__INITIAL_DATA__=${JSON.stringify(JSON.stringify({data:{'formula1-stage-results?test':{data:{baseStageName:stageName,practice:[p]}}}}))}</script>`;
+  const bbcHtml=htmlFor(practice);
+  const parsedBbc=bbcPracticeResults(bbcHtml,bbcEvent,bbcSession);
+  assert.equal(parsedBbc.rows.length,22);assert.equal(parsedBbc.rows[0].time,'No time');
+  assert.equal(bbcPracticeResults(htmlFor({...practice,status:'MidEvent',isLive:true}),bbcEvent,bbcSession),null);
+  assert.equal(bbcPracticeResults(htmlFor({...practice,participants:participants.slice(0,10)}),bbcEvent,bbcSession),null);
+  assert.equal(bbcPracticeResults(htmlFor({...practice,eventDateTime:'2026-01-01T00:00:00Z'}),bbcEvent,bbcSession),null);
+  assert.equal(bbcPracticeResults(htmlFor(practice,'Other Grand Prix'),bbcEvent,bbcSession),null);
+  let bbcFetches=0;
+  const blocked = createResultsService({now:()=>bbcSession.ts+2*3600_000,fetchImpl:async url=>{if(url.startsWith('https://api.openf1.org/'))return{ok:false,status:401};bbcFetches++;return{ok:true,text:async()=>bbcHtml}}});
+  const bbcResult=await blocked.sessionResults(bbcEvent,bbcSession,bbcSession.ts-1000);
+  assert.equal(bbcResult.rows.length,22);assert.equal(bbcFetches,1);
+  assert.equal((await blocked.sessionResults(bbcEvent,bbcSession,bbcSession.ts+2*3600_000)).skipped,true);
   console.log(`Discord results: image ${payload.files[0].attachment.length} bytes, times, completeness, one-time last race, future session, restart deduplication passed`);
 }
 main().catch(e=>{console.error(e);process.exitCode=1});

@@ -54,8 +54,32 @@ function matchingSession(sessions, scheduled) {
   return sessions.filter(s => !s.is_cancelled && equivalent(s.session_name) && Math.abs(Date.parse(s.date_start) - scheduled.ts) <= 8 * 3600_000)
     .sort((a,b) => Math.abs(Date.parse(a.date_start)-scheduled.ts)-Math.abs(Date.parse(b.date_start)-scheduled.ts))[0];
 }
+// The BBC publishes explicit PostEvent results even while OpenF1 restricts
+// unauthenticated access. Only a fully identified, finished practice is safe.
+function bbcPracticeResults(html, event, session) {
+  const names = {fp1:'First Practice',fp2:'Second Practice',fp3:'3rd Practice'};
+  const wanted = names[session.slug];
+  if (!wanted || typeof html !== 'string' || html.length > 2_000_000) return null;
+  try {
+    const encoded = html.match(/window\.__INITIAL_DATA__\s*=\s*("(?:\\.|[^"\\])*")/);
+    if (!encoded) return null;
+    const root = JSON.parse(JSON.parse(encoded[1]));
+    const stages = Object.entries(root?.data || {}).filter(([key]) => key.startsWith('formula1-stage-results?'));
+    if (stages.length !== 1) return null;
+    const stage = stages[0][1]?.data;
+    if (normalName(stage?.baseStageName) !== normalName(event.name)) return null;
+    const sessions = (Array.isArray(stage.practice) ? stage.practice : []).filter(row => row.name === wanted && row.status === 'PostEvent' && row.isLive === false && Math.abs(Date.parse(row.eventDateTime) - session.ts) <= 300_000);
+    if (sessions.length !== 1) return null;
+    const participants = sessions[0].participants;
+    if (!Array.isArray(participants) || participants.length < 20 || participants.length > 30) return null;
+    const rows = participants.map(p => ({position:Number(p?.rank?.value), name:String(p?.fullName || '').trim(), team:String(p?.team?.fullName || '').trim(), time:String(p?.practiceTime?.value || '').trim()}));
+    if (rows.some(r => !Number.isInteger(r.position) || !r.name || !r.team) || new Set(rows.map(r => r.position)).size !== rows.length || rows.some(r => r.position < 1 || r.position > rows.length)) return null;
+    return {event:event.name,session:session.name,kind:'timed',rows:rows.sort((a,b)=>a.position-b.position).map(r=>({position:String(r.position).padStart(2,'0'),name:r.name,team:r.team,color:TEAM_COLORS[r.team] || '#8c929e',time:r.time && r.time !== '-' ? r.time : 'No time'}))};
+  } catch { return null; }
+}
 function createResultsService({ fetchImpl = fetch, now = Date.now } = {}) {
   let sessionsCache = null, sessionsAt = 0, raceCache = null, raceAt = 0;
+  const bbcCache = new Map();
   async function json(url) {
     const res = await fetchImpl(url,{ headers:{Accept:'application/json'}, signal:AbortSignal.timeout(10000) });
     if (!res.ok) throw Error(`Results provider HTTP ${res.status}`);
@@ -74,19 +98,42 @@ function createResultsService({ fetchImpl = fetch, now = Date.now } = {}) {
     if (!Array.isArray(data)) throw Error('Invalid OpenF1 sessions');
     sessionsAt=now(); return (sessionsCache=data);
   }
+  async function bbcFallback(event, session, startedAt) {
+    if (!['fp1','fp2','fp3'].includes(session.slug)) return null;
+    // Preserve the original no-historical-backfill rule for newly enabled bots.
+    if (session.ts < startedAt && session.ts + 60*60_000 <= startedAt) return {skipped:true};
+    const slug = String(event.name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if (!slug || slug.length > 100) return null;
+    const key = `${YEAR}/${slug}`;
+    let item = bbcCache.get(key);
+    if (!item || now() - item.at >= RETRY_MS) {
+      const response = await fetchImpl(`https://www.bbc.com/sport/formula1/${YEAR}/${slug}/results`, {headers:{Accept:'text/html'},signal:AbortSignal.timeout(10000)});
+      if (!response.ok) return null;
+      const html = await response.text();
+      if (html.length > 2_000_000) return null;
+      item = {at:now(),html}; bbcCache.set(key,item);
+    }
+    return bbcPracticeResults(item.html,event,session);
+  }
   async function sessionResults(event, session, startedAt) {
+    try {
     const match=matchingSession(await currentSessions(), session);
-    if (!match || !Number.isFinite(Date.parse(match.date_start))) return null;
+    if (!match || !Number.isFinite(Date.parse(match.date_start))) return bbcFallback(event, session, startedAt);
     // Do not flood the channel with historical practice results on first deployment.
     if (session.ts < startedAt && Date.parse(match.date_end) <= startedAt) return { skipped:true };
     const rows=await json(`${OPENF1}/session_result?session_key=${encodeURIComponent(match.session_key)}`);
-    if (!Array.isArray(rows) || !rows.length) return null;
+    if (!Array.isArray(rows) || !rows.length) return bbcFallback(event, session, startedAt);
     const drivers=await json(`${OPENF1}/drivers?session_key=${encodeURIComponent(match.session_key)}`);
-    if (!Array.isArray(drivers) || !drivers.length) return null;
+    if (!Array.isArray(drivers) || !drivers.length) return bbcFallback(event, session, startedAt);
     const kind = session.slug === 'race' || session.slug === 'sprint' ? 'race' : 'timed';
     const parsed=openF1Rows(rows,drivers,kind);
-    if (!parsed) return null;
+    if (!parsed) return bbcFallback(event, session, startedAt);
     return { event:event.name, session:session.name, kind, rows:parsed };
+    } catch (error) {
+      const fallback = await bbcFallback(event,session,startedAt);
+      if (fallback) return fallback;
+      throw error;
+    }
   }
   return {latestRace, sessionResults};
 }
@@ -170,4 +217,4 @@ function createResultsPublisher({ store, client, season, service, log = () => {}
     } finally { running.delete(guildId); }
   };
 }
-module.exports = {createResultsService,createResultsPublisher,resultsChannel,resultPayload,jolpiRaceResult,keyFor,matchingSession,openF1Rows,openF1Time,duration,RETRY_MS,MAX_BACKLOG_MS};
+module.exports = {bbcPracticeResults,createResultsService,createResultsPublisher,resultsChannel,resultPayload,jolpiRaceResult,keyFor,matchingSession,openF1Rows,openF1Time,duration,RETRY_MS,MAX_BACKLOG_MS};
