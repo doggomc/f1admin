@@ -37,6 +37,9 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(currentEmb.length,6);
   assert.deepEqual(currentEmb.map(x=>x.label),['Sky Sports F1','F1 Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
   assert.deepEqual(currentEmb.map(x=>x.tab),['en','en','other','other','other','en']);
+  const newEmb = parseEmb({channels: ['skyf1','f1atvp','daznf1','skyf1de','skyf1it','skyf1uhd','SkyMainEvent'].map((channelname,i)=>({channelname,id:`new-${i}`}))});
+  assert.deepEqual(newEmb.map(x=>x.label), ['Sky Sports F1','F1 Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
+  assert.deepEqual(newEmb.map(x=>x.tab), ['en','en','other','other','other','en']);
   assert.equal(parseEmb({channels:[{channelname:'skyf1_en',id:'../bad'}]}).length,0);
 
   let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>{calls++;return {ok:true,text:async()=>'{"events":[],"streams":[],"channels":[]}'}}});
