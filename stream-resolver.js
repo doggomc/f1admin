@@ -78,7 +78,7 @@ function feedKey(name) {
   const flat = raw.replace(/^formula[\s_-]*1\b/, 'f1').replace(/[\s_-]+/g, '');
   // EMB also publishes fixed channel names instead of weekend-prefixed names.
   // Match only explicit F1 aliases; generic Sky Sports channels are not necessarily F1.
-  const current = { skyf1: 'sky', skyf1en: 'sky', f1atvp: 'apple', f1appletv: 'apple', daznf1: 'dazn', daznf1hd: 'dazn', skyf1de: 'skyde', skyf1it: 'skyit', skyf1uhd: 'uhd' };
+  const current = { skyf1: 'sky', skyf1en: 'sky', skyf1uk: 'sky', f1atvp: 'apple', f1appletv: 'apple', daznf1: 'dazn', daznf1hd: 'dazn', skyf1de: 'skyde', skyf1it: 'skyit', skyf1uhd: 'uhd' };
   if (current[flat]) return current[flat];
 
   if (!/^[a-z0-9]+$/.test(flat)) return '';
