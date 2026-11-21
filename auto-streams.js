@@ -93,7 +93,7 @@ function parseBinTV(data) {
         const decoded = Buffer.from(id, 'base64url').toString('utf8');
         if (Buffer.from(decoded, 'utf8').toString('base64url') !== id) continue;
         const player = new URL(decoded);
-        if (player.protocol !== 'https:' || player.hostname !== 'ehgembxe.cfd' || player.port || player.username || player.password || player.search || player.hash || !/^\/bintv\/[a-z0-9-]{1,160}$/i.test(player.pathname)) continue;
+        if (player.protocol !== 'https:' || !['ehgembxe.cfd', 'shoewiki.click'].includes(player.hostname) || player.port || player.username || player.password || player.search || player.hash || !/^\/bintv\/[a-z0-9-]{1,160}$/i.test(player.pathname)) continue;
         const entry = makeEntry('bintv', `Sky Sports F1 · ${name}`, `https://bintv-sources.pages.dev/?id=${id}`, /^(Italian|German)$/i.test(name) ? name : 'en', 'BinTV');
         if (entry) result.push(entry);
       } catch { /* Invalid wrapper or embedded player. */ }

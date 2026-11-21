@@ -1032,7 +1032,7 @@ $('testAutoStreams').addEventListener('click', async () => {
             const id = url.searchParams.get('id') || '';
             if (/^[A-Za-z0-9_-]{1,240}$/.test(id)) {
               const inner = new URL(atob(id.replace(/-/g, '+').replace(/_/g, '/')));
-              safe = inner.protocol === 'https:' && inner.hostname === 'ehgembxe.cfd' && !inner.username && !inner.password && !inner.port && !inner.search && !inner.hash && /^\/bintv\/[a-z0-9-]{1,160}$/i.test(inner.pathname);
+              safe = inner.protocol === 'https:' && ['ehgembxe.cfd', 'shoewiki.click'].includes(inner.hostname) && !inner.username && !inner.password && !inner.port && !inner.search && !inner.hash && /^\/bintv\/[a-z0-9-]{1,160}$/i.test(inner.pathname);
             }
           }
           if (safe) {

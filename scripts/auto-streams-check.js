@@ -27,6 +27,11 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   const encode=x=>Buffer.from(x).toString('base64url');
   const good=`https://bintv-sources.pages.dev/?id=${encode('https://ehgembxe.cfd/bintv/test-123')}`;
   const bad=`https://bintv-sources.pages.dev/?id=${encode('https://evil.test/bintv/test')}`;
+  const rotated=`https://bintv-sources.pages.dev/?id=${encode('https://shoewiki.click/bintv/test-123')}`;
+  const spoof=`https://bintv-sources.pages.dev/?id=${encode('https://shoewiki.click.evil.test/bintv/test')}`;
+  const rotatedList=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:rotated},{Name:'German',Iframe:spoof}]}]});
+  assert.equal(rotatedList.length,1); assert.equal(rotatedList[0].url,rotated);
+
   const bintv=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good},{Name:'Italian',Iframe:good},{Name:'German',Iframe:bad},{Name:'4K HEVC',Iframe:good+'&extra=1'}]},{ID:'different',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good}]}]});
   assert.equal(bintv.length,2);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
   const hevc=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'4K HEVC',Iframe:good},{Name:'German',Iframe:good}]}]});
