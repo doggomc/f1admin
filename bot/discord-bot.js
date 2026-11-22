@@ -143,8 +143,9 @@ function gridPanelPayload(st) {
 // (e.g. the server's "Redbull" and "McLaren"). Ambiguous matches fail closed.
 function mapTeamRoles(roleList) {
   const norm = name => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const available = [...roleList];
   return TEAMS.map(team => {
-    const matches = [...roleList].filter(role => norm(role.name) === norm(team.name) && !role.managed);
+    const matches = available.filter(role => norm(role.name) === norm(team.name) && !role.managed);
     return matches.length === 1 ? matches[0] : null;
   });
 }
