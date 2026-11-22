@@ -1,10 +1,19 @@
 'use strict';
 const assert=require('node:assert/strict');
-const { _test:{TEAMS,teamPanelPayload,mapTeamRoles,changeTeamRole} }=require('../bot/discord-bot');
+const { _test:{TEAMS,teamPanelPayload,TEAM_EMOJIS,ensureTeamEmojis,mapTeamRoles,changeTeamRole} }=require('../bot/discord-bot');
 const {gridSvg}=require('../bot/grid-image');
 (async()=>{
  const svg=gridSvg(TEAMS,true); assert(svg.includes('TEAM ROLES')); assert(svg.includes('Choose one team')); assert(!svg.includes('Charles Leclerc'));assert(svg.includes('Ferrari'));
  const payload=teamPanelPayload(); const buttons=payload.components.flatMap(r=>r.toJSON().components);assert.equal(buttons.length,11);assert.equal(new Set(buttons.map(b=>b.custom_id)).size,11);assert.deepEqual(payload.allowedMentions,{parse:[]});
+ const cache=new Map(); cache.find=fn=>[...cache.values()].find(fn);
+ cache.set('111111111111111111',{id:'111111111111111111',name:'ferrari',available:true});
+ let created=0; const guild={emojis:{cache,fetch:async()=>cache,create:async({name,attachment})=>{assert(attachment.length);const item={id:String(200000000000000000n+BigInt(++created)),name,available:true};cache.set(item.id,item);return item}}};
+ const emojiIds=await ensureTeamEmojis(guild);assert.equal(created,10);assert.equal(emojiIds.ferrari,'111111111111111111');
+ const decorated=teamPanelPayload(emojiIds).components.flatMap(row=>row.toJSON().components);assert.equal(decorated.length,11);
+ decorated.forEach((button,i)=>assert.equal(button.emoji.id,emojiIds[TEAM_EMOJIS[i][0]]));
+ await ensureTeamEmojis(guild);assert.equal(created,10,'existing server emojis are reused');
+ const empty=new Map();empty.find=fn=>[...empty.values()].find(fn);
+ await assert.rejects(()=>ensureTeamEmojis({emojis:{cache:empty,fetch:async()=>{},create:async()=>{throw Error('no slots')}}}),/Could not create :ferrari:/);
  const all=TEAMS.map((t,i)=>({id:String(i+1),name:t.name==='Red Bull'?'Redbull':t.name,managed:false}));
  const roles=mapTeamRoles(all); assert(roles.every(Boolean));
  const fromDiscordCache=mapTeamRoles(new Map(all.map(role=>[role.id,role])).values()); assert(fromDiscordCache.every(Boolean),'Discord Collection iterator must work for every team');assert.equal(roles[3].name,'Redbull');assert.equal(mapTeamRoles([...all,{...all[3],id:'duplicate'}])[3],null);assert.equal(mapTeamRoles(all.slice(1))[0],null);

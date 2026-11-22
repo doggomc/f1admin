@@ -149,17 +149,44 @@ function mapTeamRoles(roleList) {
     return matches.length === 1 ? matches[0] : null;
   });
 }
-function teamRows() {
+const TEAM_EMOJIS = [
+  ['ferrari','ferrari'], ['mercedes','mercedes'], ['mclaren','mclaren'], ['redbull','redbullracing'],
+  ['astonmartin','astonmartin'], ['williams','williams'], ['haas','haasf1team'], ['audi','audi'],
+  ['racingbulls','racingbulls'], ['alpine','alpine'], ['cadillac','cadillac'],
+];
+// Reuse matching server emojis; never overwrite or delete an existing emoji.
+async function ensureTeamEmojis(guild) {
+  await guild.emojis.fetch();
+  const ids={};
+  for (const [name,file] of TEAM_EMOJIS) {
+    let emoji=guild.emojis.cache.find(e=>e.name===name && e.available !== false);
+    if (!emoji) {
+      try {
+        emoji=await guild.emojis.create({name,attachment:fs.readFileSync(path.join(__dirname,'..','assets','team-logos',`${file}.png`)),reason:'FreeF1 team role buttons'});
+      } catch (error) {
+        throw new Error(`Could not create :${name}: emoji. Check Manage Emojis permission and available server emoji slots.`);
+      }
+    }
+    ids[name]=emoji.id;
+  }
+  return ids;
+}
+function teamRows(emojiIds = {}) {
   const rows=[];
   for (let i=0;i<TEAMS.length;i+=5) {
     const row=new ActionRowBuilder();
-    TEAMS.slice(i,i+5).forEach((team,j)=>row.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel(team.name === 'Mclaren' ? 'McLaren' : team.name).setCustomId(`freef1:team:${i+j}`)));
+    TEAMS.slice(i,i+5).forEach((team,j)=>{
+      const button=new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel(team.name === 'Mclaren' ? 'McLaren' : team.name).setCustomId(`freef1:team:${i+j}`);
+      const emojiId=emojiIds[TEAM_EMOJIS[i+j][0]];
+      if (emojiId) button.setEmoji({id:emojiId});
+      row.addComponents(button);
+    });
     rows.push(row);
   }
   return rows;
 }
-function teamPanelPayload() {
-  return {files:[{attachment:renderGridImage(TEAMS,true),name:'freef1-teams-2026.png',description:`2026 teams: ${TEAMS.map(t=>t.name).join(', ')}. Choose one team with the buttons below; tap again to remove.`}],components:teamRows(),allowedMentions:{parse:[]}};
+function teamPanelPayload(emojiIds = {}) {
+  return {files:[{attachment:renderGridImage(TEAMS,true),name:'freef1-teams-2026.png',description:`2026 teams: ${TEAMS.map(t=>t.name).join(', ')}. Choose one team with the buttons below; tap again to remove.`}],components:teamRows(emojiIds),allowedMentions:{parse:[]}};
 }
 // Remove only known team roles; leave driver and other roles untouched.
 async function changeTeamRole(member, roles, index) {
@@ -719,7 +746,8 @@ function start(deps) {
     const roles=mapTeamRoles(guild.roles.cache.values());
     const missing=TEAMS.filter((_,i)=>!roles[i]).map(t=>t.name);
     if (missing.length) throw new Error(`Missing or ambiguous team roles: ${missing.join(', ')}`);
-    const msg=await channel.send(teamPanelPayload());
+    const emojiIds=await ensureTeamEmojis(guild);
+    const msg=await channel.send(teamPanelPayload(emojiIds));
     await deleteStoredPanel(guild, st, 'team');
     st.panels.team={channelId:channel.id,messageId:msg.id};
     await store.save();
@@ -1100,7 +1128,8 @@ function start(deps) {
       if (cmd === 'emojis') {
         await interaction.deferReply({ ephemeral: true });
         await ensureEmojis(guild, st);
-        return interaction.editReply({ content: `Emoji set complete: ${Object.keys(st.emojiIds).length} ids stored.` });
+        await ensureTeamEmojis(guild);
+        return interaction.editReply({ content: `Driver and team emojis are ready.` });
       }
 
       if (cmd === 'teammenu') {
@@ -1290,7 +1319,7 @@ module.exports = {
   start,
   _test: {
     driverPanelEmbed, gridPanelPayload, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
-    gridRows, teamRows, teamPanelPayload, mapTeamRoles, changeTeamRole, alertsRow, alertsPanelPayload,
+    gridRows, teamRows, teamPanelPayload, TEAM_EMOJIS, ensureTeamEmojis, mapTeamRoles, changeTeamRole, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,
     TEAMS, ALL_DRIVERS, OWNER_ID, DEFAULT_SOON_MINUTES, SESSION_MIN,
