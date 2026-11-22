@@ -75,8 +75,20 @@ function parseStrmfreeSky(data) {
   if (String(data?.stream_key || '').toLowerCase() !== 'skyf1') return [];
   return parseStrmfree({streams:[{name:'Sky Sports F1', sources:(Array.isArray(data.sources) ? data.sources : []).filter(s => s?.live === true)}]}).map(entry => ({...entry, sourceId:'sky-strmfree'}));
 }
-// BinTV rotates player IDs. Only the known Sky F1 channel and a strictly
-// validated player wrapper are eligible; never relay or fetch the video.
+// BinTV rotates player IDs. Only its known wrappers and narrowly allowed player hosts are eligible.
+function binTVPlayer(value) {
+  try {
+    const wrapper = new URL(String(value || ''));
+    if (wrapper.protocol !== 'https:' || wrapper.hostname !== 'bintv-sources.pages.dev' || wrapper.username || wrapper.password || wrapper.port || wrapper.pathname !== '/' || wrapper.hash || [...wrapper.searchParams.keys()].some(k => k !== 'id') || wrapper.searchParams.getAll('id').length !== 1) return '';
+    const id = wrapper.searchParams.get('id') || '';
+    if (!/^[A-Za-z0-9_-]{1,240}$/.test(id)) return '';
+    const decoded = Buffer.from(id, 'base64url').toString('utf8');
+    if (Buffer.from(decoded, 'utf8').toString('base64url') !== id) return '';
+    const player = new URL(decoded);
+    if (player.protocol !== 'https:' || !['ehgembxe.cfd', 'shoewiki.click'].includes(player.hostname) || player.port || player.username || player.password || player.search || player.hash || !/^\/bintv\/[a-z0-9-]{1,160}$/i.test(player.pathname)) return '';
+    return `https://bintv-sources.pages.dev/?id=${id}`;
+  } catch { return ''; }
+}
 function parseBinTV(data) {
   const channels = Array.isArray(data?.['24/7 Channels']) ? data['24/7 Channels'] : [];
   const result = [];
@@ -85,18 +97,26 @@ function parseBinTV(data) {
     for (const stream of Array.isArray(channel.Streams) ? channel.Streams : []) {
       const name = String(stream?.Name || '').trim();
       if (!/^(English|Italian|German|4K HEVC)$/i.test(name)) continue;
-      try {
-        const wrapper = new URL(String(stream.Iframe || ''));
-        if (wrapper.protocol !== 'https:' || wrapper.hostname !== 'bintv-sources.pages.dev' || wrapper.username || wrapper.password || wrapper.port || wrapper.pathname !== '/' || wrapper.hash || [...wrapper.searchParams.keys()].some(k => k !== 'id') || wrapper.searchParams.getAll('id').length !== 1) continue;
-        const id = wrapper.searchParams.get('id') || '';
-        if (!/^[A-Za-z0-9_-]{1,240}$/.test(id)) continue;
-        const decoded = Buffer.from(id, 'base64url').toString('utf8');
-        if (Buffer.from(decoded, 'utf8').toString('base64url') !== id) continue;
-        const player = new URL(decoded);
-        if (player.protocol !== 'https:' || !['ehgembxe.cfd', 'shoewiki.click'].includes(player.hostname) || player.port || player.username || player.password || player.search || player.hash || !/^\/bintv\/[a-z0-9-]{1,160}$/i.test(player.pathname)) continue;
-        const entry = makeEntry('bintv', `Sky Sports F1 · ${name}`, `https://bintv-sources.pages.dev/?id=${id}`, /^(Italian|German)$/i.test(name) ? name : 'en', 'BinTV');
-        if (entry) result.push(entry);
-      } catch { /* Invalid wrapper or embedded player. */ }
+      const entry = makeEntry('bintv', `Sky Sports F1 · ${name}`, binTVPlayer(stream.Iframe), /^(Italian|German)$/i.test(name) ? name : 'en', 'BinTV');
+      if (entry) result.push(entry);
+    }
+  }
+  // Live F1 weekend events only. A generic Grand Prix is not enough: require a
+  // clearly F1-specific broadcast and reject other series. Unknown names fail closed.
+  for (const event of Array.isArray(data?.['Live Events']) ? data['Live Events'] : []) {
+    const title=String(event?.Name || '').trim();
+    const streams=Array.isArray(event?.Streams) ? event.Streams : [];
+    if (String(event?.Status || '').toLowerCase() !== 'live' || !/motorsport/i.test(String(event?.Category || '')) || /\b(?:moto\s*gp|formula\s*[23e]|f[23]\b|f1\s*academy|indycar|nascar)\b/i.test(title)) continue;
+    if (!(isF1(title) || (/\bgrand\s*prix\b/i.test(title) && streams.some(s=>/^sky sports f1(?:\s|$)/i.test(String(s?.Name || '')))))) continue;
+    for (const stream of streams) {
+      const raw=String(stream?.Name || '').trim();
+      const match=raw.match(/^(Apple TV|Sky Sports F1|SuperSport MotorSport|Fox Sports 506|DAZN F1|Eleven Sports 1)(?:\s+(4K(?:\s+HEVC)?|UHD))?$/i);
+      if (!match) continue;
+      const labels={'apple tv':'Apple TV','sky sports f1':'Sky Sports F1','supersport motorsport':'SuperSport MotorSport','fox sports 506':'Fox Sports 506','dazn f1':'DAZN F1','eleven sports 1':'Eleven Sports 1'};
+      const label=labels[match[1].toLowerCase()];
+      const lang=label==='DAZN F1'?'es':label==='Eleven Sports 1'?'pl':'en';
+      const entry=makeEntry('bintv',label,binTVPlayer(stream.Iframe),lang,match[2]?'4K':'BinTV',{eventSession:title.slice(0,120)});
+      if (entry) result.push(entry);
     }
   }
   return result;
