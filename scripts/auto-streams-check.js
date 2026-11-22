@@ -47,6 +47,9 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.deepEqual(newEmb.map(x=>x.tab), ['en','en','other','other','other','en']);
   const uk = parseEmb({channels:[{channelname:'skyf1uk',id:'current-uk'}]});
   assert.equal(uk.length,1); assert.equal(uk[0].label,'Sky Sports F1'); assert.equal(uk[0].tab,'en'); assert.equal(uk[0].url,'https://embdlol.st/embed/current-uk');
+  const specialEmb = parseEmb({channels:['f1drivertracker','f1pitlane','f1lewis','f1kimi','f1mixedonboard','f1timingchannel','f1stroll'].map((channelname,i)=>({channelname,id:`special-${i}`}))});
+  assert.deepEqual(specialEmb.map(e=>e.label), ['Driver Tracker','Pit Lane','Lewis Hamilton','Kimi Antonelli','Mixed Onboard','Data Channel','Lance Stroll']);
+  assert.ok(specialEmb.every(e=>e.tab==='en'));
   assert.equal(parseEmb({channels:[{channelname:'skyf1_en',id:'../bad'}]}).length,0);
 
   let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>{calls++;return {ok:true,text:async()=>'{"events":[],"streams":[],"channels":[]}'}}});
