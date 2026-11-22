@@ -135,13 +135,14 @@ function parseEmb(data) {
   return result;
 }
 function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, resolveDynamic = null } = {}) {
-  let cached=null, expires=0, pending=null;
+  let cached=null, expires=0, pending=null, revision=0;
   // Retain only a recent, successfully fetched EMB catalogue; never refresh its age on failures.
   let lastEmb = null;
   const EMB_STALE_MAX_MS = 20 * 60_000;
-  async function list() {
-    if(cached && clock()<expires)return cached;
+  async function list({force = false} = {}) {
+    if(!force && cached && clock()<expires)return cached;
     if(pending)return pending;
+    const startedRevision = revision;
     pending=(async()=>{
       const rows=await Promise.all(Object.entries(PROVIDERS).map(async ([provider,url])=>{
         try {
@@ -150,7 +151,6 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
           const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
           const data=JSON.parse(text); const now=Math.floor(clock()/1000);
           const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
-          if (provider === 'embdlol') lastEmb = {entries, at:clock()};
           return {provider, ok:true, entries};
         } catch {
           const age = lastEmb ? clock() - lastEmb.at : Infinity;
@@ -160,6 +160,10 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
           return {provider,ok:false,entries:[]};
         }
       }));
+      // A trusted snapshot that arrived during the fetch wins over the older in-flight result.
+      if (startedRevision !== revision && cached) return cached;
+      const embRow = rows.find(row => row.provider === 'embdlol');
+      if (embRow?.ok) lastEmb = {entries:embRow.entries, at:clock()};
       // Keep the permanent direct Sky F1 player even if the dedicated catalogue
       // fails or has no live entry; this is a fallback, not a playback guarantee.
       const hasSky = rows.some(row => row.entries.some(entry => entry.provider === 'strmfree' && entry.url === 'https://strmfree.st/embed/racing/skyf11080p'));
@@ -179,15 +183,26 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
         }));
         rows.push({provider:'wikisport',ok:wiki.some(Boolean),entries:wiki.filter(Boolean)});
       }
+      if (startedRevision !== revision && cached) return cached;
       const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
-      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale})=>({provider,ok,count:entries.length,...(stale ? {stale:true} : {})})), updatedAt:clock()};
+      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale,staleUntil})=>({provider,ok,count:entries.length,...(stale ? {stale:true,staleUntil} : {})})), updatedAt:clock()};
       const staleEmb = rows.find(row => row.provider === 'embdlol' && row.stale);
       cached=result; expires=staleEmb ? Math.min(clock()+ttl, staleEmb.staleUntil) : clock()+ttl; return result;
     })().finally(()=>{pending=null}); return pending;
   }
-  return {list};
+  // Accept only the trusted Headquarters snapshot, not arbitrary public input.
+  function adopt(result) {
+    if (!result || !Array.isArray(result.streams) || result.streams.length > 200 || !Array.isArray(result.providers) || result.providers.length > 12 || !Number.isFinite(result.updatedAt) || Math.abs(clock()-result.updatedAt) > 60000) return false;
+    if (result.streams.some(x => !x || typeof x.id !== 'string' || typeof x.url !== 'string' || !/^https:\/\//.test(x.url) || typeof x.provider !== 'string')) return false;
+    if (result.providers.some(x => !x || typeof x.provider !== 'string' || typeof x.ok !== 'boolean')) return false;
+    const emb = result.providers.find(x=>x.provider==='embdlol');
+    if (emb?.stale && (!Number.isFinite(emb.staleUntil) || emb.staleUntil <= clock() || emb.staleUntil > clock()+EMB_STALE_MAX_MS)) return false;
+    if (emb?.ok) lastEmb = {entries:result.streams.filter(x=>x.provider==='embdlol'),at:result.updatedAt};
+    cached=result; revision++; expires=Math.min(clock()+ttl,result.updatedAt+ttl,emb?.stale ? emb.staleUntil : Infinity); return true;
+  }
+  return {list,adopt};
 }
 function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);

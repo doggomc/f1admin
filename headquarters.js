@@ -37,6 +37,16 @@ async function pushUpdates(targets, secret) {
     } catch { return { name: target.name, url: target.url, delivered: false, status: null, checkedAt: Date.now() }; }
   }));
 }
+// One small authenticated notification per configured replica, only on an owner-triggered refresh.
+async function publishAutoStreams(targets, secret, result) {
+  return Promise.all(targets.map(async target => {
+    try {
+      const response = await fetch(target.url + '/internal/headquarters/auto-refresh', {method:'POST', headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(10000),redirect:'error'});
+      await response.body?.cancel();
+      return {name:target.name, delivered:response.ok, status:response.status};
+    } catch { return {name:target.name, delivered:false, status:null}; }
+  }));
+}
 async function checkTargets(targets) {
   return Promise.all(targets.map(async target => {
     const started = Date.now();
@@ -49,4 +59,4 @@ async function checkTargets(targets) {
     }
   }));
 }
-module.exports = { readTargets, readPushTargets, pushUpdates, checkTargets };
+module.exports = { readTargets, readPushTargets, pushUpdates, publishAutoStreams, checkTargets };

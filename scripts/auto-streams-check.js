@@ -79,12 +79,21 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
   embState='failure'; t+=600001; response=await retained.list();
   assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
-  assert.deepEqual(response.providers.find(x=>x.provider==='embdlol'),{provider:'embdlol',ok:false,count:1,stale:true});
+  assert.deepEqual(response.providers.find(x=>x.provider==='embdlol'),{provider:'embdlol',ok:false,count:1,stale:true,staleUntil:1000000+1200000});
   const beforeCached = requestCount; await retained.list(); assert.equal(requestCount,beforeCached);
   t=1000000+1200000; response=await retained.list();
   assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
   embState='success'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
   embState='empty'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
   embState='failure'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
+  // Explicit owner refresh bypasses cache; trusted replicas can adopt its result.
+  let forceCalls=0, forceNow=5000000;
+  const forced=createAutoResolver({clock:()=>forceNow,fetcher:async()=>{forceCalls++;return {ok:true,text:async()=>'{}'}}});
+  const first=await forced.list(); await forced.list(); assert.equal(forceCalls,7);
+  forceNow++; const fresh=await forced.list({force:true}); assert.equal(forceCalls,14); assert.ok(fresh.updatedAt>first.updatedAt);
+  const replica=createAutoResolver({clock:()=>forceNow,fetcher:async()=>{throw Error('should not fetch')}});
+  assert.equal(replica.adopt(fresh),true); assert.deepEqual(await replica.list(),fresh);
+  assert.equal(replica.adopt({...fresh,updatedAt:forceNow-60001}),false);
+  assert.equal(replica.adopt({...fresh,streams:[{id:'x',provider:'x',url:'javascript:alert(1)'}]}),false);
   console.log('Auto-Streams discovery, filtering, and cache checks passed');
 })().catch(e=>{console.error(e);process.exit(1)});

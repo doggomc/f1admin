@@ -1008,11 +1008,11 @@ $('testAutoStreams').addEventListener('click', async () => {
   button.disabled = true; results.hidden = true; results.replaceChildren();
   setStatusLine('autoTestStatus', 'Checking providers…');
   try {
-    const data = await api('/stream/auto-test', { cache: 'no-store' });
+    const data = await api('/stream/auto-test', { method: 'POST', cache: 'no-store' });
     const summary = document.createElement('p'); summary.className = 'auto-test-summary';
     const streams = Array.isArray(data.streams) ? data.streams : [];
     const allowed = streams.filter(item => !item.disabledBySettings);
-    summary.textContent = `${allowed.length} feeds available under current source settings (${streams.length} discovered). This test ignores the weekend window; it does not publish feeds or verify playback.`;
+    summary.textContent = `${allowed.length} feeds available under current source settings (${streams.length} discovered). Discovery was refreshed. Viewer visibility still follows Auto-Streams, disabled-source settings and the race-weekend window. Playback was not verified; open pages update on their normal refresh.`;
     results.append(summary);
     const providers = document.createElement('p'); providers.className = 'auto-test-providers';
     providers.textContent = (Array.isArray(data.providers) ? data.providers : []).map(item => `${item.provider}: ${item.ok ? `${item.count} found` : 'unavailable'}`).join('  ·  ');
@@ -1044,7 +1044,10 @@ $('testAutoStreams').addEventListener('click', async () => {
       results.append(list);
     }
     results.hidden = false;
-    setStatusLine('autoTestStatus', `Checked ${new Date(data.checkedAt || Date.now()).toLocaleString()}.`);
+    const delivery = Array.isArray(data.refreshDelivery) ? data.refreshDelivery : [];
+    const failed = delivery.filter(item => !item.delivered);
+    const noTargets = data.refreshTargetsRequired && !delivery.length;
+    setStatusLine('autoTestStatus', noTargets ? 'Refreshed locally, but no replica targets are configured.' : failed.length ? `Refreshed, but delivery failed for: ${failed.map(item => item.name).join(', ')}.` : `Refreshed ${new Date(data.checkedAt || Date.now()).toLocaleString()}.`, noTargets || failed.length ? 'error' : '');
   } catch (error) { setStatusLine('autoTestStatus', error.message || 'Test failed.', 'error'); }
   finally { button.disabled = false; }
 });

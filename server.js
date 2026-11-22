@@ -34,7 +34,7 @@ const HQ_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').r
 const HQ_PUSH_TARGETS = CONTROL_ROLE === 'headquarters' ? require('./headquarters').readPushTargets(process.env.HQ_PUSH_TARGETS, process.env.NODE_ENV === 'test') : [];
 const HQ_PUSH_SECRET = String(process.env.HQ_PUSH_SECRET || '');
 const HQ_URL = String(process.env.HQ_URL || '').trim().replace(/\/+$/, '');
-const FORWARDABLE_ADMIN_PATHS = new Set(['/pages','/maintenance','/stream/window','/stream/override','/stream/stop','/stream/normal','/stream/auto','/stream/relays','/stream/sources','/stream/catalogue','/stream/sources/bulk','/stream/chip','/reset-all']);
+const FORWARDABLE_ADMIN_PATHS = new Set(['/pages','/maintenance','/stream/window','/stream/override','/stream/stop','/stream/normal','/stream/auto','/stream/auto-test','/stream/relays','/stream/sources','/stream/catalogue','/stream/sources/bulk','/stream/chip','/reset-all']);
 let lastPushResults = null;
 let replicaSyncTail = Promise.resolve();
 let lastSharedSync = null;
@@ -898,6 +898,14 @@ app.use((req, _res, next) => {
 });
 
 // Incoming authenticated notifications trigger a single shared-store read; no polling.
+// Only Headquarters may refresh a replica's in-memory discovery snapshot.
+app.post('/internal/headquarters/auto-refresh', async (req, res) => {
+  if (CONTROL_ROLE !== 'replica') return res.status(404).end();
+  if (!isSafeEqual(String(req.headers.authorization || ''), `Bearer ${HQ_PUSH_SECRET}`)) return res.status(401).json({error:'Unauthorized'});
+  if (!autoResolver.adopt(req.body)) return res.status(400).json({error:'Invalid discovery snapshot'});
+  setNoStore(res); return res.json({success:true});
+});
+
 app.post('/internal/headquarters/sync', async (req, res) => {
   if (CONTROL_ROLE !== 'replica') return res.status(404).end();
   const auth = String(req.headers.authorization || '');
@@ -1593,6 +1601,18 @@ app.use('/admin/api', (req, res, next) => {
 const runAutoStreamsTest = singleFlight(async () => {
   const resolver = require('./stream-resolver').createStreamResolver();
   return createAutoResolver({ resolveDynamic: path => resolver.resolveDynamic(path) }).list();
+});
+// Explicit owner action: refresh discovery once, then deliver the result to configured replicas.
+const refreshAutoStreamsFromAdmin = singleFlight(() => autoResolver.list({force:true}));
+app.post('/admin/api/stream/auto-test', async (_req, res) => {
+  setNoStore(res);
+  try {
+    await stateReady;
+    const result = await refreshAutoStreamsFromAdmin();
+    const delivery = CONTROL_ROLE === 'headquarters' ? await require('./headquarters').publishAutoStreams(HQ_PUSH_TARGETS, HQ_PUSH_SECRET, result) : [];
+    const allowedIds = new Set(filterDisabledAutoStreams(result.streams, state.sources).map(item => item.id));
+    res.json({providers:result.providers,streams:result.streams.map(item=>({...item,disabledBySettings:!allowedIds.has(item.id)})),checkedAt:result.updatedAt,refreshed:true,refreshDelivery:delivery,refreshTargetsRequired:CONTROL_ROLE === 'headquarters'});
+  } catch { res.status(503).json({error:'Could not refresh Auto-Streams.'}); }
 });
 app.get('/admin/api/stream/auto-test', async (_req, res) => {
   setNoStore(res);

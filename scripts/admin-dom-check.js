@@ -226,7 +226,7 @@ window.fetch = async (url, options = {}) => {
   const settingsBeforeTest = JSON.stringify(snapshot.sources);
   $('testAutoStreams').click();
   await new Promise(resolve => setTimeout(resolve, 30));
-  check('Auto-Streams test is on demand and does not change settings', calls.some(call => call.pathname.endsWith('/stream/auto-test') && call.method === 'GET') && JSON.stringify(snapshot.sources) === settingsBeforeTest);
+  check('Auto-Streams test is on demand and does not change settings', calls.some(call => call.pathname.endsWith('/stream/auto-test') && call.method === 'POST') && JSON.stringify(snapshot.sources) === settingsBeforeTest);
   check('Auto-Streams test shows feeds, disabled labels and safe player links', !$('autoTestResults').hidden && $('autoTestResults').textContent.includes('Sky Sports F1') && $('autoTestResults').textContent.includes('Disabled in settings') && $('autoTestResults').querySelectorAll('a').length === 3 && [...$('autoTestResults').querySelectorAll('a')].some(link => link.href.includes('bintv-sources.pages.dev')) && ![...$('autoTestResults').querySelectorAll('a')].some(link => link.parentNode.textContent.includes('Bad BinTV')));
 
   $('forceLiveReason').value = 'Red flag delay';

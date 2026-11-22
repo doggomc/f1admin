@@ -56,6 +56,13 @@ const pause = ms => new Promise(r => setTimeout(r, ms));
     const hq=await start('headquarters','hq',true,hp,targets);
     const replica=await start('replica','replica',false,p1,[],hq.base); const replica2=await start('replica','replica2',false,p2,[],hq.base);
     assert.equal((await fetch(replica.base+'/internal/headquarters/sync',{method:'POST'})).status,401,'unauthorized notifications rejected');
+    const payload = {streams:[{id:'auto-embdlol-a',label:'Sky Sports F1',provider:'embdlol',url:'https://embdlol.st/embed/example'}],providers:[{provider:'embdlol',ok:true,count:1}],updatedAt:Date.now()};
+    const internal = (auth, data) => fetch(replica.base+'/internal/headquarters/auto-refresh',{method:'POST',headers:{'content-type':'application/json',...(auth ? {authorization:'Bearer '+auth} : {})},body:JSON.stringify(data)});
+    assert.equal((await internal('',payload)).status,401,'refresh rejects unauthenticated calls');
+    assert.equal((await internal('wrong',payload)).status,401,'refresh rejects wrong secret');
+    assert.equal((await internal('test-secret-for-sync',{...payload,updatedAt:0})).status,400,'stale snapshots rejected');
+    assert.equal((await internal('test-secret-for-sync',payload)).status,200,'trusted snapshot accepted');
+
     await pause(300); const idleReads = reads; await pause(700); assert.equal(reads, idleReads, 'replicas do not poll shared storage');
     const hc=await login(hq.base); const rc=await login(replica.base);
     const setFailover = (base,cookie,active) => fetch(base+'/admin/api/failover',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({active})});
