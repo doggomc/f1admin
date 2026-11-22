@@ -2,7 +2,7 @@
 /* Metadata-only discovery. Fixed catalogue endpoints, bounded responses, no video proxy. */
 const crypto = require('node:crypto');
 const PROVIDERS = {
-  weelo: 'https://weelo.live/players/events.json',
+  weelo: 'https://racinglap.net/api/v1/streams.json',
   ppv: 'https://api.ppv.st/api/streams',
   strmfree: 'https://strmfree.st/api/v1/streams',
   strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
@@ -28,10 +28,39 @@ function parseWeelo(data, now) {
   return (Array.isArray(event.channels) ? event.channels : []).flatMap(c => {
     if (!/^[A-Za-z0-9_-]{3,180}$/.test(String(c.stream || ''))) return [];
     const name = String(c.name || '').trim();
-    const special = /data/i.test(name) ? 'data' : /tracker|onboard|camera/i.test(name) || !/f1 tv|international|sky|world/i.test(name) ? 'onboard' : undefined;
+    const special = /data/i.test(name) ? 'data' : /tracker/i.test(name) ? undefined : /onboard|camera/i.test(name) || !/f1 tv|international|sky|world/i.test(name) ? 'onboard' : undefined;
     const entry = makeEntry('weelo', name, `https://weellz.live/beta?stream=${encodeURIComponent(c.stream)}`, c.lang, event.live ? 'Weelo · Live' : 'Weelo · Upcoming', special ? { special } : {});
     return entry ? [entry] : [];
   });
+}
+// RacingLap publishes direct players; keep them intact and constrain to known player routes.
+function racingLapPlayer(raw) {
+  try {
+    if (typeof raw !== 'string' || raw.length > 512) return '';
+    const u=new URL(raw);
+    if (u.protocol !== 'https:' || u.hostname !== 'weellz.live' || u.username || u.password || u.port || u.hash) return '';
+    const key=u.pathname==='/beta'?'stream':u.pathname==='/at'?'id':'';
+    if (!key || [...u.searchParams.keys()].some(k=>k!==key) || u.searchParams.getAll(key).length!==1 || !/^[A-Za-z0-9_-]{3,180}$/.test(u.searchParams.get(key)||'')) return '';
+    return raw;
+  } catch { return ''; }
+}
+function parseRacingLap(data, now) {
+  if (!data || data.api !== 'racinglap' || data.version !== 1 || !Array.isArray(data.events)) throw Error('Invalid RacingLap catalogue');
+  const types={fp1:'Practice 1',fp2:'Practice 2',fp3:'Practice 3',qualifying:'Qualifying',race:'Race',sprint:'Sprint',shootout:'Sprint Qualifying','sprint-qualifying':'Sprint Qualifying'};
+  const events=data.events.filter(e=>e?.series?.key==='f1' && ['live','upcoming'].includes(e.state) && types[e.type] && Number.isFinite(Date.parse(e.start)) && (!e.end || (Number.isFinite(Date.parse(e.end)) && Date.parse(e.end)>=now*1000-3600000)) && Array.isArray(e.channels));
+  events.sort((a,b)=>Number(b.state==='live')-Number(a.state==='live') || Date.parse(a.start)-Date.parse(b.start));
+  const event=events[0]; if (!event) return [];
+  const result=[];
+  for (const c of event.channels) {
+    const name=String(c?.name || '').trim(); const url=racingLapPlayer(c?.embed);
+    if (!name || !url || isLowQuality(name)) continue;
+    const backups=(Array.isArray(c.backups)?c.backups:[]).map(racingLapPlayer).filter((v,i,a)=>v && v!==url && a.indexOf(v)===i).slice(0,5);
+    const special=/\bdata\b/i.test(name)?'data':c.onboard===true?'onboard':undefined;
+    const entry=makeEntry('weelo',name,url,c.language,'RacingLap',{eventSession:types[event.type],eventStart:Date.parse(event.start),...(special?{special}:{}),...(backups.length?{backups}:{})});
+    if (entry) result.push(entry);
+  }
+  if (event.channels.length && !result.length) throw Error('No valid RacingLap players');
+  return result;
 }
 function parsePpv(data, now) {
   const result = [];
@@ -166,11 +195,19 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
     pending=(async()=>{
       const rows=await Promise.all(Object.entries(PROVIDERS).map(async ([provider,url])=>{
         try {
-          const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(6500)});
-          if(!response.ok)throw Error(`HTTP ${response.status}`);
-          const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
-          const data=JSON.parse(text); const now=Math.floor(clock()/1000);
-          const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
+          const get=async (address, timeout=6500)=>{
+            const response=await fetcher(address,{headers:{accept:'application/json'},signal:AbortSignal.timeout(timeout)});
+            if(!response.ok)throw Error(`HTTP ${response.status}`);
+            const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
+            return JSON.parse(text);
+          };
+          const now=Math.floor(clock()/1000);
+          if (provider === 'weelo') {
+            try { return {provider,ok:true,entries:parseRacingLap(await get(url,4000),now)}; }
+            catch { const legacy=await get('https://weelo.live/players/events.json',4000); if (!Array.isArray(legacy?.events)) throw Error('Invalid legacy catalogue'); return {provider,ok:true,entries:parseWeelo(legacy,now),fallback:true}; }
+          }
+          const data=await get(url);
+          const entries=({ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
           return {provider, ok:true, entries};
         } catch {
           const age = lastEmb ? clock() - lastEmb.at : Infinity;
@@ -207,7 +244,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
       const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
-      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale,staleUntil})=>({provider,ok,count:entries.length,...(stale ? {stale:true,staleUntil} : {})})), updatedAt:clock()};
+      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale,staleUntil,fallback})=>({provider,ok,count:entries.length,...(fallback ? {fallback:true} : {}),...(stale ? {stale:true,staleUntil} : {})})), updatedAt:clock()};
       const staleEmb = rows.find(row => row.provider === 'embdlol' && row.stale);
       cached=result; expires=staleEmb ? Math.min(clock()+ttl, staleEmb.staleUntil) : clock()+ttl; return result;
     })().finally(()=>{pending=null}); return pending;
@@ -228,4 +265,4 @@ function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
   return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
 }
-module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV};
+module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV};

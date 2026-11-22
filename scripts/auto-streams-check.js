@@ -1,11 +1,30 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb, parseBinTV } = require('../auto-streams');
+const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLap, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb, parseBinTV } = require('../auto-streams');
 (async () => {
   const now=100000;
   const weelo=parseWeelo({events:[{series_key:'f2',start:now,end:now+30,channels:[{name:'F2',stream:'abcdef'}]}, {series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'International Feed',stream:'abcdef',lang:'EN'}, {name:'Charles Leclerc',stream:'xyzdef',lang:'FR'}]}]},now);
   assert.equal(weelo.length,2); assert.equal(weelo[1].tab,'other'); assert.equal(weelo[1].special,'onboard');
   assert.equal(parseWeelo({events:[{series_key:'f1',end:now-4000}]},now).length,0);
+  assert.equal(parseWeelo({events:[{series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'Driver Tracker',stream:'tracker'}]}]},now)[0].special,undefined);
+  const rlUrl='https://weellz.live/beta?stream=abc123'; const rlBackup='https://weellz.live/at?id=xyz123';
+  const racing={api:'racinglap',version:1,events:[{series:{key:'f1'},type:'fp1',session:'Practice 1',state:'live',start:new Date(now*1000).toISOString(),end:new Date((now+100)*1000).toISOString(),channels:[
+    {name:'International Feed',language:'en',onboard:false,embed:rlUrl,backups:[rlBackup,'https://evil.test/at?id=abc']},
+    {name:'Driver Tracker',language:'en',onboard:false,embed:'https://weellz.live/beta?stream=tracker'},
+    {name:'Data Channel',language:'en',onboard:false,embed:'https://weellz.live/beta?stream=datastream'},
+    {name:'Kimi Antonelli',language:'en',onboard:true,embed:'https://weellz.live/beta?stream=onboard'},
+    {name:'F2',embed:'https://evil.test/beta?stream=abcd'}]}]};
+  const parsedRacing=parseRacingLap(racing,now);assert.equal(parsedRacing.length,4);
+  assert.equal(parsedRacing[0].url,rlUrl);assert.deepEqual(parsedRacing[0].backups,[rlBackup]);assert.equal(parsedRacing[0].eventStart,now*1000);assert.equal(parsedRacing[0].eventSession,'Practice 1');
+  assert.equal(parsedRacing[1].special,undefined);assert.equal(parsedRacing[2].special,'data');assert.equal(parsedRacing[3].special,'onboard');
+  assert.deepEqual(parseRacingLap({api:'racinglap',version:1,events:[]},now),[]);
+  assert.throws(()=>parseRacingLap({events:[]},now));
+  let used=[];const raceResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?racing:{events:[],streams:[],channels:[]})}}});
+  let listed=await raceResolver.list();assert.equal(used.length,7);assert(!used.some(x=>x.includes('weelo.live/players/events')));assert(listed.streams.some(x=>x.url===rlUrl));
+  used=[];const legacyResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?{}:url.includes('weelo.live/players/events')?{events:[{series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'F1 TV',stream:'abcdef',lang:'en'}]}]}:{})}}});
+  listed=await legacyResolver.list();assert(used.some(x=>x.includes('weelo.live/players/events')));assert.equal(listed.providers.find(x=>x.provider==='weelo').fallback,true);assert(listed.streams.some(x=>x.provider==='weelo'&&x.label==='F1 TV'));
+  used=[];const emptyResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?{api:'racinglap',version:1,events:[]}:{})}}});
+  await emptyResolver.list();assert(!used.some(x=>x.includes('weelo.live/players/events')),'valid empty catalogue must not fall back');
   const ppv=parsePpv({streams:[{category:'Formula 1',streams:[{name:'F1 Race',ends_at:now+100,locale:'en',iframe:'https://taifood-blog.asia/embed/f1/race',substreams:[{name:'Spanish',locale:'es',iframe:'https://taifood-blog.asia/embed/f1/es'},{name:'SD 540p',iframe:'https://taifood-blog.asia/embed/f1/540p'},{name:'bad',iframe:'https://evil.test/embed'}]}]},{category:'Football',streams:[{name:'Soccer',iframe:'https://taifood-blog.asia/embed/x'}]}]},now);
   assert.equal(ppv.length,2);assert.equal(ppv[1].tab,'other');
   const languages=parsePpv({streams:[{category:'Formula 1',streams:[{name:'Las Vegas Grand Prix - Practice 1',tag:'Formula 1',locale:'en',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-en',source_tag:'HD | Sky Sport F1',substreams:[
@@ -62,7 +81,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.ok(specialEmb.every(e=>e.tab==='en'));
   assert.equal(parseEmb({channels:[{channelname:'skyf1_en',id:'../bad'}]}).length,0);
 
-  let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>{calls++;return {ok:true,text:async()=>'{"events":[],"streams":[],"channels":[]}'}}});
+  let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{calls++;return {ok:true,text:async()=>String(url).includes('racinglap.net')?'{"api":"racinglap","version":1,"events":[]}':'{"events":[],"streams":[],"channels":[]}'}}});
   await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,7);
   const wikiResolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>({ok:true,text:async()=>'{}'}),resolveDynamic:async path=>({url:path==='wikisport/1'?'https://siempreon.shop/fslivepro.php?stream=F81':''})});
   const wiki=await wikiResolver.list();assert.equal(wiki.streams.filter(x=>x.provider==='wikisport').length,1);assert.equal(wiki.streams.find(x=>x.provider==='wikisport').sourceId,'wikisport');
@@ -98,7 +117,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   embState='failure'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
   // Explicit owner refresh bypasses cache; trusted replicas can adopt its result.
   let forceCalls=0, forceNow=5000000;
-  const forced=createAutoResolver({clock:()=>forceNow,fetcher:async()=>{forceCalls++;return {ok:true,text:async()=>'{}'}}});
+  const forced=createAutoResolver({clock:()=>forceNow,fetcher:async url=>{forceCalls++;return {ok:true,text:async()=>String(url).includes('racinglap.net')?'{"api":"racinglap","version":1,"events":[]}':'{}'}}});
   const first=await forced.list(); await forced.list(); assert.equal(forceCalls,7);
   forceNow++; const fresh=await forced.list({force:true}); assert.equal(forceCalls,14); assert.ok(fresh.updatedAt>first.updatedAt);
   const replica=createAutoResolver({clock:()=>forceNow,fetcher:async()=>{throw Error('should not fetch')}});
