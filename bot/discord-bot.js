@@ -139,6 +139,38 @@ function gridPanelPayload(st) {
   };
 }
 
+// Existing team role names are matched strictly, with spacing/case ignored
+// (e.g. the server's "Redbull" and "McLaren"). Ambiguous matches fail closed.
+function mapTeamRoles(roleList) {
+  const norm = name => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return TEAMS.map(team => {
+    const matches = [...roleList].filter(role => norm(role.name) === norm(team.name) && !role.managed);
+    return matches.length === 1 ? matches[0] : null;
+  });
+}
+function teamRows() {
+  const rows=[];
+  for (let i=0;i<TEAMS.length;i+=5) {
+    const row=new ActionRowBuilder();
+    TEAMS.slice(i,i+5).forEach((team,j)=>row.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel(team.name === 'Mclaren' ? 'McLaren' : team.name).setCustomId(`freef1:team:${i+j}`)));
+    rows.push(row);
+  }
+  return rows;
+}
+function teamPanelPayload() {
+  return {files:[{attachment:renderGridImage(TEAMS,true),name:'freef1-teams-2026.png',description:`2026 teams: ${TEAMS.map(t=>t.name).join(', ')}. Choose one team with the buttons below; tap again to remove.`}],components:teamRows(),allowedMentions:{parse:[]}};
+}
+// Remove only known team roles; leave driver and other roles untouched.
+async function changeTeamRole(member, roles, index) {
+  const chosen=roles[index];
+  if (!chosen || roles.some(r=>!r)) throw Error('Team roles missing or ambiguous');
+  const held=roles.filter(r=>member.roles.cache.has(r.id));
+  const removing=held.some(r=>r.id===chosen.id);
+  for (const role of held) await member.roles.remove(role.id, 'FreeF1 single team selection');
+  if (!removing) await member.roles.add(chosen.id, 'FreeF1 single team selection');
+  return !removing;
+}
+
 function alertsPanelEmbed(siteUrl) {
   return {
     color: FREEF1_RED,
@@ -681,6 +713,17 @@ function start(deps) {
     await store.save();
   }
 
+  async function postTeamPanel(guild, channel, st) {
+    await guild.roles.fetch();
+    const roles=mapTeamRoles(guild.roles.cache.values());
+    const missing=TEAMS.filter((_,i)=>!roles[i]).map(t=>t.name);
+    if (missing.length) throw new Error(`Missing or ambiguous team roles: ${missing.join(', ')}`);
+    const msg=await channel.send(teamPanelPayload());
+    await deleteStoredPanel(guild, st, 'team');
+    st.panels.team={channelId:channel.id,messageId:msg.id};
+    await store.save();
+  }
+
   async function postAlertsPanel(guild, channel, st, role, alertsChannel) {
     await ensureEmojis(guild, st);
     let target = role;
@@ -733,6 +776,40 @@ function start(deps) {
         content: 'Could not change your role. Is the bot\'s role above the grid roles in Server Settings > Roles?',
         ephemeral: true
       });
+    }
+  }
+
+  const teamLocks = new Set();
+  async function handleTeamButton(interaction) {
+    const match=/^freef1:team:(\d+)$/.exec(interaction.customId);
+    const index=match ? Number(match[1]) : -1;
+    if (!TEAMS[index]) return interaction.reply({content:'Unknown team.',ephemeral:true});
+    await interaction.deferReply({ephemeral:true});
+    const guild=interaction.guild, userId=interaction.user.id, lockId=`${guild.id}:${userId}`;
+    if (teamLocks.has(lockId)) return interaction.editReply('A team change is already in progress. Please try again.');
+    teamLocks.add(lockId);
+    const redisKey=`${deps.redisKey}:team-role-lock:${lockId}`;
+    const token=require('crypto').randomUUID(); let locked=false;
+    try {
+      if (deps.upstash) {
+        const reply=await deps.upstash(['SET',redisKey,token,'NX','EX','60']);
+        if (reply?.result !== 'OK') return interaction.editReply('A team change is already in progress. Please try again.');
+        locked=true;
+      }
+      const st=await store.guild(guild.id);
+      if (st.panels?.team?.messageId !== interaction.message.id || st.panels.team.channelId !== interaction.channelId) return interaction.editReply('This team panel is no longer active.');
+      await guild.roles.fetch();
+      const roles=mapTeamRoles(guild.roles.cache.values());
+      if (roles.some(r=>!r)) return interaction.editReply('Team roles are missing or ambiguous. Please ask an admin to check their names.');
+      const member=await guild.members.fetch({user:userId,force:true});
+      const added=await changeTeamRole(member,roles,index);
+      return interaction.editReply(added ? `Your team is now ${TEAMS[index].name}.` : `Your ${TEAMS[index].name} team role was removed.`);
+    } catch (e) {
+      log('team role change failed:',e.message);
+      return interaction.editReply('Could not change your team role. Please ask an admin to check the bot role hierarchy and permissions.');
+    } finally {
+      if (locked) try { await deps.upstash(['EVAL',"if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end",'1',redisKey,token]); } catch(e) { log('team lock release failed:',e.message); }
+      teamLocks.delete(lockId);
     }
   }
 
@@ -934,6 +1011,7 @@ function start(deps) {
 
   /* ── commands ── */
   const commands = [
+    { name: 'teammenu', description: 'Owner: post the one-team role panel in this channel.', dm_permission: false },
     { name: 'rolemenu', description: 'Owner: post the supporter-role panel (one embed, 22 driver buttons).', dm_permission: false },
     {
       name: 'alertsmenu', description: 'Owner: post the stream-alerts opt-in panel in this channel.', dm_permission: false,
@@ -989,6 +1067,7 @@ function start(deps) {
     if (interaction.isButton()) {
       if (interaction.customId === 'freef1:alerts') return handleAlertsButton(interaction);
       if (interaction.customId.startsWith('freef1:grid:')) return handleGridButton(interaction);
+      if (interaction.customId.startsWith('freef1:team:')) return handleTeamButton(interaction);
       return;
     }
     if (!interaction.isChatInputCommand()) return;
@@ -1021,6 +1100,12 @@ function start(deps) {
         await interaction.deferReply({ ephemeral: true });
         await ensureEmojis(guild, st);
         return interaction.editReply({ content: `Emoji set complete: ${Object.keys(st.emojiIds).length} ids stored.` });
+      }
+
+      if (cmd === 'teammenu') {
+        await interaction.deferReply({ephemeral:true});
+        await postTeamPanel(guild,interaction.channel,st);
+        return interaction.editReply({content:'Team panel posted. Members can select one team or tap again to remove it.'});
       }
 
       if (cmd === 'rolemenu') {
@@ -1204,7 +1289,7 @@ module.exports = {
   start,
   _test: {
     driverPanelEmbed, gridPanelPayload, alertsPanelEmbed, sessionEmbed, websitePayload, testAlertPayload, imageAlertPayload,
-    gridRows, alertsRow, alertsPanelPayload,
+    gridRows, teamRows, teamPanelPayload, mapTeamRoles, changeTeamRole, alertsRow, alertsPanelPayload,
     nextSession, liveSession, sessionState, findSession, presenceActivity,
     parseTicketStaffRoleIds, DEFAULT_TICKET_STAFF_ROLE_IDS,
     TEAMS, ALL_DRIVERS, OWNER_ID, DEFAULT_SOON_MINUTES, SESSION_MIN,
