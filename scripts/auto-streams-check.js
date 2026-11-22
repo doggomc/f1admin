@@ -66,5 +66,25 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parsePpv, par
   assert.equal(sky[0].sourceId,'sky-strmfree');
   const fallback = await createAutoResolver({clock:()=>now*1000,fetcher:async url=>{if(String(url).includes('sources/skyf1')) throw Error('offline');return {ok:true,text:async()=>'{}'}}}).list();
   assert.ok(fallback.streams.some(x=>x.provider==='strmfree' && x.tag.includes('Status unknown')));
+  let t = 1000000, embState = 'success', requestCount = 0;
+  const retained = createAutoResolver({ttl:600000,clock:()=>t,fetcher:async url=>{
+    requestCount++;
+    if (String(url).includes('api.embdlol.st')) {
+      if (embState === 'failure') throw Error('upstream unavailable');
+      return {ok:true,text:async()=>JSON.stringify({channels:embState === 'success' ? [{channelname:'skyf1uk',id:'uk-123'}] : []})};
+    }
+    return {ok:true,text:async()=>'{}'};
+  }});
+  let response = await retained.list();
+  assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
+  embState='failure'; t+=600001; response=await retained.list();
+  assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
+  assert.deepEqual(response.providers.find(x=>x.provider==='embdlol'),{provider:'embdlol',ok:false,count:1,stale:true});
+  const beforeCached = requestCount; await retained.list(); assert.equal(requestCount,beforeCached);
+  t=1000000+1200000; response=await retained.list();
+  assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
+  embState='success'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,1);
+  embState='empty'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
+  embState='failure'; t+=600001; response=await retained.list(); assert.equal(response.streams.filter(x=>x.provider==='embdlol').length,0);
   console.log('Auto-Streams discovery, filtering, and cache checks passed');
 })().catch(e=>{console.error(e);process.exit(1)});

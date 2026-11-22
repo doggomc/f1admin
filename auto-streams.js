@@ -136,6 +136,9 @@ function parseEmb(data) {
 }
 function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, resolveDynamic = null } = {}) {
   let cached=null, expires=0, pending=null;
+  // Retain only a recent, successfully fetched EMB catalogue; never refresh its age on failures.
+  let lastEmb = null;
+  const EMB_STALE_MAX_MS = 20 * 60_000;
   async function list() {
     if(cached && clock()<expires)return cached;
     if(pending)return pending;
@@ -147,8 +150,15 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
           const text=await response.text(); if(text.length>2_000_000)throw Error('Catalogue too large');
           const data=JSON.parse(text); const now=Math.floor(clock()/1000);
           const entries=({weelo:parseWeelo,ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
+          if (provider === 'embdlol') lastEmb = {entries, at:clock()};
           return {provider, ok:true, entries};
-        } catch { return {provider,ok:false,entries:[]}; }
+        } catch {
+          const age = lastEmb ? clock() - lastEmb.at : Infinity;
+          if (provider === 'embdlol' && lastEmb && age >= 0 && age < EMB_STALE_MAX_MS) {
+            return {provider, ok:false, entries:lastEmb.entries, stale:true, staleUntil:lastEmb.at + EMB_STALE_MAX_MS};
+          }
+          return {provider,ok:false,entries:[]};
+        }
       }));
       // Keep the permanent direct Sky F1 player even if the dedicated catalogue
       // fails or has no live entry; this is a fallback, not a playback guarantee.
@@ -172,8 +182,9 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
       const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
-      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries})=>({provider,ok,count:entries.length})), updatedAt:clock()};
-      cached=result;expires=clock()+ttl;return result;
+      const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale})=>({provider,ok,count:entries.length,...(stale ? {stale:true} : {})})), updatedAt:clock()};
+      const staleEmb = rows.find(row => row.provider === 'embdlol' && row.stale);
+      cached=result; expires=staleEmb ? Math.min(clock()+ttl, staleEmb.staleUntil) : clock()+ttl; return result;
     })().finally(()=>{pending=null}); return pending;
   }
   return {list};
