@@ -6,7 +6,7 @@ const PROVIDERS = {
   ppv: 'https://api.ppv.st/api/streams',
   strmfree: 'https://strmfree.st/api/v1/streams',
   strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
-  bintv: 'https://api.yosintv.fun/api/public/bintvjson',
+  bintv: 'https://api.bintv.link/api/public/bintvjson',
   cdnlive: 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free',
   embdlol: 'https://api.embdlol.st/struct',
 };
