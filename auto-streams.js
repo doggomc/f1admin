@@ -132,6 +132,15 @@ function parseBinTV(data) {
       if (entry) result.push(entry);
     }
   }
+  for (const channel of channels) {
+    const label = String(channel?.Name || '').trim();
+    if (!/^(DAZN F1|Sky Sport F1 Italia)$/i.test(label) || String(channel?.Status || '').toLowerCase() !== 'live') continue;
+    for (const stream of Array.isArray(channel.Streams) ? channel.Streams : []) {
+      if (isLowQuality(String(stream?.Name || ''))) continue;
+      const entry = makeEntry('bintv', label, binTVPlayer(stream?.Iframe), /^DAZN/i.test(label) ? 'es' : 'it', 'BinTV');
+      if (entry) result.push(entry);
+    }
+  }
   // The named 24/7 motorsport channel is general programming, not an F1-only feed.
   for (const channel of channels) {
     if (String(channel?.Name || '').trim().toLowerCase() !== 'supersport motorsport' || String(channel?.Status || '').toLowerCase() !== 'live') continue;
@@ -143,11 +152,15 @@ function parseBinTV(data) {
   }
   // Live F1 weekend events only. A generic Grand Prix is not enough: require a
   // clearly F1-specific broadcast and reject other series. Unknown names fail closed.
-  for (const event of Array.isArray(data?.['Live Events']) ? data['Live Events'] : []) {
+  const events = [...(Array.isArray(data?.['Live Events']) ? data['Live Events'].map(event=>({event,expected:'live'})) : []), ...(Array.isArray(data?.['Upcoming Events']) ? data['Upcoming Events'].map(event=>({event,expected:'upcoming'})) : [])];
+  for (const {event, expected} of events) {
     const title=String(event?.Name || '').trim();
     const streams=Array.isArray(event?.Streams) ? event.Streams : [];
-    if (String(event?.Status || '').toLowerCase() !== 'live' || !/motorsport/i.test(String(event?.Category || '')) || /\b(?:moto\s*gp|formula\s*[23e]|f[23]\b|f1\s*academy|indycar|nascar)\b/i.test(title)) continue;
-    if (!(isF1(title) || (/\bgrand\s*prix\b/i.test(title) && streams.some(s=>/^sky sports f1(?:\s|$)/i.test(String(s?.Name || '')))))) continue;
+    const status=String(event?.Status || '').toLowerCase();
+    if (status !== expected || !/motorsport/i.test(String(event?.Category || '')) || /\b(?:moto\s*gp|formula\s*[23e]|f[23]\b|f1\s*academy|indycar|nascar)\b/i.test(title)) continue;
+    const raceName = /\b(?:australian|chinese|japanese|miami|canadian|monaco|barcelona(?:-catalunya)?|austrian|british|belgian|hungarian|dutch|italian|spanish|azerbaijan|bahrain|singapore|united states|mexico city|brazilian|sao paulo|são paulo|las vegas|qatar|abu dhabi)\s+grand\s+prix\b/i.test(title);
+    const isSession = /\b(?:practice|fp[123]|qualifying|race|sprint|shootout)\b/i.test(title);
+    if (!(isF1(title) || (/\bgrand\s*prix\b/i.test(title) && streams.some(s=>/^sky sports f1(?:\s|$)/i.test(String(s?.Name || '')))) || (raceName && isSession))) continue;
     for (const stream of streams) {
       const raw=String(stream?.Name || '').trim();
       const match=raw.match(/^(Apple TV|Sky Sports F1|SuperSport MotorSport|Fox Sports 506|DAZN F1|Eleven Sports 1)(?:\s+(4K(?:\s+HEVC)?|UHD))?$/i);
@@ -155,8 +168,9 @@ function parseBinTV(data) {
       const labels={'apple tv':'Apple TV','sky sports f1':'Sky Sports F1','supersport motorsport':'SuperSport MotorSport','fox sports 506':'Fox Sports 506','dazn f1':'DAZN F1','eleven sports 1':'Eleven Sports 1'};
       const label=labels[match[1].toLowerCase()];
       const lang=label==='DAZN F1'?'es':label==='Eleven Sports 1'?'pl':'en';
-      const entry=makeEntry('bintv',label,binTVPlayer(stream.Iframe),lang,match[2]?'4K':'BinTV',{eventSession:title.slice(0,120)});
-      if (entry) result.push(entry);
+      const entry=makeEntry('bintv',label,binTVPlayer(stream.Iframe),lang,match[2]?'4K':status === 'upcoming'?'BinTV · Upcoming':'BinTV',{eventSession:title.slice(0,120)});
+      // A single player may serve different sessions: retain each session separately.
+      if (entry) { entry.id=`auto-bintv-${crypto.createHash('sha256').update(`bintv:${entry.url}:${title.toLowerCase()}`).digest('hex').slice(0,16)}`; result.push(entry); }
     }
   }
   return result;

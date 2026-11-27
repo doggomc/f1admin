@@ -60,6 +60,16 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   const bad=`https://bintv-sources.pages.dev/?id=${encode('https://evil.test/bintv/test')}`;
   const rotated=`https://bintv-sources.pages.dev/?id=${encode('https://shoewiki.click/bintv/test-123')}`;
   const spoof=`https://bintv-sources.pages.dev/?id=${encode('https://shoewiki.click.evil.test/bintv/test')}`;
+  const extraBin = parseBinTV({'24/7 Channels':[
+    {Name:'DAZN F1',Status:'Live',Streams:[{Name:'DAZN F1',Iframe:good}]},
+    {Name:'Sky Sport F1 Italia',Status:'Live',Streams:[{Name:'Stream 1',Iframe:rotated}]}],
+    'Upcoming Events':[{Name:'Qatar Airways Qatar Grand Prix - Free Practice 1',Category:'Motorsport',Status:'Upcoming',Streams:[{Name:'Fox Sports 506',Iframe:good}]}]});
+  assert.deepEqual(extraBin.map(x=>x.label),['DAZN F1','Sky Sport F1 Italia','Fox Sports 506']);
+  assert.deepEqual(extraBin.map(x=>x.tab),['other','other','en']);
+  assert.equal(extraBin[2].tag,'BinTV · Upcoming'); assert.match(extraBin[2].eventSession,/Practice 1/);
+  const reused=parseBinTV({'Upcoming Events':['1','2'].map(n=>({Name:`Qatar Grand Prix - Practice ${n}`,Category:'Motorsport',Status:'Upcoming',Streams:[{Name:'Fox Sports 506',Iframe:good}]}))});
+  assert.equal(reused.length,2); assert.notEqual(reused[0].id,reused[1].id);
+  assert.equal(parseBinTV({'Upcoming Events':[{Name:'USAC Turkey Night Grand Prix - Race',Category:'Motorsport',Status:'Upcoming',Streams:[{Name:'Fox Sports 506',Iframe:good}]}]}).length,0);
   const superBin = parseBinTV({'24/7 Channels':[{Name:'SuperSport MotorSport',Status:'Live',Streams:[{Name:'SuperSport MotorSport',Iframe:rotated},{Name:'bad',Iframe:spoof}]}]});
   assert.equal(superBin.length,1); assert.equal(superBin[0].label,'SuperSport Motorsport'); assert.equal(superBin[0].url,rotated);
   assert.equal(parseBinTV({'24/7 Channels':[{Name:'SuperSport MotorSport',Status:'offline',Streams:[{Iframe:rotated}]}]}).length,0);
