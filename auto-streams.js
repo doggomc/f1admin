@@ -8,6 +8,7 @@ const PROVIDERS = {
   strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
   bintv: 'https://api.bintv.link/api/public/bintvjson',
   timstreams: 'https://tim-streams.com/api/channels',
+  zlive: 'https://zlive.st/embed/manifest.json',
   cdnlive: 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free',
   embdlol: 'https://api.embdlol.st/struct',
 };
@@ -131,6 +132,15 @@ function parseBinTV(data) {
       if (entry) result.push(entry);
     }
   }
+  // The named 24/7 motorsport channel is general programming, not an F1-only feed.
+  for (const channel of channels) {
+    if (String(channel?.Name || '').trim().toLowerCase() !== 'supersport motorsport' || String(channel?.Status || '').toLowerCase() !== 'live') continue;
+    for (const stream of Array.isArray(channel.Streams) ? channel.Streams : []) {
+      if (isLowQuality(String(stream?.Name || ''))) continue;
+      const entry = makeEntry('bintv', 'SuperSport Motorsport', binTVPlayer(stream?.Iframe), 'en', 'BinTV');
+      if (entry) result.push(entry);
+    }
+  }
   // Live F1 weekend events only. A generic Grand Prix is not enough: require a
   // clearly F1-specific broadcast and reject other series. Unknown names fail closed.
   for (const event of Array.isArray(data?.['Live Events']) ? data['Live Events'] : []) {
@@ -185,6 +195,16 @@ function parseEmb(data) {
   }
   return result;
 }
+// ZLive's 24/7 motorsport channel may carry other series outside F1.
+function parseZliveMotorsport(data) {
+  const rows = Array.isArray(data?.channels) ? data.channels : [];
+  return rows.flatMap(row => {
+    const id=String(row?.id || '').trim();
+    if (String(row?.name || '').trim().toLowerCase() !== 'supersport motorsport' || row.live !== true || !/^[a-z0-9_-]{1,150}$/i.test(id) || isLowQuality(`${row.name} ${row.quality || ''}`)) return [];
+    const entry=makeEntry('zlive', 'SuperSport Motorsport', `https://zlive.st/embed/${encodeURIComponent(id)}`, 'en', 'ZLive');
+    return entry ? [entry] : [];
+  });
+}
 // TimStreams' published first free player for each explicitly requested channel.
 // Main Event is a general sports channel; its presence does not imply an F1 broadcast.
 function parseTimChannels(data) {
@@ -232,7 +252,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
             catch { const legacy=await get('https://weelo.live/players/events.json',4000); if (!Array.isArray(legacy?.events)) throw Error('Invalid legacy catalogue'); return {provider,ok:true,entries:parseWeelo(legacy,now),fallback:true}; }
           }
           const data=await get(url);
-          const entries=({ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV,timstreams:parseTimChannels})[provider](data,now);
+          const entries=({ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV,timstreams:parseTimChannels,zlive:parseZliveMotorsport})[provider](data,now);
           return {provider, ok:true, entries};
         } catch {
           const age = lastEmb ? clock() - lastEmb.at : Infinity;
@@ -266,7 +286,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
         rows.push({provider:'wikisport',ok:wiki.some(Boolean),entries:wiki.filter(Boolean)});
       }
       if (startedRevision !== revision && cached) return cached;
-      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,timstreams:5,cdnlive:6,wikisport:7};
+      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,timstreams:5,zlive:6,cdnlive:7,wikisport:8};
       const unique=new Map(); for(const row of rows)for(const item of row.entries) {
         if (item.provider === 'strmfree' && item.url !== 'https://strmfree.st/embed/racing/skyf11080p') continue;
         unique.set(item.id,item);
@@ -293,4 +313,4 @@ function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
   return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
 }
-module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV,parseTimChannels};
+module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV,parseTimChannels,parseZliveMotorsport};

@@ -1028,6 +1028,7 @@ $('testAutoStreams').addEventListener('click', async () => {
           const url = new URL(stream.url);
           const hosts = ['weellz.live','taifood-blog.asia','strmfree.st','streamfree.top','embdlol.st','cdnlivetv.tv','siempreon.shop','embedsports.me','tvpclive.com'];
           let safe = url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname);
+          if (stream.provider === 'zlive' && url.protocol === 'https:' && url.hostname === 'zlive.st' && !url.username && !url.password && !url.port && !url.search && !url.hash && /^\/embed\/[a-z0-9_-]{1,150}$/i.test(url.pathname)) safe = true;
           if (stream.provider === 'timstreams' && url.protocol === 'https:' && url.hostname === 'shoewiki.click' && !url.username && !url.password && !url.port && !url.search && !url.hash && /^\/[a-z0-9-]{1,160}$/i.test(url.pathname)) safe = true;
           if (stream.provider === 'bintv' && url.protocol === 'https:' && url.hostname === 'bintv-sources.pages.dev' && !url.username && !url.password && !url.port && url.pathname === '/' && !url.hash && [...url.searchParams.keys()].every(key => key === 'id') && url.searchParams.getAll('id').length === 1) {
             const id = url.searchParams.get('id') || '';
