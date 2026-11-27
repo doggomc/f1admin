@@ -254,15 +254,15 @@ function nextConfigEvent(reader) {
 
     const removedNews = await request('/admin/api/news', { headers: { Origin: origin, Cookie: cookie } });
     check('authenticated News endpoint has been removed', removedNews.response.status === 404);
-    const customCatalogue = { custom: [{ id:'custom-test', label:'Test feed', url:'https://example.com/embed', tab:'other' }], disabled: ['dazn'], removed: ['sky-strmfree'], overrides: { dazn: { label:'Race feed' } }, order: ['custom-test', 'dazn'] };
+    const customCatalogue = { custom: [{ id:'custom-test', label:'Test feed', url:'https://example.com/embed', tab:'other' }], disabled: ['dazn'], removed: ['emb-fullhd1'], overrides: { dazn: { label:'Race feed' } }, order: ['custom-test', 'dazn'] };
     const savedCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify(customCatalogue) });
-    check('catalogue atomically adds, orders, edits, hides and removes sources', savedCatalogue.response.status === 200 && savedCatalogue.body.sourceList[0]?.id === 'custom-test' && !savedCatalogue.body.sourceList.some(x => x.id === 'sky-strmfree') && savedCatalogue.body.sources.overrides.dazn.label === 'Race feed');
+    check('catalogue atomically adds, orders, edits, hides and removes sources', savedCatalogue.response.status === 200 && savedCatalogue.body.sourceList[0]?.id === 'sky-strmfree' && savedCatalogue.body.sourceList.findIndex(x => x.id === 'custom-test') < savedCatalogue.body.sourceList.findIndex(x => x.id === 'dazn') && !savedCatalogue.body.sourceList.some(x => x.id === 'emb-fullhd1') && savedCatalogue.body.sources.overrides.dazn.label === 'Race feed');
     const pushedCatalogue = await readNextConfigEvent();
-    check('custom catalogue reaches public config without refresh', pushedCatalogue.sources.custom[0]?.id === 'custom-test' && pushedCatalogue.sources.disabled.includes('sky-strmfree') && pushedCatalogue.sources.order[0] === 'custom-test');
+    check('custom catalogue reaches public config without refresh', pushedCatalogue.sources.custom[0]?.id === 'custom-test' && pushedCatalogue.sources.disabled.includes('emb-fullhd1') && pushedCatalogue.sources.order[0] === 'custom-test');
     const badCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify({ ...customCatalogue, custom:[{ id:'custom-test', label:'Bad', url:'http://example.com', tab:'en' }] }) });
     check('insecure custom source is rejected without changing state', badCatalogue.response.status === 400 && JSON.parse(fs.readFileSync(snapshotFile, 'utf8')).sources.custom[0]?.label === 'Test feed');
     const clearCatalogue = await request('/admin/api/stream/catalogue', { method:'POST', headers:authHeaders, body:JSON.stringify({ custom:[], disabled:[], removed:[], overrides:{}, order:[] }) });
-    check('catalogue can remove custom sources and restore defaults', clearCatalogue.response.status === 200 && !clearCatalogue.body.sources.custom.length && clearCatalogue.body.sourceList.some(x => x.id === 'sky-strmfree'));
+    check('catalogue can remove custom sources and restore defaults', clearCatalogue.response.status === 200 && !clearCatalogue.body.sources.custom.length && clearCatalogue.body.sourceList.some(x => x.id === 'emb-fullhd1'));
     await readNextConfigEvent();
 
     const invalidSource = await request('/admin/api/stream/sources', {
