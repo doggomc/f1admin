@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const { createStreamResolver, STREAM_SOURCES } = require('../stream-resolver');
 
 const sky=STREAM_SOURCES.filter(source => source.provider==='strmfree');
-assert.equal(sky.length, 1);
+assert.equal(sky.length, 2);
+assert.equal(sky[1].id, 'sky-strmfree-stripped');
+assert.equal(sky[1].stripped, true);
+assert.equal(sky[1].sandboxDirect, true);
+assert.match(sky[1].label, /not desktop Chrome/i);
 assert.equal(sky[0].id, 'sky-strmfree');
 assert.notEqual(sky[0].stripped, true);
 assert.equal(sky[0].sandboxDirect, true);

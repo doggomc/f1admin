@@ -148,6 +148,8 @@ window.fetch = async (url, options = {}) => {
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
   const skyRow = $('sourceList').querySelector('[data-source-id="sky-strmfree"]');
   check('StreamFree is shown once without a stripped badge', Boolean(skyRow && !skyRow.textContent.includes('stripped')) && !$('sourceList').querySelector('[data-source-id="sky-uk"]'));
+  const strippedRow = $('sourceList').querySelector('[data-source-id="sky-strmfree-stripped"]');
+  check('StreamFree stripped is a separate direct mobile-compatible source', Boolean(strippedRow && strippedRow.textContent.includes('stripped') && strippedRow.textContent.includes('not desktop Chrome')));
   const fallbackRow = $('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[0].id}"]`);
   const disclosure = fallbackRow.querySelector('details.addr-fallbacks');
   const fallbackItems = [...disclosure.querySelectorAll('li')];
@@ -168,7 +170,7 @@ window.fetch = async (url, options = {}) => {
   draftInput.value = 'Draft name'; draftInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   $('sourceSearch').value = FEED_SOURCES[0].id;
   $('sourceSearch').dispatchEvent(new window.Event('input', { bubbles: true }));
-  check('editing and filtering preserve draft values without writes', $('sourceList').querySelector('.source-custom input').value === 'Draft name' && writePayloads.length === 0 && $('sourceResults').textContent.startsWith('1 of '));
+  check('editing and filtering preserve draft values without writes', $('sourceList').querySelector('.source-custom input').value === 'Draft name' && writePayloads.length === 0 && $('sourceResults').textContent.startsWith('2 of '));
   $('sourceSearch').value = '';
   $('sourceSearch').dispatchEvent(new window.Event('input', { bubbles: true }));
   check('source instructions say to save draft switch changes', /Changes remain a draft until you save[\s\S]*Save source settings/i.test(html));

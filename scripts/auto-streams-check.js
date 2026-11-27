@@ -131,7 +131,8 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(permanentSky.streams[0].sourceId,'sky-strmfree');
   assert.equal(permanentSky.streams[0].url,'https://strmfree.st/embed/racing/skyf11080p');
   assert.equal(permanentSky.streams[0].tag,'StreamFree · Status unknown');
-  assert.equal(filterDisabledAutoStreams(permanentSky.streams,{disabled:['sky-strmfree']}).some(x=>x.sourceId==='sky-strmfree'),false);
+  assert.equal(filterDisabledAutoStreams(permanentSky.streams,{disabled:['sky-strmfree']}).some(x=>x.sourceId==='sky-strmfree'),true);
+  assert.equal(filterDisabledAutoStreams(permanentSky.streams,{disabled:['sky-strmfree','sky-strmfree-stripped']}).some(x=>x.sourceId==='sky-strmfree'),false);
   assert.equal(sky[0].sourceId,'sky-strmfree');
   const fallback = await createAutoResolver({clock:()=>now*1000,fetcher:async url=>{if(String(url).includes('sources/skyf1')) throw Error('offline');return {ok:true,text:async()=>'{}'}}}).list();
   assert.ok(fallback.streams.some(x=>x.provider==='strmfree' && x.tag.includes('Status unknown')));

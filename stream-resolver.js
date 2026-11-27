@@ -627,6 +627,10 @@ const STREAM_SOURCES = [
     { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
     { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' }
   ] },
+  { id: 'sky-strmfree-stripped', label: 'Sky Sports F1 (StreamFree Stripped) · Mobile / some devices; not desktop Chrome', stripped: true, sandboxDirect: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
+    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' }
+  ] },
   /* The feeds whose commentary is not English draw under the Other tab, in the player and here. */
   ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
   { id: 'emb-uhd', label: 'F1 UHD 4K', provider: 'embdlol', channel: UHD_CHANNEL_NAME, minQuality: 0, tab: 'en', links: [] },

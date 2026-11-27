@@ -731,7 +731,7 @@ function adminSourceList() {
   const custom = state.sources.custom.map(source => ({ ...source, provider: 'custom', isCustom: true, baseLabel: source.label, customLabel: source.label, customUrl: source.url, defaultUrl: source.url }));
   const rank = new Map(state.sources.order.map((id, index) => [id, index]));
   // Keep the manual main feed first; retain Race Control's order for the rest.
-  const priority = source => source.id === 'sky-strmfree' ? 0 : 1;
+  const priority = source => source.id === 'sky-strmfree' ? 0 : source.id === 'sky-strmfree-stripped' ? 1 : 2;
   return [...builtins, ...custom].sort((a, b) => priority(a) - priority(b) || (rank.get(a.id) ?? 1e6) - (rank.get(b.id) ?? 1e6));
 }
 

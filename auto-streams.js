@@ -325,6 +325,6 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
 }
 function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
-  return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
+  return streams.filter(item => item.sourceId === 'sky-strmfree' ? !(disabled.has('sky-strmfree') && disabled.has('sky-strmfree-stripped')) : !item.sourceId || !disabled.has(item.sourceId));
 }
 module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV,parseTimChannels,parseZliveMotorsport};
