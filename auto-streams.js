@@ -29,7 +29,7 @@ function parseWeelo(data, now) {
   return (Array.isArray(event.channels) ? event.channels : []).flatMap(c => {
     if (!/^[A-Za-z0-9_-]{3,180}$/.test(String(c.stream || ''))) return [];
     const name = String(c.name || '').trim();
-    const special = /data/i.test(name) ? 'data' : /tracker/i.test(name) ? undefined : /onboard|camera/i.test(name) || !/f1 tv|international|sky|world/i.test(name) ? 'onboard' : undefined;
+    const special = /data/i.test(name) ? 'data' : /tracker/i.test(name) ? 'feed' : /onboard|camera/i.test(name) || !/f1 tv|international|sky|world/i.test(name) ? 'onboard' : undefined;
     const entry = makeEntry('weelo', name, `https://weellz.live/beta?stream=${encodeURIComponent(c.stream)}`, c.lang, event.live ? 'Weelo · Live' : 'Weelo · Upcoming', special ? { special } : {});
     return entry ? [entry] : [];
   });
@@ -56,7 +56,7 @@ function parseRacingLap(data, now) {
     const name=String(c?.name || '').trim(); const url=racingLapPlayer(c?.embed);
     if (!name || !url || isLowQuality(name)) continue;
     const backups=(Array.isArray(c.backups)?c.backups:[]).map(racingLapPlayer).filter((v,i,a)=>v && v!==url && a.indexOf(v)===i).slice(0,5);
-    const special=/\bdata\b/i.test(name)?'data':c.onboard===true?'onboard':undefined;
+    const special=/\bdata\b/i.test(name)?'data':/driver\s*tracker/i.test(name)?'feed':c.onboard===true?'onboard':undefined;
     const entry=makeEntry('weelo',name,url,c.language,'RacingLap',{eventSession:types[event.type],eventStart:Date.parse(event.start),...(special?{special}:{}),...(backups.length?{backups}:{})});
     if (entry) result.push(entry);
   }
@@ -267,7 +267,10 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
       }
       if (startedRevision !== revision && cached) return cached;
       const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,timstreams:5,cdnlive:6,wikisport:7};
-      const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
+      const unique=new Map(); for(const row of rows)for(const item of row.entries) {
+        if (item.provider === 'strmfree' && item.url !== 'https://strmfree.st/embed/racing/skyf11080p') continue;
+        unique.set(item.id,item);
+      }
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
       const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale,staleUntil,fallback})=>({provider,ok,count:entries.length,...(fallback ? {fallback:true} : {}),...(stale ? {stale:true,staleUntil} : {})})), updatedAt:clock()};
       const staleEmb = rows.find(row => row.provider === 'embdlol' && row.stale);

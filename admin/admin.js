@@ -1022,7 +1022,7 @@ $('testAutoStreams').addEventListener('click', async () => {
       for (const stream of streams) {
         const row = document.createElement('li');
         const title = document.createElement('span');
-        title.textContent = `${stream.label || 'Feed'} · ${stream.provider || 'provider'}${stream.provider === 'strmfree' ? ' · Stripped (direct sandbox on site)' : ''}${stream.tag ? ` · ${stream.tag}` : ''}${stream.disabledBySettings ? ' · Disabled in settings' : ''}`;
+        title.textContent = `${stream.label || 'Feed'} · ${stream.provider || 'provider'}${stream.tag ? ` · ${stream.tag}` : ''}${stream.disabledBySettings ? ' · Disabled in settings' : ''}`;
         row.append(title);
         try {
           const url = new URL(stream.url);

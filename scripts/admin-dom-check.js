@@ -147,7 +147,7 @@ window.fetch = async (url, options = {}) => {
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
   const skyRow = $('sourceList').querySelector('[data-source-id="sky-strmfree"]');
-  check('StreamFree is shown once as stripped and direct', Boolean(skyRow && skyRow.textContent.includes('stripped · direct')) && !$('sourceList').querySelector('[data-source-id="sky-uk"]'));
+  check('StreamFree is shown once without a stripped badge', Boolean(skyRow && !skyRow.textContent.includes('stripped')) && !$('sourceList').querySelector('[data-source-id="sky-uk"]'));
   const fallbackRow = $('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[0].id}"]`);
   const disclosure = fallbackRow.querySelector('details.addr-fallbacks');
   const fallbackItems = [...disclosure.querySelectorAll('li')];

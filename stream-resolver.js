@@ -623,11 +623,9 @@ function taidUrl(event, session, id, mark) {
    `minQuality` is the floor a link has to clear to appear in this provider's pool. */
 const STREAM_SOURCES = [
   // This is a direct provider iframe; the website applies sandbox="allow-scripts".
-  { id: 'sky-strmfree', label: 'Sky Sports F1 (StreamFree)', main: true, stripped: true, sandboxDirect: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+  { id: 'sky-strmfree', label: 'Sky Sports F1 (StreamFree)', main: true, sandboxDirect: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
     { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
-    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' },
-    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf1' },
-    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf1' }
+    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' }
   ] },
   /* The feeds whose commentary is not English draw under the Other tab, in the player and here. */
   ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
@@ -1009,7 +1007,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
           try {
             const url = new URL(mirror.url);
             return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
-              ['strmfree.st', 'streamfree.top'].includes(url.hostname) && /^\/embed\/racing\/skyf1(?:1080p)?\/?$/i.test(url.pathname);
+              ['strmfree.st', 'streamfree.top'].includes(url.hostname) && /^\/embed\/racing\/skyf11080p\/?$/i.test(url.pathname);
           } catch { return false; }
         }).map(mirror => ({quality: 1080, url: mirror.url}));
         links = [...directMirrors, ...links.filter(link => !directMirrors.some(mirror => mirror.url === link.url))];

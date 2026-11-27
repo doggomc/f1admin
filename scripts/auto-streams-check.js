@@ -6,7 +6,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   const weelo=parseWeelo({events:[{series_key:'f2',start:now,end:now+30,channels:[{name:'F2',stream:'abcdef'}]}, {series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'International Feed',stream:'abcdef',lang:'EN'}, {name:'Charles Leclerc',stream:'xyzdef',lang:'FR'}]}]},now);
   assert.equal(weelo.length,2); assert.equal(weelo[1].tab,'other'); assert.equal(weelo[1].special,'onboard');
   assert.equal(parseWeelo({events:[{series_key:'f1',end:now-4000}]},now).length,0);
-  assert.equal(parseWeelo({events:[{series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'Driver Tracker',stream:'tracker'}]}]},now)[0].special,undefined);
+  assert.equal(parseWeelo({events:[{series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'Driver Tracker',stream:'tracker'}]}]},now)[0].special,'feed');
   const rlUrl='https://weellz.live/beta?stream=abc123'; const rlBackup='https://weellz.live/at?id=xyz123';
   const racing={api:'racinglap',version:1,events:[{series:{key:'f1'},type:'fp1',session:'Practice 1',state:'live',start:new Date(now*1000).toISOString(),end:new Date((now+100)*1000).toISOString(),channels:[
     {name:'International Feed',language:'en',onboard:false,embed:rlUrl,backups:[rlBackup,'https://evil.test/at?id=abc']},
@@ -16,7 +16,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
     {name:'F2',embed:'https://evil.test/beta?stream=abcd'}]}]};
   const parsedRacing=parseRacingLap(racing,now);assert.equal(parsedRacing.length,4);
   assert.equal(parsedRacing[0].url,rlUrl);assert.deepEqual(parsedRacing[0].backups,[rlBackup]);assert.equal(parsedRacing[0].eventStart,now*1000);assert.equal(parsedRacing[0].eventSession,'Practice 1');
-  assert.equal(parsedRacing[1].special,undefined);assert.equal(parsedRacing[2].special,'data');assert.equal(parsedRacing[3].special,'onboard');
+  assert.equal(parsedRacing[1].special,'feed');assert.equal(parsedRacing[2].special,'data');assert.equal(parsedRacing[3].special,'onboard');
   assert.deepEqual(parseRacingLap({api:'racinglap',version:1,events:[]},now),[]);
   assert.throws(()=>parseRacingLap({events:[]},now));
   let used=[];const raceResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?racing:{events:[],streams:[],channels:[]})}}});
@@ -110,6 +110,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(filterDisabledAutoStreams(wiki.streams,{disabled:['wikisport']}).filter(x=>x.provider==='wikisport').length,0);
   assert.equal(filterDisabledAutoStreams(cdn,{removed:['sky-f1-uk']}).length,0);
   const permanentSky = await createAutoResolver({clock:()=>now*1000,fetcher:async url=>({ok:true,text:async()=>String(url).includes('/api/v1/streams') && String(url).includes('strmfree') ? JSON.stringify({streams:[{name:'F1 Other',iframe:'https://strmfree.st/embed/racing/other'}]}) : '{}'})}).list();
+  assert.equal(permanentSky.streams.filter(x=>x.provider==='strmfree').length,1);
   assert.equal(permanentSky.streams[0].sourceId,'sky-strmfree');
   assert.equal(permanentSky.streams[0].url,'https://strmfree.st/embed/racing/skyf11080p');
   assert.equal(permanentSky.streams[0].tag,'StreamFree · Status unknown');

@@ -5,7 +5,7 @@ const { createStreamResolver, STREAM_SOURCES } = require('../stream-resolver');
 const sky=STREAM_SOURCES.filter(source => source.provider==='strmfree');
 assert.equal(sky.length, 1);
 assert.equal(sky[0].id, 'sky-strmfree');
-assert.equal(sky[0].stripped, true);
+assert.notEqual(sky[0].stripped, true);
 assert.equal(sky[0].sandboxDirect, true);
 assert.ok(sky[0].links.every(link => /^https:\/\/(?:strmfree\.st|streamfree\.top)\/embed\/racing\/skyf1/.test(link.url)));
 
