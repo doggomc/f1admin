@@ -7,6 +7,7 @@ const PROVIDERS = {
   strmfree: 'https://strmfree.st/api/v1/streams',
   strmfreeSky: 'https://strmfree.st/api/v1/sources/skyf1',
   bintv: 'https://api.bintv.link/api/public/bintvjson',
+  timstreams: 'https://tim-streams.com/api/channels',
   cdnlive: 'https://api.cdnlivetv.tv/api/v1/channels/?user=cdnlivetv&plan=free',
   embdlol: 'https://api.embdlol.st/struct',
 };
@@ -184,6 +185,29 @@ function parseEmb(data) {
   }
   return result;
 }
+// TimStreams' published first free player for each explicitly requested channel.
+// Main Event is a general sports channel; its presence does not imply an F1 broadcast.
+function parseTimChannels(data) {
+  const channels = [
+    ['sky-sports-f1', 'Sky Sports F1', 'en'],
+    ['sky-sport-f1-italia', 'Sky Sport F1 Italia', 'it'],
+    ['sky-sports-main-event', 'Sky Sports Main Event', 'en'],
+  ];
+  const rows = Array.isArray(data?.channels) ? data.channels : [];
+  return channels.flatMap(([slug, label, lang]) => {
+    const channel = rows.find(row => row?.url === slug && row.vip !== true);
+    const stream = Array.isArray(channel?.streams) ? channel.streams.find(row => row?.vip !== true && row?.url) : null;
+    if (!stream) return [];
+    let url;
+    try {
+      const u = new URL(stream.url);
+      if (u.protocol !== 'https:' || u.hostname !== 'shoewiki.click' || u.username || u.password || u.port || u.search || u.hash || !/^\/[a-z0-9-]{1,160}$/i.test(u.pathname)) return [];
+      url = u.href;
+    } catch { return []; }
+    const entry = makeEntry('timstreams', label, url, lang, 'TimStreams');
+    return entry ? [entry] : [];
+  });
+}
 function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, resolveDynamic = null } = {}) {
   let cached=null, expires=0, pending=null, revision=0;
   // Retain only a recent, successfully fetched EMB catalogue; never refresh its age on failures.
@@ -208,7 +232,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
             catch { const legacy=await get('https://weelo.live/players/events.json',4000); if (!Array.isArray(legacy?.events)) throw Error('Invalid legacy catalogue'); return {provider,ok:true,entries:parseWeelo(legacy,now),fallback:true}; }
           }
           const data=await get(url);
-          const entries=({ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV})[provider](data,now);
+          const entries=({ppv:parsePpv,strmfree:parseStrmfree,strmfreeSky:parseStrmfreeSky,embdlol:parseEmb,cdnlive:parseCdnLive,bintv:parseBinTV,timstreams:parseTimChannels})[provider](data,now);
           return {provider, ok:true, entries};
         } catch {
           const age = lastEmb ? clock() - lastEmb.at : Infinity;
@@ -242,7 +266,7 @@ function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, r
         rows.push({provider:'wikisport',ok:wiki.some(Boolean),entries:wiki.filter(Boolean)});
       }
       if (startedRevision !== revision && cached) return cached;
-      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,cdnlive:5,wikisport:6};
+      const order = {strmfree:0,weelo:1,ppv:2,embdlol:3,bintv:4,timstreams:5,cdnlive:6,wikisport:7};
       const unique=new Map(); for(const row of rows)for(const item of row.entries)unique.set(item.id,item);
       const streams=[...unique.values()].sort((a,b)=>(order[a.provider] ?? 9)-(order[b.provider] ?? 9) || Number(b.sourceId === 'sky-strmfree') - Number(a.sourceId === 'sky-strmfree'));
       const result={streams:streams.slice(0,200), providers:rows.map(({provider,ok,entries,stale,staleUntil,fallback})=>({provider,ok,count:entries.length,...(fallback ? {fallback:true} : {}),...(stale ? {stale:true,staleUntil} : {})})), updatedAt:clock()};
@@ -266,4 +290,4 @@ function filterDisabledAutoStreams(streams, sources) {
   const disabled = new Set([...(sources?.disabled || []), ...(sources?.removed || [])]);
   return streams.filter(item => !item.sourceId || !disabled.has(item.sourceId));
 }
-module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV};
+module.exports={filterDisabledAutoStreams,createAutoResolver,parseWeelo,parseRacingLap,parsePpv,parseStrmfree,parseStrmfreeSky,parseCdnLive,parseEmb,parseBinTV,parseTimChannels};

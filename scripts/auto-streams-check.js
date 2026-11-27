@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLap, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb, parseBinTV } = require('../auto-streams');
+const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLap, parsePpv, parseStrmfree, parseStrmfreeSky, parseCdnLive, parseEmb, parseBinTV, parseTimChannels } = require('../auto-streams');
 (async () => {
   const now=100000;
   const weelo=parseWeelo({events:[{series_key:'f2',start:now,end:now+30,channels:[{name:'F2',stream:'abcdef'}]}, {series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'International Feed',stream:'abcdef',lang:'EN'}, {name:'Charles Leclerc',stream:'xyzdef',lang:'FR'}]}]},now);
@@ -20,7 +20,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.deepEqual(parseRacingLap({api:'racinglap',version:1,events:[]},now),[]);
   assert.throws(()=>parseRacingLap({events:[]},now));
   let used=[];const raceResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?racing:{events:[],streams:[],channels:[]})}}});
-  let listed=await raceResolver.list();assert.equal(used.length,7);assert(!used.some(x=>x.includes('weelo.live/players/events')));assert(listed.streams.some(x=>x.url===rlUrl));
+  let listed=await raceResolver.list();assert.equal(used.length,8);assert(!used.some(x=>x.includes('weelo.live/players/events')));assert(listed.streams.some(x=>x.url===rlUrl));
   used=[];const legacyResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?{}:url.includes('weelo.live/players/events')?{events:[{series_key:'f1',start:now,end:now+100,live:true,channels:[{name:'F1 TV',stream:'abcdef',lang:'en'}]}]}:{})}}});
   listed=await legacyResolver.list();assert(used.some(x=>x.includes('weelo.live/players/events')));assert.equal(listed.providers.find(x=>x.provider==='weelo').fallback,true);assert(listed.streams.some(x=>x.provider==='weelo'&&x.label==='F1 TV'));
   used=[];const emptyResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?{api:'racinglap',version:1,events:[]}:{})}}});
@@ -43,6 +43,18 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(ppvFilter.length,2);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');assert.equal(ppvFilter[1].url,'https://taifood-blog.asia/embed/f1/future');
   const cdn=parseCdnLive({channels:[{name:'Sky Sports F1 FHD UK',status:'online',url:'https://evil.example'},{name:'DAZN F1 FHD',status:'offline'},{name:'F1 Fake',status:'online'}]});
   assert.equal(cdn.length,1);assert.ok(cdn[0].url.startsWith('https://cdnlivetv.tv/'));assert.equal(cdn[0].sourceId,'sky-f1-uk');
+  const tim = parseTimChannels({channels:[
+    {url:'sky-sports-f1',streams:[{url:'https://shoewiki.click/sky-1',vip:false},{url:'https://shoewiki.click/vip',vip:true}]},
+    {url:'sky-sport-f1-italia',streams:[{url:'https://shoewiki.click/it-1'}]},
+    {url:'sky-sports-main-event',streams:[{url:'https://shoewiki.click/main-1'}]},
+    {url:'other',streams:[{url:'https://shoewiki.click/other'}]}]});
+  assert.deepEqual(tim.map(x=>x.label), ['Sky Sports F1','Sky Sport F1 Italia','Sky Sports Main Event']);
+  assert.deepEqual(tim.map(x=>x.tab), ['en','other','en']);
+  assert.equal(parseTimChannels({channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click.evil.test/foo'}]}]}).length,0);
+  assert.equal(parseTimChannels({channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click/vip',vip:true}]}]}).length,0);
+  const timResolver = createAutoResolver({clock:()=>now*1000,fetcher:async url=>({ok:true,text:async()=>JSON.stringify(url.includes('tim-streams.com')?{channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click/sky-1'}]}]}:url.includes('cdnlivetv.tv')?{channels:[{name:'Sky Sports F1 FHD UK',status:'online'}]}:url.includes('racinglap.net')?{api:'racinglap',version:1,events:[]}:{} )})});
+  const timList=(await timResolver.list()).streams;
+  assert(timList.findIndex(x=>x.provider==='timstreams') < timList.findIndex(x=>x.provider==='cdnlive'));
   const encode=x=>Buffer.from(x).toString('base64url');
   const good=`https://bintv-sources.pages.dev/?id=${encode('https://ehgembxe.cfd/bintv/test-123')}`;
   const bad=`https://bintv-sources.pages.dev/?id=${encode('https://evil.test/bintv/test')}`;
@@ -92,7 +104,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(parseEmb({channels:[{channelname:'skyf1_en',id:'../bad'}]}).length,0);
 
   let calls=0; const resolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{calls++;return {ok:true,text:async()=>String(url).includes('racinglap.net')?'{"api":"racinglap","version":1,"events":[]}':'{"events":[],"streams":[],"channels":[]}'}}});
-  await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,7);
+  await Promise.all([resolver.list(),resolver.list()]);await resolver.list();assert.equal(calls,8);
   const wikiResolver=createAutoResolver({clock:()=>now*1000,fetcher:async()=>({ok:true,text:async()=>'{}'}),resolveDynamic:async path=>({url:path==='wikisport/1'?'https://siempreon.shop/fslivepro.php?stream=F81':''})});
   const wiki=await wikiResolver.list();assert.equal(wiki.streams.filter(x=>x.provider==='wikisport').length,1);assert.equal(wiki.streams.find(x=>x.provider==='wikisport').sourceId,'wikisport');
   assert.equal(filterDisabledAutoStreams(wiki.streams,{disabled:['wikisport']}).filter(x=>x.provider==='wikisport').length,0);
@@ -128,8 +140,8 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   // Explicit owner refresh bypasses cache; trusted replicas can adopt its result.
   let forceCalls=0, forceNow=5000000;
   const forced=createAutoResolver({clock:()=>forceNow,fetcher:async url=>{forceCalls++;return {ok:true,text:async()=>String(url).includes('racinglap.net')?'{"api":"racinglap","version":1,"events":[]}':'{}'}}});
-  const first=await forced.list(); await forced.list(); assert.equal(forceCalls,7);
-  forceNow++; const fresh=await forced.list({force:true}); assert.equal(forceCalls,14); assert.ok(fresh.updatedAt>first.updatedAt);
+  const first=await forced.list(); await forced.list(); assert.equal(forceCalls,8);
+  forceNow++; const fresh=await forced.list({force:true}); assert.equal(forceCalls,16); assert.ok(fresh.updatedAt>first.updatedAt);
   const replica=createAutoResolver({clock:()=>forceNow,fetcher:async()=>{throw Error('should not fetch')}});
   assert.equal(replica.adopt(fresh),true); assert.deepEqual(await replica.list(),fresh);
   assert.equal(replica.adopt({...fresh,updatedAt:forceNow-60001}),false);
