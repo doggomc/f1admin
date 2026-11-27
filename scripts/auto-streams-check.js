@@ -69,13 +69,19 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   const emb=parseEmb({channels:[{channelname:'f1frisky',id:'abc'},{channelname:'f1friesp',id:'def'}, {channelname:'f1fri540p',id:'x'}, {channelname:'football',id:'xyz'}]});assert.equal(emb.length,2);assert.equal(emb[1].tab,'other');
   const currentEmb = parseEmb({channels: ['skyf1_en','f1_appletv','daznf1_hd','skyf1de','skyf1it','skyf1uhd','ssmotorsport_sd','Sky Sport Event 1','skyf1_540p'].map((channelname,i)=>({channelname,id:`id-${i}`}))});
   assert.equal(currentEmb.length,6);
-  assert.deepEqual(currentEmb.map(x=>x.label),['Sky Sports F1','F1 Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
+  assert.deepEqual(currentEmb.map(x=>x.label),['Sky Sports F1','Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
   assert.deepEqual(currentEmb.map(x=>x.tab),['en','en','other','other','other','en']);
   const newEmb = parseEmb({channels: ['skyf1','f1atvp','daznf1','skyf1de','skyf1it','skyf1uhd','SkyMainEvent'].map((channelname,i)=>({channelname,id:`new-${i}`}))});
-  assert.deepEqual(newEmb.map(x=>x.label), ['Sky Sports F1','F1 Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
+  assert.deepEqual(newEmb.map(x=>x.label), ['Sky Sports F1','Apple TV','DAZN F1','Sky F1 · DE','Sky F1 · IT','Sky F1 UHD']);
   assert.deepEqual(newEmb.map(x=>x.tab), ['en','en','other','other','other','en']);
   const uk = parseEmb({channels:[{channelname:'skyf1uk',id:'current-uk'}]});
   assert.equal(uk.length,1); assert.equal(uk[0].label,'Sky Sports F1'); assert.equal(uk[0].tab,'en'); assert.equal(uk[0].url,'https://embdlol.st/embed/current-uk');
+  // Captured current provider naming: keep each ID separate and never invent a broadcaster.
+  const liveNames = ['SkyF1','skyf1de','daznf1','f1uhd','f1atv','f1506'];
+  const currentLive = parseEmb({channels:liveNames.map((channelname,i)=>({channelname,id:`live-${i}`}))});
+  assert.deepEqual(currentLive.map(e=>e.label), ['Sky Sports F1','Sky F1 · DE','DAZN F1','F1 UHD','Apple TV','Fox Sports 506']);
+  assert.deepEqual(currentLive.map(e=>e.url), liveNames.map((_,i)=>`https://embdlol.st/embed/live-${i}`));
+  assert.equal(parseEmb({channels:[{channelname:'SkyF1SD',id:'sd'}]}).length,0);
   const specialEmb = parseEmb({channels:['f1drivertracker','f1pitlane','f1lewis','f1kimi','f1mixedonboard','f1timingchannel','f1stroll'].map((channelname,i)=>({channelname,id:`special-${i}`}))});
   assert.deepEqual(specialEmb.map(e=>e.label), ['Driver Tracker','Pit Lane','Lewis Hamilton','Kimi Antonelli','Mixed Onboard','Data Channel','Lance Stroll']);
   assert.ok(specialEmb.every(e=>e.tab==='en'));

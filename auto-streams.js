@@ -165,9 +165,10 @@ function parseEmb(data) {
   // Explicit current channel aliases plus historical race-prefixed F1 names.
   // Do not infer that a generic Sky Sports or motorsport channel is F1.
   const aliases = {
-    skyf1: ['Sky Sports F1', 'en'], skyf1en: ['Sky Sports F1', 'en'], skyf1uk: ['Sky Sports F1', 'en'], f1atvp: ['F1 Apple TV', 'en'], f1appletv: ['F1 Apple TV', 'en'],
+    skyf1: ['Sky Sports F1', 'en'], skyf1en: ['Sky Sports F1', 'en'], skyf1uk: ['Sky Sports F1', 'en'], f1atvp: ['Apple TV', 'en'], f1atv: ['Apple TV', 'en'], f1appletv: ['Apple TV', 'en'],
     daznf1: ['DAZN F1', 'es'], daznf1hd: ['DAZN F1', 'es'], skyf1de: ['Sky F1 · DE', 'de'],
     skyf1it: ['Sky F1 · IT', 'it'], skyf1uhd: ['Sky F1 UHD', 'en'],
+    f1uhd: ['F1 UHD', 'en'], f1506: ['Fox Sports 506', 'en'],
     f1drivertracker: ['Driver Tracker', 'en'], f1pitlane: ['Pit Lane', 'en'],
     f1lewis: ['Lewis Hamilton', 'en'], f1kimi: ['Kimi Antonelli', 'en'],
     f1mixedonboard: ['Mixed Onboard', 'en'], f1timingchannel: ['Data Channel', 'en'], f1stroll: ['Lance Stroll', 'en'],
