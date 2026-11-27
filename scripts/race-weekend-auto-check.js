@@ -15,6 +15,10 @@ const {createRaceWeekend,parseWeekendWindows,windowAt,resolveAutoStreams,REFRESH
  now=fp-3*h-1;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,0);assert.equal(r.window.active,false);
  now=fp;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,1);assert.equal(r.streams.length,1);
  now=race+5*h;r=await resolveAutoStreams({enabled:true,weekend,resolver,clock:()=>now});assert.equal(calls,1);assert.equal(r.window.active,false);
- let errors=0;const offline=createRaceWeekend({clock:()=>fp,fetcher:async()=>{errors++;throw Error('offline')}});await Promise.all([offline.getWindow(),offline.getWindow()]);await offline.getWindow();assert.equal(errors,1);assert.equal((await offline.getWindow()).reason,'schedule-unavailable');
+ let errors=0;const offline=createRaceWeekend({clock:()=>fp,fallbackCalendar:null,fetcher:async()=>{errors++;throw Error('offline')}});await Promise.all([offline.getWindow(),offline.getWindow()]);await offline.getWindow();assert.equal(errors,1);assert.equal((await offline.getWindow()).reason,'schedule-unavailable');
+ const fallback=createRaceWeekend({clock:()=>fp,fetcher:async()=>{throw Error('offline')}});
+ const fallbackWindow=await fallback.getWindow(); assert.equal(fallbackWindow.active,true); assert.equal(fallbackWindow.race,'Brazilian Grand Prix'); assert.equal(fallbackWindow.scheduleSource,'bundled');
+ const wrongYear=createRaceWeekend({clock:()=>Date.parse('2027-01-01T00:00:00Z'),fetcher:async()=>{throw Error('offline')}});
+ assert.equal((await wrongYear.getWindow()).reason,'schedule-unavailable');
  console.log('Weekend boundaries, failure-safe gating, refresh and shared calendar passed');
 })().catch(e=>{console.error(e);process.exit(1)});
