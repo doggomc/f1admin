@@ -43,6 +43,12 @@ function resolverFor(channels) {
   assert.equal(currentMap.fullhd1, 'sky-id'); assert.equal(currentMap.fullhd3, 'apple-id');
   assert.equal(currentMap.dazn, 'dazn-id'); assert.equal(currentMap.skyde, 'de-id');
   assert.equal(currentMap.skyit, 'it-id'); assert.equal(currentMap.uhd, undefined);
+  const currentSources = await current.resolver.listSources();
+  assert.equal(currentSources.find(x => x.id === 'emb-fullhd1').label, 'Sky Sports F1 (EMB)');
+  assert.equal(currentSources.find(x => x.id === 'emb-fullhd3').label, 'Apple TV (EMB)');
+  assert.equal(currentSources.find(x => x.id === 'emb-stripped-fullhd1').label, 'Sky Sports F1 (EMB Stripped)');
+  const legacy = resolverFor([{id:'legacy',channelname:'f1fullhd1'}]);
+  assert.equal((await legacy.resolver.listSources()).find(x => x.id === 'emb-fullhd1').label, 'Full HD 1 (EMB)');
   assert.equal(await current.resolver.resolveUhdUrl(), 'https://embdlol.st/embed/uhd-id');
   const liveUhd = { id: 'live-uhd', channelname: 'F1 - Brazil - Live - UHD' };
   const oldUhd = { id: 'old-uhd', channelname: 'F1 - Brazil - Saturday - UHD' };

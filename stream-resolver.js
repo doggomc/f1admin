@@ -1014,9 +1014,17 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
         }).map(mirror => ({quality: 1080, url: mirror.url}));
         links = [...directMirrors, ...links.filter(link => !directMirrors.some(mirror => mirror.url === link.url))];
       }
+      // The legacy HD slots can point at current named feeds; label only when the IDs agree.
+      let label = source.label;
+      if ((source.provider === 'embdlol' || source.provider === 'embdlol-stripped') && knownChannels) {
+        const alias = source.channel === 'fullhd1' ? 'sky' : source.channel === 'fullhd3' ? 'apple' : '';
+        if (alias && channels.has(alias) && channels.get(alias) === channels.get(source.channel)) {
+          label = `${alias === 'sky' ? 'Sky Sports F1' : 'Apple TV'} (EMB${source.stripped ? ' Stripped' : ''})`;
+        }
+      }
       return {
         id: source.id,
-        label: source.label,
+        label,
         provider: source.provider,
         main: Boolean(source.main),
         minQuality: source.minQuality,
