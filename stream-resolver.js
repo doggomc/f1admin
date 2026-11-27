@@ -78,7 +78,7 @@ function feedKey(name) {
   const flat = raw.replace(/^formula[\s_-]*1\b/, 'f1').replace(/[\s_-]+/g, '');
   // EMB also publishes fixed channel names instead of weekend-prefixed names.
   // Match only explicit F1 aliases; generic Sky Sports channels are not necessarily F1.
-  const current = { skyf1: 'sky', skyf1en: 'sky', skyf1uk: 'sky', f1atvp: 'apple', f1appletv: 'apple', daznf1: 'dazn', daznf1hd: 'dazn', skyf1de: 'skyde', skyf1it: 'skyit', skyf1uhd: 'uhd' };
+  const current = { skyeventit: 'skyeventit', skyeventit2: 'skyeventit2', skyf1: 'sky', skyf1en: 'sky', skyf1uk: 'sky', f1atvp: 'apple', f1appletv: 'apple', daznf1: 'dazn', daznf1hd: 'dazn', skyf1de: 'skyde', skyf1it: 'skyit', skyf1uhd: 'uhd' };
   if (current[flat]) return current[flat];
 
   if (!/^[a-z0-9]+$/.test(flat)) return '';
@@ -142,10 +142,10 @@ function wikiTarget(path, raw) {
 }
 
 /* The embdlol feeds whose commentary is not English. */
-const EMB_OTHER = ['dazn', 'skyit', 'skyde', 'german', 'spanish', 'italian'];
+const EMB_OTHER = ['dazn', 'skyit', 'skyeventit', 'skyeventit2', 'skyde', 'german', 'spanish', 'italian'];
 /* A feed may only fail over to another feed of its own language — the old pool offered every F1
    feed, so the Spanish chip played English Sky. */
-const EMB_LANG = { dazn: 'es', spanish: 'es', skyit: 'it', italian: 'it', skyde: 'de', german: 'de' };
+const EMB_LANG = { dazn: 'es', spanish: 'es', skyit: 'it', skyeventit: 'it', skyeventit2: 'it', italian: 'it', skyde: 'de', german: 'de' };
 /* `channels` is a Map when the catalogue answered and `false` when it did not — never assume a Map. */
 const embPool = (feed, channels) => (channels instanceof Map ? [...channels] : [])
   .filter(([name]) => EMB_LANG[name] === EMB_LANG[feed]).map(([, id]) => id);
@@ -154,7 +154,7 @@ const embPool = (feed, channels) => (channels instanceof Map ? [...channels] : [
    are gone: embdlol publishes ONE English F1 channel (today f1mexicofullhd1/3) and those two chips
    could never resolve to anything the fullhd chips do not, so they were empty for their whole life. */
 const EMB_FEEDS = [['fullhd1', 'Full HD 1'], ['fullhd3', 'Full HD 3'], ['dazn', 'DAZN ES'],
-  ['skyit', 'Sky Italia'], ['skyde', 'Sky DE'], ['world', 'F1 World'], ['german', 'German'],
+  ['skyit', 'Sky Italia'], ['skyeventit', 'Sky Event IT'], ['skyeventit2', 'Sky Event IT 2'], ['skyde', 'Sky DE'], ['world', 'F1 World'], ['german', 'German'],
   ['spanish', 'Spanish'], ['italian', 'Italian']];
 
 /* weelo relays the onboards and the data channel: one id per feed, and /players/state.json says

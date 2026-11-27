@@ -37,13 +37,18 @@ function resolverFor(channels) {
     { id: 'sky-id', channelname: 'skyf1' }, { id: 'apple-id', channelname: 'f1atvp' },
     { id: 'dazn-id', channelname: 'daznf1' }, { id: 'de-id', channelname: 'skyf1de' },
     { id: 'it-id', channelname: 'skyf1it' }, { id: 'uhd-id', channelname: 'skyf1uhd' },
+    { id: 'event-a', channelname: 'skyeventit' }, { id: 'event-b', channelname: 'skyeventit2' },
     { id: 'other-id', channelname: 'SkyMainEvent' }
   ]);
   const currentMap = (await current.resolver.embdlolPublicChannels()).channels;
   assert.equal(currentMap.fullhd1, 'sky-id'); assert.equal(currentMap.fullhd3, 'apple-id');
   assert.equal(currentMap.dazn, 'dazn-id'); assert.equal(currentMap.skyde, 'de-id');
+  assert.equal(currentMap.skyeventit, 'event-a'); assert.equal(currentMap.skyeventit2, 'event-b');
   assert.equal(currentMap.skyit, 'it-id'); assert.equal(currentMap.uhd, undefined);
   const currentSources = await current.resolver.listSources();
+  assert.equal(currentSources.find(x => x.id === 'emb-skyeventit').resolvedUrl, 'https://embdlol.st/embed/event-a');
+  assert.equal(currentSources.find(x => x.id === 'emb-skyeventit2').resolvedUrl, 'https://embdlol.st/embed/event-b');
+  assert.equal(currentSources.find(x => x.id === 'emb-skyeventit2').tab, 'other');
   assert.equal(currentSources.find(x => x.id === 'emb-fullhd1').label, 'Sky Sports F1 (EMB)');
   assert.equal(currentSources.find(x => x.id === 'emb-fullhd3').label, 'Apple TV (EMB)');
   assert.equal(currentSources.find(x => x.id === 'emb-stripped-fullhd1').label, 'Sky Sports F1 (EMB Stripped)');

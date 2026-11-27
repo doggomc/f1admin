@@ -167,7 +167,7 @@ function parseEmb(data) {
   const aliases = {
     skyf1: ['Sky Sports F1', 'en'], skyf1en: ['Sky Sports F1', 'en'], skyf1uk: ['Sky Sports F1', 'en'], f1atvp: ['Apple TV', 'en'], f1atv: ['Apple TV', 'en'], f1appletv: ['Apple TV', 'en'],
     daznf1: ['DAZN F1', 'es'], daznf1hd: ['DAZN F1', 'es'], skyf1de: ['Sky F1 · DE', 'de'],
-    skyf1it: ['Sky F1 · IT', 'it'], skyf1uhd: ['Sky F1 UHD', 'en'],
+    skyf1it: ['Sky F1 · IT', 'it'], skyeventit: ['Sky Event IT', 'it'], skyeventit2: ['Sky Event IT 2', 'it'], skyf1uhd: ['Sky F1 UHD', 'en'],
     f1uhd: ['F1 UHD', 'en'], f1506: ['Fox Sports 506', 'en'],
     f1drivertracker: ['Driver Tracker', 'en'], f1pitlane: ['Pit Lane', 'en'],
     f1lewis: ['Lewis Hamilton', 'en'], f1kimi: ['Kimi Antonelli', 'en'],

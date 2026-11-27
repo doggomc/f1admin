@@ -82,6 +82,10 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.deepEqual(currentLive.map(e=>e.label), ['Sky Sports F1','Sky F1 · DE','DAZN F1','F1 UHD','Apple TV','Fox Sports 506']);
   assert.deepEqual(currentLive.map(e=>e.url), liveNames.map((_,i)=>`https://embdlol.st/embed/live-${i}`));
   assert.equal(parseEmb({channels:[{channelname:'SkyF1SD',id:'sd'}]}).length,0);
+  const skyEvents = parseEmb({channels:[{channelname:'skyeventit',id:'event-a'},{channelname:'skyeventit2',id:'event-b'}]});
+  assert.deepEqual(skyEvents.map(x=>x.label), ['Sky Event IT','Sky Event IT 2']);
+  assert.deepEqual(skyEvents.map(x=>x.tab), ['other','other']);
+  assert.deepEqual(skyEvents.map(x=>x.url), ['https://embdlol.st/embed/event-a','https://embdlol.st/embed/event-b']);
   const specialEmb = parseEmb({channels:['f1drivertracker','f1pitlane','f1lewis','f1kimi','f1mixedonboard','f1timingchannel','f1stroll'].map((channelname,i)=>({channelname,id:`special-${i}`}))});
   assert.deepEqual(specialEmb.map(e=>e.label), ['Driver Tracker','Pit Lane','Lewis Hamilton','Kimi Antonelli','Mixed Onboard','Data Channel','Lance Stroll']);
   assert.ok(specialEmb.every(e=>e.tab==='en'));
