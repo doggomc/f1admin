@@ -35,7 +35,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
 
 /* The live list, straight from the resolver - the dashboard renders exactly the controls the
    backend serves, so this check cannot go stale. */
-const FEED_SOURCES = require('../stream-resolver').STREAM_SOURCES.map(({ id, label, provider, tab, special, stripped }) => ({ id, label, provider, tab: tab || 'en', special, stripped }));
+const FEED_SOURCES = require('../stream-resolver').STREAM_SOURCES.map(({ id, label, provider, tab, special, stripped, sandboxDirect }) => ({ id, label, provider, tab: tab || 'en', special, stripped, sandboxDirect }));
 const PAGE_LIST = [
   { id: 'cockpit', label: 'Cockpit', path: '/cockpit.html', description: 'Live stream player, sources & multiviewer' },
   { id: 'schedule', label: 'Schedule', path: '/schedule.html', description: 'Season calendar & weekend session times' },
@@ -146,6 +146,8 @@ window.fetch = async (url, options = {}) => {
   check('initialization makes only status and one config request', calls.length === 2 && calls[0].pathname.endsWith('/status') && calls[1].pathname.endsWith('/config'), JSON.stringify(calls.map(call => call.pathname)));
   check('removed feeds are absent from source controls', !html.includes('sky-uk-2') && !html.includes('sky-sports-f1') &&
     ![...$('sourceList').querySelectorAll('.source-id')].some(el => /sky-uk-2|sky-sports-f1/.test(el.textContent)));
+  const skyRow = $('sourceList').querySelector('[data-source-id="sky-strmfree"]');
+  check('StreamFree is shown once as stripped and direct', Boolean(skyRow && skyRow.textContent.includes('stripped · direct')) && !$('sourceList').querySelector('[data-source-id="sky-uk"]'));
   const fallbackRow = $('sourceList').querySelector(`[data-source-id="${FEED_SOURCES[0].id}"]`);
   const disclosure = fallbackRow.querySelector('details.addr-fallbacks');
   const fallbackItems = [...disclosure.querySelectorAll('li')];

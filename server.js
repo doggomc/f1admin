@@ -150,7 +150,8 @@ const FEED_SOURCES = require('./stream-resolver').STREAM_SOURCES.map((source) =>
   tab: source.tab || 'en',
   ...(source.lang ? { lang: source.lang } : {}),
   ...(source.special ? { special: source.special } : {}),
-  ...(source.stripped ? { stripped: true } : {})
+  ...(source.stripped ? { stripped: true } : {}),
+  ...(source.sandboxDirect ? { sandboxDirect: true } : {})
 }));
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 

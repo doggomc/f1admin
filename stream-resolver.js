@@ -622,15 +622,12 @@ function taidUrl(event, session, id, mark) {
 
    `minQuality` is the floor a link has to clear to appear in this provider's pool. */
 const STREAM_SOURCES = [
-  { id: 'sky-strmfree', label: 'Sky Sports F1 (StreamFree)', main: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
+  // This is a direct provider iframe; the website applies sandbox="allow-scripts".
+  { id: 'sky-strmfree', label: 'Sky Sports F1 (StreamFree)', main: true, stripped: true, sandboxDirect: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
     { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf11080p' },
-    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' }
-  ] },
-  { id: 'sky-uk', label: 'Sky HD', stripped: true, provider: 'strmfree', minQuality: 720, tab: 'en', links: [
-    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=strmfree.st` },
-    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf11080p&host=streamfree.top` },
-    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf1&host=strmfree.st` },
-    { quality: 1080, url: `${STRMFREE_STRIPPED_EMBED}?variant=skyf1&host=streamfree.top` }
+    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf11080p' },
+    { quality: 1080, url: 'https://strmfree.st/embed/racing/skyf1' },
+    { quality: 1080, url: 'https://streamfree.top/embed/racing/skyf1' }
   ] },
   /* The feeds whose commentary is not English draw under the Other tab, in the player and here. */
   ...EMB_FEEDS.map(([feed, label]) => ({ id: `emb-${feed}`, label: `${label} (EMB)`, provider: 'embdlol', channel: feed, minQuality: 0, tab: EMB_OTHER.includes(feed) ? 'other' : 'en', links: [] })),
@@ -1006,12 +1003,16 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
     const knownChannels = channels instanceof Map ? channels.size > 0 : false;
     return STREAM_SOURCES.map((source) => {
       let links = source.links.slice();
-      if (source.id === 'sky-uk') {
-        const strippedMirrors = skyMirrors
-          .filter((mirror) => mirror.quality === 1080)
-          .map((mirror) => ({ quality: 1080, url: toStrippedStrmfreeUrl(mirror.url) }))
-          .filter((mirror) => mirror.url && !links.some((link) => link.url === mirror.url));
-        links = [...links.filter((link) => link.quality === 1080), ...strippedMirrors];
+      if (source.id === 'sky-strmfree') {
+        const directMirrors = skyMirrors.filter((mirror) => {
+          if (mirror.quality !== 1080) return false;
+          try {
+            const url = new URL(mirror.url);
+            return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
+              ['strmfree.st', 'streamfree.top'].includes(url.hostname) && /^\/embed\/racing\/skyf1(?:1080p)?\/?$/i.test(url.pathname);
+          } catch { return false; }
+        }).map(mirror => ({quality: 1080, url: mirror.url}));
+        links = [...directMirrors, ...links.filter(link => !directMirrors.some(mirror => mirror.url === link.url))];
       }
       return {
         id: source.id,
@@ -1027,6 +1028,7 @@ function createStreamResolver({ log = console, fetchImpl = fetch, ppvResolveImpl
         tab: source.tab || 'en',
         special: source.special || null,
         stripped: Boolean(source.stripped),
+        sandboxDirect: Boolean(source.sandboxDirect),
         state: (source.provider === 'weelo' || source.provider === 'weelo-stripped') ? weeloUp(state, source.weelo) : null,
         links: links.map((link) => (link.taid ? { ...link, marks: TAID_MARKS, shape: taidUrl('{event}', '{session}', link.taid, '{mark}') } : link)),
         /* An EMB chip is only playable when its channel is listed upstream; the 4K chip has its

@@ -545,7 +545,7 @@ function renderSources() {
     if (source.stripped) {
       const strippedTag = document.createElement('em');
       strippedTag.className = 'source-tag';
-      strippedTag.textContent = 'stripped';
+      strippedTag.textContent = source.sandboxDirect ? 'stripped · direct' : 'stripped';
       name.append(' ', strippedTag);
     }
 
@@ -991,7 +991,7 @@ function renderAutoStreams() {
   const enabled = config?.sources?.autoStreams === true;
   $('autoStreamsToggle').textContent = enabled ? 'Disable Auto-Streams' : 'Enable Auto-Streams';
   $('autoStreamsToggle').setAttribute('aria-pressed', String(enabled));
-  $('autoStreamsDetail').textContent = enabled ? 'Automatic feeds refresh every 10 minutes from 3 hours before Practice 1 until about 3 hours after the race. Manual settings are preserved.' : 'Manual sources are active. Auto-Streams checks providers only during race weekends and uses no video relay.';
+  $('autoStreamsDetail').textContent = enabled ? 'Automatic feeds are checked when viewers load the page during the race-weekend window. Manual settings are preserved.' : 'Manual sources are active. Auto-Streams checks providers only during race weekends and uses no video relay.';
 }
 $('autoStreamsToggle').addEventListener('click', async () => {
   const button = $('autoStreamsToggle'); button.disabled = true;
@@ -1022,7 +1022,7 @@ $('testAutoStreams').addEventListener('click', async () => {
       for (const stream of streams) {
         const row = document.createElement('li');
         const title = document.createElement('span');
-        title.textContent = `${stream.label || 'Feed'} · ${stream.provider || 'provider'}${stream.tag ? ` · ${stream.tag}` : ''}${stream.disabledBySettings ? ' · Disabled in settings' : ''}`;
+        title.textContent = `${stream.label || 'Feed'} · ${stream.provider || 'provider'}${stream.provider === 'strmfree' ? ' · Stripped (direct sandbox on site)' : ''}${stream.tag ? ` · ${stream.tag}` : ''}${stream.disabledBySettings ? ' · Disabled in settings' : ''}`;
         row.append(title);
         try {
           const url = new URL(stream.url);
