@@ -134,7 +134,7 @@ function parseBinTV(data) {
   const channels = Array.isArray(data?.['24/7 Channels']) ? data['24/7 Channels'] : [];
   const result = [];
   for (const channel of channels) {
-    if (channel?.ID !== 'ch_2e8bd51a1742' || channel.Name !== 'Sky Sports F1' || String(channel.Status || '').toLowerCase() !== 'live') continue;
+    if (String(channel?.Name || '').trim().toLowerCase() !== 'sky sports f1' || String(channel.Status || '').toLowerCase() !== 'live') continue;
     for (const stream of Array.isArray(channel.Streams) ? channel.Streams : []) {
       const name = String(stream?.Name || '').trim();
       if (!/^(English|Italian|German|4K HEVC)$/i.test(name)) continue;
@@ -236,29 +236,35 @@ function parseZliveMotorsport(data) {
     return entry ? [entry] : [];
   });
 }
-// TimStreams' published first free player for each explicitly requested channel.
-// Main Event is a general sports channel; its presence does not imply an F1 broadcast.
+// Discover every free published player for the selected F1 and Main Event channels.
 function parseTimChannels(data) {
   const channels = [
     ['sky-sports-f1', 'Sky Sports F1', 'en'],
     ['sky-sport-f1-italia', 'Sky Sport F1 Italia', 'it'],
+    ['dazn-f1', 'DAZN F1', 'es'],
     ['sky-sports-main-event', 'Sky Sports Main Event', 'en'],
   ];
   const rows = Array.isArray(data?.channels) ? data.channels : [];
-  return channels.flatMap(([slug, label, lang]) => {
+  return channels.flatMap(([slug, label, defaultLang]) => {
     const channel = rows.find(row => row?.url === slug && row.vip !== true);
-    const stream = Array.isArray(channel?.streams) ? channel.streams.find(row => row?.vip !== true && row?.url) : null;
-    if (!stream) return [];
-    let url;
-    try {
-      const u = new URL(stream.url);
-      if (u.protocol !== 'https:' || u.hostname !== 'shoewiki.click' || u.username || u.password || u.port || u.search || u.hash || !/^\/[a-z0-9-]{1,160}$/i.test(u.pathname)) return [];
-      url = u.href;
-    } catch { return []; }
-    const entry = makeEntry('timstreams', label, url, lang, 'TimStreams');
-    return entry ? [entry] : [];
+    const streams = Array.isArray(channel?.streams) ? channel.streams : [];
+    return streams.flatMap(stream => {
+      if (!stream || stream.vip === true || !stream.url) return [];
+      let url;
+      try {
+        const u = new URL(stream.url);
+        if (u.protocol !== 'https:' || u.hostname !== 'shoewiki.click' || u.username || u.password || u.port || u.search || u.hash || !/^\/[a-z0-9-]{1,160}$/i.test(u.pathname)) return [];
+        url = u.href;
+      } catch { return []; }
+      const name = String(stream.name || '').trim();
+      const lang = /italian/i.test(name) ? 'it' : /german/i.test(name) ? 'de' : /spanish/i.test(name) ? 'es' : defaultLang;
+      const display = /^(english|italian|german|spanish|4k(?: hevc)?|uhd)$/i.test(name) ? `${label} · ${name}` : label;
+      const entry = makeEntry('timstreams', display, url, lang, 'TimStreams');
+      return entry ? [entry] : [];
+    });
   });
 }
+
 function createAutoResolver({ fetcher = fetch, ttl = 600000, clock = Date.now, resolveDynamic = null } = {}) {
   let cached=null, expires=0, pending=null, revision=0;
   // Retain only a recent, successfully fetched EMB catalogue; never refresh its age on failures.

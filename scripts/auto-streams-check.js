@@ -51,6 +51,9 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
     {url:'other',streams:[{url:'https://shoewiki.click/other'}]}]});
   assert.deepEqual(tim.map(x=>x.label), ['Sky Sports F1','Sky Sport F1 Italia','Sky Sports Main Event']);
   assert.deepEqual(tim.map(x=>x.tab), ['en','other','en']);
+  const variants = parseTimChannels({channels:[{url:'sky-sports-f1',streams:[{name:'English',url:'https://shoewiki.click/en'},{name:'Italian',url:'https://shoewiki.click/it'},{name:'German',url:'https://shoewiki.click/de'},{name:'4K HEVC',url:'https://shoewiki.click/vip',vip:true}]},{url:'dazn-f1',streams:[{name:'TimStreams',url:'https://shoewiki.click/dazn'}]}]});
+  assert.deepEqual(variants.map(x=>x.label), ['Sky Sports F1 · English','Sky Sports F1 · Italian','Sky Sports F1 · German','DAZN F1']);
+  assert.deepEqual(variants.map(x=>x.tab), ['en','other','other','other']);
   assert.equal(parseTimChannels({channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click.evil.test/foo'}]}]}).length,0);
   assert.equal(parseTimChannels({channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click/vip',vip:true}]}]}).length,0);
   const timResolver = createAutoResolver({clock:()=>now*1000,fetcher:async url=>({ok:true,text:async()=>JSON.stringify(url.includes('tim-streams.com')?{channels:[{url:'sky-sports-f1',streams:[{url:'https://shoewiki.click/sky-1'}]}]}:url.includes('cdnlivetv.tv')?{channels:[{name:'Sky Sports F1 FHD UK',status:'online'}]}:url.includes('racinglap.net')?{api:'racinglap',version:1,events:[]}:{} )})});
@@ -82,7 +85,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(rotatedList.length,1); assert.equal(rotatedList[0].url,rotated);
 
   const bintv=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good},{Name:'Italian',Iframe:good},{Name:'German',Iframe:bad},{Name:'4K HEVC',Iframe:good+'&extra=1'}]},{ID:'different',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'English',Iframe:good}]}]});
-  assert.equal(bintv.length,2);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
+  assert.equal(bintv.length,3);assert.equal(bintv[0].tab,'en');assert.equal(bintv[1].tab,'other');assert.equal(bintv[0].provider,'bintv');
   const hevc=parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'Live',Streams:[{Name:'4K HEVC',Iframe:good},{Name:'German',Iframe:good}]}]});
   assert.equal(hevc[0].tab,'en');assert.equal(hevc[0].label,'Sky Sports F1 · 4K HEVC');assert.equal(hevc[0].url,good);assert.equal(hevc[1].tab,'other');
   assert.equal(parseBinTV({'24/7 Channels':[{ID:'ch_2e8bd51a1742',Name:'Sky Sports F1',Status:'offline',Streams:[{Name:'English',Iframe:good}]}]}).length,0);
