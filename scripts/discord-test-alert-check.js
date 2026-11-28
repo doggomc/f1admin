@@ -16,6 +16,7 @@ Module._load = function(request, parent, isMain) {
 };
 const bot = require('../bot/discord-bot');
 const { alertSvg, renderAlertImage } = require('../bot/alert-image');
+const { sessionViewerPeak } = require('../bot/session-viewer-peak');
 const { Resvg } = require('@resvg/resvg-js');
 const { PNG } = require('pngjs');
 const path = require('node:path');
@@ -28,6 +29,16 @@ Module._load = originalLoad;
     assert(logo.includes('M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z'));
     const event = { name:'São Paulo Grand Prix', round:20, locality:'São Paulo', country:'Brazil' };
     const session = {name:'Race', ts:Date.now()};
+    const ended = alertSvg(event, session, 'end', 1234);
+    assert(ended.includes('PEAK LIVE COCKPIT VIEWERS')); assert(ended.includes('1,234'));
+    assert(!alertSvg(event, session, 'live', 1234).includes('PEAK LIVE COCKPIT VIEWERS'));
+    assert(alertSvg(event, session, 'end', null).includes('>—</text>'));
+    const key = `${new Date(session.ts).getUTCFullYear()}:${event.round}:${session.ts}`;
+    const fetcher = async () => ({ok:true,text:async()=>JSON.stringify({peaks:[{kind:'site',key,peak:9999},{kind:'live',key,peak:346}]})});
+    assert.equal(await sessionViewerPeak(event,session,fetcher),346);
+    assert.equal(await sessionViewerPeak({...event,round:21},session,fetcher),null);
+    assert.equal(await sessionViewerPeak(event,session,async()=>{throw Error('offline')}),null);
+    assert.equal(await sessionViewerPeak(event,session,async()=>({ok:true,text:async()=>JSON.stringify({peaks:[{kind:'live',key,peak:'346'}]})})),null);
     const fonts = ['DejaVuSans-Bold.ttf', 'Archivo-Bold.ttf'].map(f => path.join(__dirname, '..', 'assets', 'fonts', f));
     for (const state of ['start','live','end']) {
       const raw = new Resvg(alertSvg(event, session, state), { font: { fontFiles:fonts, loadSystemFonts:false, defaultFontFamily:'DejaVu Sans' } }).render().asPng();

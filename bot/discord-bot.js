@@ -50,6 +50,7 @@
 const fs = require('fs');
 const path = require('path');
 const { renderAlertImage, renderAlertsPanelImage, renderWebsiteImage } = require('./alert-image');
+const { sessionViewerPeak } = require('./session-viewer-peak');
 const { renderGridImage, gridDescription } = require('./grid-image');
 const { createResultsService, createResultsPublisher } = require('./results-service');
 const {
@@ -242,8 +243,8 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
 
 /* Keep the clickable site button on both new alerts and in-place edits.
    Edits replace the image and button without re-pinging the role. */
-async function imageAlertPayload(event, session, state, roleId, { siteUrl, edit = false, ping = false } = {}) {
-  const image = await renderAlertImage(event, session, state);
+async function imageAlertPayload(event, session, state, roleId, { siteUrl, edit = false, ping = false, peakViewers = null } = {}) {
+  const image = await renderAlertImage(event, session, state, peakViewers);
   const labels = { start: 'starting soon', live: 'live now', end: 'session ended' };
   return {
     content: roleId ? `<@&${roleId}>` : '',
@@ -258,7 +259,7 @@ async function testAlertPayload(event, session, state, siteUrl) {
   const states = { start: 'STARTING SOON', live: 'LIVE NOW', end: 'SESSION ENDED' };
   if (!Object.hasOwn(states, state)) throw new Error('Unknown test state');
   const timestamp = Math.floor(session.ts / 1000);
-  const image = await renderAlertImage(event, session, state);
+  const image = await renderAlertImage(event, session, state, state === 'end' ? 1234 : null);
   return {
     content: `**TEST · ${states[state]}**\n${event.name} · ${session.name} · <t:${timestamp}:F>`,
     files: [{ attachment: image, name: `freef1-test-${state}.png`, description: `Test alert: ${states[state]}, ${event.name}, ${session.name}` }],
@@ -1019,7 +1020,7 @@ function start(deps) {
           st.sent[keyEnded] = { messageId: existingId || 'none', at: now };
           if (existingId && existingId !== 'none') {
             try {
-              await channel.messages.edit(existingId, await imageAlertPayload(ev, sess, 'end', st.alerts.roleId, { siteUrl: deps.siteUrl, edit: true }));
+              await channel.messages.edit(existingId, await imageAlertPayload(ev, sess, 'end', st.alerts.roleId, { siteUrl: deps.siteUrl, edit: true, peakViewers: await sessionViewerPeak(ev, sess) }));
               log(`ended alert: ${ev.slug}/${sess.slug}`);
             } catch (e) { log('ended edit failed (message gone?):', e.message); }
           }
@@ -1222,7 +1223,7 @@ function start(deps) {
         const bound = st.alerts && guild.channels.cache.get(st.alerts.channelId);
         const alertsCh = bound || interaction.channel;
         const imageState = state === 'soon' ? 'start' : state === 'ended' ? 'end' : 'live';
-        const msg = await alertsCh.send(await imageAlertPayload(found.ev, found.sess, imageState, null, { siteUrl: deps.siteUrl }));
+        const msg = await alertsCh.send(await imageAlertPayload(found.ev, found.sess, imageState, null, { siteUrl: deps.siteUrl, peakViewers: imageState === 'end' ? await sessionViewerPeak(found.ev, found.sess) : null }));
         const where = bound ? String(alertsCh) : `${alertsCh} (no alerts channel set - posted here)`;
         return interaction.editReply({ content: `Posted ${state} image for ${found.ev.name} · ${found.sess.name} to ${where}: ${msg.url}` });
       }

@@ -14,7 +14,7 @@ const STATES = Object.freeze({
 });
 function escapeXml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[c])); }
 function short(value, n) { const s = String(value || '').trim(); return s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s; }
-function alertSvg(event, session, state) {
+function alertSvg(event, session, state, peakViewers = null) {
   const style = STATES[state];
   if (!style) throw new Error('Unknown test alert state');
   const race = escapeXml(short(event.name, 34));
@@ -22,6 +22,8 @@ function alertSvg(event, session, state) {
   const location = escapeXml(short([event.locality, event.country].filter(Boolean).join(', '), 45));
   const round = escapeXml(String(event.round || '—').padStart(2, '0'));
   const eventFont = String(event.name || '').length > 25 ? 48 : 60;
+  const peak = Number.isSafeInteger(peakViewers) && peakViewers >= 0 && peakViewers <= 1_000_000 ? peakViewers.toLocaleString('en-US') : '—';
+  const audience = state === 'end' ? `<text x="1124" y="465" fill="#838a95" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700" letter-spacing="1.4">PEAK LIVE COCKPIT VIEWERS</text><text x="1124" y="505" fill="#f7f8fa" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="29" font-weight="700">${peak}</text>` : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1c2027"/><stop offset="1" stop-color="#090b0e"/></linearGradient><linearGradient id="red" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ff3b32"/><stop offset="1" stop-color="#a80000"/></linearGradient><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e10600"/><stop offset="1" stop-color="#8b0400"/></linearGradient><clipPath id="clip"><rect width="1200" height="630" rx="28"/></clipPath></defs>
   <g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/>
@@ -37,6 +39,7 @@ function alertSvg(event, session, state) {
   <text x="76" y="386" fill="#bec2cb" font-family="DejaVu Sans, sans-serif" font-size="29" font-weight="600">${sessionName}</text>
   <path d="M76 427H1124" stroke="#ffffff" stroke-opacity=".1"/>
   <text x="76" y="484" fill="#838a95" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">ROUND ${round}  ·  ${location}</text>
+  ${audience}
   <text x="76" y="555" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">${style.subtitle}</text>
   <text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text>
   </g></svg>`;
@@ -72,7 +75,7 @@ function renderPng(svg) {
   // PNG re-encoding is lossless: only filtering/DEFLATE settings change.
   return PNG.sync.write(PNG.sync.read(source), { filterType: -1, deflateLevel: 9, deflateStrategy: constants.Z_DEFAULT_STRATEGY });
 }
-async function renderAlertImage(event, session, state) { return renderPng(alertSvg(event, session, state)); }
+async function renderAlertImage(event, session, state, peakViewers = null) { return renderPng(alertSvg(event, session, state, peakViewers)); }
 let panelImage;
 async function renderAlertsPanelImage() { return panelImage || (panelImage = renderPng(alertsPanelSvg())); }
 let websiteImage;
