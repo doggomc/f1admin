@@ -15,46 +15,58 @@ const STATES = Object.freeze({
 function escapeXml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[c])); }
 function short(value, n) { const s = String(value || '').trim(); return s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s; }
 function alertSvg(event, session, state, peakViewers = null) {
-  const style = STATES[state];
-  if (!style) throw new Error('Unknown test alert state');
+  if (!STATES[state]) throw new Error('Unknown test alert state');
+  const live = state === 'live';
   const race = escapeXml(short(event.name, 34));
   const sessionName = escapeXml(short(session.name, 32));
   const location = escapeXml(short([event.locality, event.country].filter(Boolean).join(', '), 45));
-  const round = escapeXml(String(event.round || '—').padStart(2, '0'));
-  const eventFont = String(event.name || '').length > 25 ? 48 : 60;
+  const footerLocation = escapeXml(short(event.locality || 'the circuit', 30));
+  const round = escapeXml(String(event.round || '—'));
+  const eventFont = String(event.name || '').length > 25 ? 44 : 57;
   const peak = Number.isSafeInteger(peakViewers) && peakViewers >= 0 && peakViewers <= 1_000_000 ? peakViewers.toLocaleString('en-US') : '—';
-  const audience = state === 'end' ? `<text x="1124" y="465" fill="#838a95" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="13" font-weight="700" letter-spacing="1.4">PEAK LIVE COCKPIT VIEWERS</text><text x="1124" y="505" fill="#f7f8fa" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="29" font-weight="700">${peak}</text>` : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1c2027"/><stop offset="1" stop-color="#090b0e"/></linearGradient><linearGradient id="red" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ff3b32"/><stop offset="1" stop-color="#a80000"/></linearGradient><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e10600"/><stop offset="1" stop-color="#8b0400"/></linearGradient><clipPath id="clip"><rect width="1200" height="630" rx="28"/></clipPath></defs>
-  <g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/>
-  <path d="M750 -40 L1220 -40 L945 670 L475 670 Z" fill="#ffffff" opacity=".022"/><path d="M905 -40 L1040 -40 L765 670 L630 670 Z" fill="#ffffff" opacity=".025"/>
-  <path d="M1030 0 L1200 0 L1200 630 L785 630 Z" fill="#e10600" opacity=".065"/>
-  <path d="M0 0 H1200 V7 H0 Z" fill="url(#red)"/>
-  <rect x="74" y="75" width="78" height="78" rx="20" fill="url(#brand)"/>
-  <svg x="90" y="91" width="46" height="46" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg>
-  <text x="171" y="128" fill="#f8f8fa" font-family="Archivo, sans-serif" font-size="40" font-weight="700" letter-spacing="-.4">FreeF1</text>
-  <text x="1124" y="118" fill="#8f949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="700" letter-spacing="3">RACE CONTROL</text>
-  <rect x="74" y="195" width="310" height="48" rx="24" fill="${style.accent}" opacity=".12"/><circle cx="101" cy="219" r="6" fill="${style.accent}"/><text x="120" y="226" fill="${style.accent}" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="800" letter-spacing="2">${style.title}</text>
-  <text x="74" y="326" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="${eventFont}" font-weight="800" letter-spacing="-1.6">${race}</text>
-  <text x="76" y="386" fill="#bec2cb" font-family="DejaVu Sans, sans-serif" font-size="29" font-weight="600">${sessionName}</text>
-  <path d="M76 427H1124" stroke="#ffffff" stroke-opacity=".1"/>
-  <text x="76" y="484" fill="#838a95" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">ROUND ${round}  ·  ${location}</text>
-  ${audience}
-  <text x="76" y="555" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">${style.subtitle}</text>
-  <text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text>
-  </g></svg>`;
+<defs><radialGradient id="bg" cx="50%" cy="0%" r="85%"><stop stop-color="#252127"/><stop offset=".65" stop-color="#0e0f12"/><stop offset="1" stop-color="#0b0c0f"/></radialGradient><radialGradient id="card" cx="50%" cy="0%" r="80%"><stop stop-color="#292023"/><stop offset=".72" stop-color="#18191d"/><stop offset="1" stop-color="#18191d"/></radialGradient><filter id="shadow" x="-25%" y="-25%" width="150%" height="160%"><feGaussianBlur stdDeviation="22"/></filter><clipPath id="clip"><rect width="1200" height="630" rx="26"/></clipPath></defs>
+<g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/>
+<rect x="91" y="70" width="1018" height="520" rx="28" fill="#000" opacity=".45" filter="url(#shadow)"/>
+<rect x="84" y="54" width="1032" height="522" rx="24" fill="url(#card)" stroke="#ffffff" stroke-opacity=".12"/><path d="M108 54h984a24 24 0 0 1 24 24" fill="none" stroke="#fff" stroke-opacity=".07"/>
+${state === 'end' ? `<rect x="130" y="262" width="223" height="38" rx="19" fill="#ef4444" fill-opacity=".12" stroke="#ef4444" stroke-opacity=".35"/><circle cx="151" cy="281" r="5" fill="#f05252"/><text x="166" y="287" fill="#fca5a5" font-family="DejaVu Sans" font-size="14" font-weight="700">Session ended</text>
+` : `<rect x="130" y="262" width="223" height="38" rx="19" fill="${live ? '#22c55e' : '#f59e0b'}" fill-opacity=".12" stroke="${live ? '#22c55e' : '#f59e0b'}" stroke-opacity=".35"/><circle cx="151" cy="281" r="5" fill="${live ? '#4ade80' : '#f59e0b'}"/><text x="166" y="287" fill="${live ? '#86efac' : '#fcd34d'}" font-family="DejaVu Sans" font-size="14" font-weight="700">${live ? 'Live now' : 'Starting soon'}</text>
+`}
+<text x="130" y="166" fill="#fff" font-family="Archivo" font-size="${eventFont}" font-weight="700" letter-spacing="-1">${race}</text>
+<text x="132" y="211" fill="#e4e5e9" font-family="DejaVu Sans" font-size="25" font-weight="700">${sessionName}</text>
+<text x="132" y="242" fill="#a9abaf" font-family="DejaVu Sans" font-size="16" font-weight="700">Round ${round}  ·  ${location}</text>
+<path d="M130 328H1070" stroke="#fff" stroke-opacity=".09"/>
+<rect x="130" y="352" width="940" height="110" rx="15" fill="#212227" stroke="#fff" stroke-opacity=".09"/>
+${state === 'end' ? `<rect x="153" y="378" width="56" height="56" rx="14" fill="#e10600" fill-opacity=".14"/><svg x="169" y="394" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ff7770" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+<text x="230" y="398" fill="#f4f4f6" font-family="DejaVu Sans" font-size="19" font-weight="700">Peak viewers</text><text x="230" y="426" fill="#a9abaf" font-family="DejaVu Sans" font-size="14" font-weight="700">Concurrent viewers in the live cockpit</text>
+<text x="1036" y="419" text-anchor="end" fill="#fff" font-family="Archivo" font-size="43" font-weight="700">${peak}</text>
+` : `<rect x="153" y="378" width="56" height="56" rx="14" fill="${live ? '#22c55e' : '#f59e0b'}" fill-opacity=".13"/>
+<circle cx="181" cy="406" r="10" fill="none" stroke="${live ? '#86efac' : '#fcd34d'}" stroke-width="2"/><path d="${live ? 'M178 401l8 5-8 5z' : 'M181 400v6l4 3'}" fill="${live ? '#86efac' : 'none'}" stroke="${live ? '#86efac' : '#fcd34d'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="230" y="398" fill="#f4f4f6" font-family="DejaVu Sans" font-size="19" font-weight="700">${live ? 'The session is live' : 'The session is starting soon'}</text><text x="230" y="426" fill="#a9abaf" font-family="DejaVu Sans" font-size="14" font-weight="700">${live ? 'Head to the cockpit to watch.' : 'Get ready to join us in the cockpit.'}</text>
+`}
+<path d="M130 492H1070" stroke="#fff" stroke-opacity=".08"/>
+<rect x="130" y="514" width="28" height="28" rx="8" fill="#d70600"/><svg x="136" y="520" width="16" height="16" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg><text x="170" y="534" fill="#dddfe4" font-family="Archivo" font-size="19" font-weight="700">FreeF1</text>
+<text x="1070" y="533" text-anchor="end" fill="#85898f" font-family="DejaVu Sans" font-size="13" font-weight="700">${state === 'end' ? 'The chequered flag is out' : live ? `Live from ${footerLocation}` : 'See you in the cockpit'}  ·  freef1-live.vercel.app</text>
+</g></svg>`;
 }
 function alertsPanelSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1c2027"/><stop offset="1" stop-color="#090b0e"/></linearGradient><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e10600"/><stop offset="1" stop-color="#8b0400"/></linearGradient><linearGradient id="red" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ff3b32"/><stop offset="1" stop-color="#a80000"/></linearGradient><clipPath id="clip"><rect width="1200" height="630" rx="28"/></clipPath></defs>
-  <g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/><path d="M750 -40 L1220 -40 L945 670 L475 670 Z" fill="#fff" opacity=".022"/><path d="M905 -40 L1040 -40 L765 670 L630 670 Z" fill="#fff" opacity=".025"/><path d="M1030 0 L1200 0 L1200 630 L785 630 Z" fill="#e10600" opacity=".065"/><path d="M0 0 H1200 V7 H0 Z" fill="url(#red)"/>
-  <rect x="74" y="75" width="78" height="78" rx="20" fill="url(#brand)"/><svg x="90" y="91" width="46" height="46" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg>
-  <text x="171" y="128" fill="#f8f8fa" font-family="Archivo, sans-serif" font-size="40" font-weight="700" letter-spacing="-.4">FreeF1</text><text x="1124" y="118" fill="#8f949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="700" letter-spacing="3">RACE CONTROL</text>
-  <rect x="74" y="195" width="310" height="48" rx="24" fill="#e10600" opacity=".16"/><circle cx="101" cy="219" r="6" fill="#ff5650"/><text x="120" y="226" fill="#ff7067" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="800" letter-spacing="2">STAY IN THE LOOP</text>
-  <text x="74" y="326" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="60" font-weight="800" letter-spacing="-1.6">Stream Alerts</text>
-  <text x="76" y="386" fill="#bec2cb" font-family="DejaVu Sans, sans-serif" font-size="27" font-weight="600">Get pinged when a session is starting.</text>
-  <path d="M76 427H1124" stroke="#ffffff" stroke-opacity=".1"/><text x="76" y="484" fill="#a6abb5" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700">Use the button below to opt in or out.</text>
-  <text x="76" y="555" fill="#f7f8fa" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" letter-spacing="2">NEVER MISS LIGHTS OUT</text><text x="1124" y="555" fill="#8e949e" text-anchor="end" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="600">freef1-live.vercel.app</text></g></svg>`;
+<defs><radialGradient id="bg" cx="50%" cy="0%" r="85%"><stop stop-color="#252127"/><stop offset=".65" stop-color="#0e0f12"/><stop offset="1" stop-color="#0b0c0f"/></radialGradient><radialGradient id="card" cx="50%" cy="0%" r="80%"><stop stop-color="#292023"/><stop offset=".72" stop-color="#18191d"/><stop offset="1" stop-color="#18191d"/></radialGradient><filter id="shadow" x="-25%" y="-25%" width="150%" height="160%"><feGaussianBlur stdDeviation="22"/></filter><clipPath id="clip"><rect width="1200" height="630" rx="26"/></clipPath></defs>
+<g clip-path="url(#clip)"><rect width="1200" height="630" fill="url(#bg)"/>
+<rect x="91" y="70" width="1018" height="520" rx="28" fill="#000" opacity=".45" filter="url(#shadow)"/>
+<rect x="84" y="54" width="1032" height="522" rx="24" fill="url(#card)" stroke="#ffffff" stroke-opacity=".12"/><path d="M108 54h984a24 24 0 0 1 24 24" fill="none" stroke="#fff" stroke-opacity=".07"/>
+<rect x="130" y="262" width="205" height="38" rx="19" fill="#ef4444" fill-opacity=".12" stroke="#ef4444" stroke-opacity=".35"/><circle cx="151" cy="281" r="5" fill="#f05252"/><text x="166" y="287" fill="#fca5a5" font-family="DejaVu Sans" font-size="14" font-weight="700">Stay in the loop</text>
+<text x="130" y="166" fill="#fff" font-family="Archivo" font-size="57" font-weight="700" letter-spacing="-1">Stream Alerts</text>
+<text x="132" y="211" fill="#e4e5e9" font-family="DejaVu Sans" font-size="25" font-weight="700">Never miss a session.</text>
+<text x="132" y="242" fill="#a9abaf" font-family="DejaVu Sans" font-size="16" font-weight="700">Get notified when the action begins.</text>
+<path d="M130 328H1070" stroke="#fff" stroke-opacity=".09"/>
+<rect x="130" y="352" width="940" height="110" rx="15" fill="#212227" stroke="#fff" stroke-opacity=".09"/>
+<rect x="153" y="378" width="56" height="56" rx="14" fill="#e10600" fill-opacity=".14"/><svg x="169" y="394" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ff7770" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+<text x="230" y="398" fill="#f4f4f6" font-family="DejaVu Sans" font-size="19" font-weight="700">Choose your notifications</text><text x="230" y="426" fill="#a9abaf" font-family="DejaVu Sans" font-size="14" font-weight="700">Use the button below to opt in or out.</text>
+<path d="M130 492H1070" stroke="#fff" stroke-opacity=".08"/>
+<rect x="130" y="514" width="28" height="28" rx="8" fill="#d70600"/><svg x="136" y="520" width="16" height="16" viewBox="0 0 24 24"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg><text x="170" y="534" fill="#dddfe4" font-family="Archivo" font-size="19" font-weight="700">FreeF1</text>
+<text x="1070" y="533" text-anchor="end" fill="#85898f" font-family="DejaVu Sans" font-size="13" font-weight="700">Never miss lights out  ·  freef1-live.vercel.app</text>
+</g></svg>`;
 }
 function websiteSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="280" viewBox="0 0 720 280">

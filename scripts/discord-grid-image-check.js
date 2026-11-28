@@ -17,7 +17,7 @@ assert(image.length < 250_000, 'panel image remains small');
 const decoded = PNG.sync.read(image);
 assert.equal(decoded.width, 1100);
 assert(decoded.height > 1000);
-assert(svg.includes('16 | </tspan>Charles Leclerc'));
+assert(svg.includes('16 | </tspan>') && svg.includes('Charles Leclerc'));
 const payload = gridPanelPayload({ emojiIds: {} });
 assert.equal(payload.files[0].name, 'freef1-grid-2026-v2.png');
 assert(payload.files[0].description.length <= 1024);

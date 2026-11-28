@@ -727,6 +727,25 @@ function start(deps) {
     delete st.panels[key];
   }
 
+  // One-time in-place artwork upgrade: preserve message IDs, roles, content and
+  // existing interactive components. Missing permissions never trigger a repost.
+  async function upgradePanelArtwork(guild, st) {
+    for (const key of ['alerts', 'grid', 'team']) {
+      const panel = st.panels?.[key];
+      if (!panel?.messageId || !panel.channelId || panel.designVersion === 2) continue;
+      try {
+        const channel = guild.channels.cache.get(panel.channelId) || await guild.channels.fetch(panel.channelId);
+        const message = await channel?.messages.fetch(panel.messageId);
+        if (!message) continue;
+        const payload = key === 'alerts' ? await alertsPanelPayload() : key === 'grid' ? gridPanelPayload(st) : teamPanelPayload();
+        await message.edit({ files:payload.files, attachments:[], allowedMentions:{parse:[]} });
+        panel.designVersion = 2;
+        await store.save();
+        log(`updated ${key} panel artwork in ${guild.id}`);
+      } catch (error) { log(`could not update ${key} panel artwork in ${guild.id}:`, error.message); }
+    }
+  }
+
   /* ── panel posting ── */
   async function postGridPanel(guild, channel, st) {
     await ensureEmojis(guild, st);
@@ -738,7 +757,7 @@ function start(deps) {
     for (const key of ['d1', 'd2', 'grid']) await deleteStoredPanel(guild, st, key);
 
     const msg = await channel.send(gridPanelPayload(st));
-    st.panels.grid = { channelId: channel.id, messageId: msg.id };
+    st.panels.grid = { channelId: channel.id, messageId: msg.id, designVersion: 2 };
     await store.save();
   }
 
@@ -750,7 +769,7 @@ function start(deps) {
     const emojiIds=await ensureTeamEmojis(guild);
     const msg=await channel.send(teamPanelPayload(emojiIds));
     await deleteStoredPanel(guild, st, 'team');
-    st.panels.team={channelId:channel.id,messageId:msg.id};
+    st.panels.team={channelId:channel.id,messageId:msg.id,designVersion:2};
     await store.save();
   }
 
@@ -765,7 +784,7 @@ function start(deps) {
     }
     await deleteStoredPanel(guild, st, 'alerts');
     const msg = await channel.send(await alertsPanelPayload());
-    st.panels.alerts = { channelId: channel.id, messageId: msg.id };
+    st.panels.alerts = { channelId: channel.id, messageId: msg.id, designVersion: 2 };
     st.alerts = { channelId: (alertsChannel || channel).id, roleId: target.id };
     await store.save();
   }
@@ -1254,6 +1273,7 @@ function start(deps) {
     for (const guild of client.guilds.cache.values()) {
       const st = await store.guild(guild.id);
       discoverDriverRoles(guild, st);
+      await upgradePanelArtwork(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
     }
 

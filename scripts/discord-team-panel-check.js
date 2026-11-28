@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const { _test:{TEAMS,teamPanelPayload,TEAM_EMOJIS,ensureTeamEmojis,mapTeamRoles,changeTeamRole} }=require('../bot/discord-bot');
 const {gridSvg}=require('../bot/grid-image');
 (async()=>{
- const svg=gridSvg(TEAMS,true); assert(svg.includes('TEAM ROLES')); assert(svg.includes('Choose one team')); assert(!svg.includes('Charles Leclerc'));assert(svg.includes('Ferrari'));
+ const svg=gridSvg(TEAMS,true); assert(svg.includes('Team roles')); assert(svg.includes('Choose your team')); assert(!svg.includes('Charles Leclerc'));assert(svg.includes('Ferrari'));
  const payload=teamPanelPayload(); const buttons=payload.components.flatMap(r=>r.toJSON().components);assert.equal(buttons.length,11);assert.equal(new Set(buttons.map(b=>b.custom_id)).size,11);assert.deepEqual(payload.allowedMentions,{parse:[]});
  const cache=new Map(); cache.find=fn=>[...cache.values()].find(fn);
  cache.set('111111111111111111',{id:'111111111111111111',name:'ferrari',available:true});

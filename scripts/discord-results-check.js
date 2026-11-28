@@ -16,11 +16,11 @@ async function main() {
   assert.equal(openF1Time({position:2,gap_to_leader:1.234},'race'),'+ 1.234');
   assert.equal(openF1Time({duration:[73.2,72.4,71.2]},'timed'),'1:11.200');
   assert.equal(openF1Time({dnf:true},'race'),'DNF');
-  assert(svgForResults(raceResult).includes('RACE RESULTS'));
+  assert(svgForResults(raceResult).includes('Race Results'));
   const payload = resultPayload(raceResult,'guild','result-key');
   assert.equal(payload.files[0].name,'freef1-session-results.png');
   assert(payload.files[0].attachment.length < 100_000);
-  assert.equal(PNG.sync.read(payload.files[0].attachment).width,960);
+  assert.equal(PNG.sync.read(payload.files[0].attachment).width,1100);
   assert(payload.enforceNonce); assert.equal(payload.nonce.length,24);
   assert.deepEqual(payload.allowedMentions,{parse:[]});
   const t=Date.parse('2026-11-13T12:00:00Z');

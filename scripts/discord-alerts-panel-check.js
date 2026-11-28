@@ -20,20 +20,21 @@ const bot = require('../bot/discord-bot'); Module._load = original;
   assert.equal(image.components[0].toJSON().components[0].custom_id,'freef1:alerts');
   assert.deepEqual(image.allowedMentions,{parse:[]});
   let fetches = 0, edits = 0, sends = 0;
-  const message = { attachments: new discord.Collection(), edit:async()=>{ edits++; } };
+  const message = { attachments: new discord.Collection(), edit:async payload=>{ edits++; assert.equal(payload.components,undefined); assert.equal(payload.content,undefined); assert.deepEqual(payload.attachments,[]); assert.deepEqual(payload.allowedMentions,{parse:[]}); assert.equal(payload.files.length,1); } };
   const channel = { messages:{fetch:async()=>{fetches++; return message}},send:async()=>{sends++;} };
   const guild = {id:'guild',name:'Test',roles:{cache:new discord.Collection()},channels:{cache:new Map([['panel-channel',channel]])}};
-  const state = { guilds:{guild:{emojiIds:{},driverRoles:{},panels:{alerts:{channelId:'panel-channel',messageId:'old-panel'},grid:{channelId:'panel-channel',messageId:'old-grid'}},alerts:{channelId:'real-alerts',roleId:'configured-role'},sent:{},config:{}}} };
+  const state = { guilds:{guild:{emojiIds:{},driverRoles:{},panels:{alerts:{channelId:'panel-channel',messageId:'old-panel'},grid:{channelId:'panel-channel',messageId:'old-grid'},team:{channelId:'panel-channel',messageId:'old-team'}},alerts:{channelId:'real-alerts',roleId:'configured-role'},sent:{},config:{}}} };
   const instance = bot.start({ownerId:'owner',token:'test',siteUrl:'https://freef1-live.vercel.app',readLocalJson:()=>state,writeLocalJson:()=>{},log:()=>{}});
   instance.client.guilds.cache.set('guild',guild);
   try {
     instance.client.emit(discord.Events.ClientReady);
     await Promise.race([fullyReady,new Promise((_,reject)=>setTimeout(()=>reject(Error('startup did not finish')),5000))]);
-    assert.equal(fetches, 0, 'startup must not fetch static panel messages');
-    assert.equal(edits, 0, 'startup must not edit static panel messages');
+    assert.equal(fetches, 3, 'old panels are fetched once for in-place artwork upgrade');
+    assert.equal(edits, 3, 'existing panel images are updated in place');
     assert.equal(sends, 0, 'startup must not repost static panel messages');
     assert.deepEqual(state.guilds.guild.alerts,{channelId:'real-alerts',roleId:'configured-role'});
-    assert.deepEqual(state.guilds.guild.panels.alerts,{channelId:'panel-channel',messageId:'old-panel'});
-    console.log('Static panels: no startup fetch, edit or repost; alert toggle and saved settings passed');
+    assert.deepEqual(state.guilds.guild.panels.alerts,{channelId:'panel-channel',messageId:'old-panel',designVersion:2});
+    assert.equal(state.guilds.guild.panels.grid.designVersion,2); assert.equal(state.guilds.guild.panels.team.designVersion,2);
+    console.log('Static panels: one-time in-place image upgrade without reposting; alert toggle and saved settings passed');
   } finally { instance.stop(); }
 })().catch(error=>{console.error(error);process.exitCode=1});
