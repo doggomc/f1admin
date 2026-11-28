@@ -26,7 +26,7 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   used=[];const emptyResolver=createAutoResolver({clock:()=>now*1000,fetcher:async url=>{used.push(url);return {ok:true,text:async()=>JSON.stringify(url.includes('racinglap.net')?{api:'racinglap',version:1,events:[]}:{})}}});
   await emptyResolver.list();assert(!used.some(x=>x.includes('weelo.live/players/events')),'valid empty catalogue must not fall back');
   const ppv=parsePpv({streams:[{category:'Formula 1',streams:[{name:'F1 Race',ends_at:now+100,locale:'en',iframe:'https://taifood-blog.asia/embed/f1/race',substreams:[{name:'Spanish',locale:'es',iframe:'https://taifood-blog.asia/embed/f1/es'},{name:'SD 540p',iframe:'https://taifood-blog.asia/embed/f1/540p'},{name:'bad',iframe:'https://evil.test/embed'}]}]},{category:'Football',streams:[{name:'Soccer',iframe:'https://taifood-blog.asia/embed/x'}]}]},now);
-  assert.equal(ppv.length,2);assert.equal(ppv[1].tab,'other');
+  assert.equal(ppv.length,3);assert.equal(ppv[1].tab,'other'); assert.equal(ppv[2].quality,'SD');
   const languages=parsePpv({streams:[{category:'Formula 1',streams:[{name:'Las Vegas Grand Prix - Practice 1',tag:'Formula 1',locale:'en',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-en',source_tag:'HD | Sky Sport F1',substreams:[
     {name:'Las Vegas Grand Prix - Practice 1',locale:'it',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-32430',source_tag:'HD | Sky Sport F1'},
     {name:'Las Vegas Grand Prix - Practice 1',locale:'de',iframe:'https://taifood-blog.asia/embed/las-vegas-practice-1-32429',source_tag:'HD | Sky Sport F1'},
@@ -40,7 +40,8 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.equal(sky.length,1); assert.equal(sky[0].label,'Sky Sports F1');
   assert.equal(parseStrmfree({streams:[{name:'F1 Grand Prix',iframe:'https://strmfree.st/embed/racing/f1',additional_sources:[{iframe:'https://streamfree.top/embed/racing/f1-alt'}]}]}).length,2);
   const ppvFilter = parsePpv({streams:[{category:'F1',streams:[{name:'F1',starts_at:now-1,ends_at:now+60,iframe:'https://taifood-blog.asia/embed/f1/main',substreams:[{source_tag:'SD | F1',uri_name:'f1/race_540p',iframe:'https://taifood-blog.asia/embed/f1/race_540p'}]},{name:'Future F1',starts_at:now+1,iframe:'https://taifood-blog.asia/embed/f1/future'}]}]},now);
-  assert.equal(ppvFilter.length,2);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');assert.equal(ppvFilter[1].url,'https://taifood-blog.asia/embed/f1/future');
+  assert.equal(ppvFilter.length,3);assert.equal(ppvFilter[0].url,'https://taifood-blog.asia/embed/f1/main');assert.equal(ppvFilter[1].quality,'SD');assert.equal(ppvFilter[2].url,'https://taifood-blog.asia/embed/f1/future');
+  const ppvPair=parsePpv({streams:[{category:'F1',streams:[{name:'Race',iframe:'https://taifood-blog.asia/embed/f1/race',locale:'en',source_tag:'HD | Sky',substreams:[{iframe:'https://taifood-blog.asia/embed/f1/race_540p',locale:'en',source_tag:'SD | Sky'}]}]}]},now); assert.equal(ppvPair.length,1); assert.equal(ppvPair[0].sdUrl,'https://taifood-blog.asia/embed/f1/race_540p');
   const cdn=parseCdnLive({channels:[{name:'Sky Sports F1 FHD UK',status:'online',url:'https://evil.example'},{name:'DAZN F1 FHD',status:'offline'},{name:'F1 Fake',status:'online'}]});
   assert.equal(cdn.length,1);assert.ok(cdn[0].url.startsWith('https://cdnlivetv.tv/'));assert.equal(cdn[0].sourceId,'sky-f1-uk');
   const tim = parseTimChannels({channels:[
@@ -111,9 +112,10 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   assert.deepEqual(currentLive.map(e=>e.label), ['Sky Sports F1','Sky F1 · DE','DAZN F1','F1 UHD','Apple TV','Fox Sports 506']);
   assert.deepEqual(currentLive.map(e=>e.url), liveNames.map((_,i)=>`https://embdlol.st/embed/live-${i}`));
   const renamed = parseEmb({channels:['506F1','UHDF1','ATVF1','F1DE','SkyF1SD'].map((channelname,i)=>({channelname,id:`renamed-${i}`}))});
-  assert.deepEqual(renamed.map(x=>x.label), ['Fox Sports 506','F1 UHD','Apple TV','Sky F1 · DE']);
-  assert.deepEqual(renamed.map(x=>x.tab), ['en','en','en','other']);
-  assert.equal(parseEmb({channels:[{channelname:'SkyF1SD',id:'sd'}]}).length,0);
+  assert.deepEqual(renamed.map(x=>x.label), ['Fox Sports 506','F1 UHD','Apple TV','Sky F1 · DE','Sky Sports F1']);
+  assert.deepEqual(renamed.map(x=>x.tab), ['en','en','en','other','en']);
+  const sdOnly = parseEmb({channels:[{channelname:'SkyF1SD',id:'sd'}]}); assert.equal(sdOnly.length,1); assert.equal(sdOnly[0].quality,'SD');
+  const pairEmb = parseEmb({channels:[{channelname:'SkyF1',id:'hd'},{channelname:'SkyF1SD',id:'sd'}]}); assert.equal(pairEmb.length,1); assert.equal(pairEmb[0].sdUrl,'https://embdlol.st/embed/sd');
   const skyEvents = parseEmb({channels:[{channelname:'skyeventit',id:'event-a'},{channelname:'skyeventit2',id:'event-b'}]});
   assert.deepEqual(skyEvents.map(x=>x.label), ['Sky Event IT','Sky Event IT 2']);
   assert.deepEqual(skyEvents.map(x=>x.tab), ['other','other']);

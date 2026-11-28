@@ -70,8 +70,18 @@ function parsePpv(data, now) {
     const description = `${group.category || ''} ${item.name || ''} ${item.tag || ''} ${item.iframe || ''}`;
     if (/\b(?:moto\s*gp|formula\s*[23e]\b|f[23]\s+championship|indycar|nascar|wrc|wec)\b/i.test(description)) continue;
     if (!(isF1(description) || /\/embed\/f1\//i.test(description) || /\bgrand\s*prix\b/i.test(description)) || (item.ends_at && Number(item.ends_at) < now)) continue;
-    for (const row of [item, ...(Array.isArray(item.substreams) ? item.substreams : [])]) {
-      if (isLowQuality(`${row.uri_name || ''} ${row.iframe || ''} ${row.source_tag || ''} ${row.name || ''}`)) continue;
+    const rows = [item, ...(Array.isArray(item.substreams) ? item.substreams : [])];
+    const isSd = row => isLowQuality(`${row.uri_name || ''} ${row.iframe || ''} ${row.source_tag || ''} ${row.name || ''}`) || /_540p(?:[?#]|$)/i.test(row.iframe || '');
+    const rowUrl = row => safeUrl(row.iframe, ['taifood-blog.asia']);
+    const hdUrls = new Set(rows.filter(row => !isSd(row)).map(row => `${rowUrl(row)}|${String(row.locale || item.locale || '').toLowerCase()}`));
+    for (const row of rows) {
+      const sd = isSd(row);
+      const rawUrl = rowUrl(row);
+      // Only match an explicitly published 540p sibling of the same player and language.
+      const hdUrl = sd ? rawUrl.replace(/_540p(?=([?#]|$))/i, '') : rawUrl;
+      if (sd && hdUrl !== rawUrl && hdUrls.has(`${hdUrl}|${String(row.locale || item.locale || '').toLowerCase()}`)) continue;
+      const sibling = !sd && rows.find(candidate => isSd(candidate) && rowUrl(candidate) === `${rawUrl}_540p` && String(candidate.locale || item.locale || '').toLowerCase() === String(row.locale || item.locale || '').toLowerCase());
+      const sdUrl = sibling ? rowUrl(sibling) : '';
       const url = safeUrl(row.iframe, ['taifood-blog.asia']);
       // PPV uses the same Sky caption for different audio feeds. Only label the
       // language when this individual row explicitly supplies it; do not infer
@@ -81,7 +91,7 @@ function parsePpv(data, now) {
       const language = ({ it: 'IT', de: 'DE' })[locale];
       const displayTag = language && /\bsky\s+sports?\b/i.test(tag) && !new RegExp(`(?:^|[^a-z])${language}(?:$|[^a-z])`, 'i').test(tag)
         ? `${tag.slice(0, 35).trimEnd()} · ${language}` : tag;
-      const entry = makeEntry('ppv', row.name || item.name, url, row.locale || item.locale, displayTag);
+      const entry = makeEntry('ppv', row.name || item.name, url, row.locale || item.locale, displayTag, {...(sdUrl ? {sdUrl} : {}), ...(sd ? {quality:'SD'} : {})});
       if (entry) result.push(entry);
     }
   }
@@ -198,13 +208,20 @@ function parseEmb(data) {
     f1lewis: ['Lewis Hamilton', 'en'], f1kimi: ['Kimi Antonelli', 'en'],
     f1mixedonboard: ['Mixed Onboard', 'en'], f1timingchannel: ['Data Channel', 'en'], f1stroll: ['Lance Stroll', 'en'],
   };
-  for (const c of Array.isArray(data?.channels) ? data.channels : []) {
+  const channels = Array.isArray(data?.channels) ? data.channels : [];
+  const skyHd = channels.find(c => /^(?:skyf1|skyf1en|skyf1uk)$/i.test(String(c?.channelname || c?.name || '').trim()) && /^[a-zA-Z0-9_-]{1,100}$/.test(String(c?.id || '')));
+  const skySd = channels.find(c => /^skyf1sd$/i.test(String(c?.channelname || c?.name || '').trim()) && /^[a-zA-Z0-9_-]{1,100}$/.test(String(c?.id || '')));
+  for (const c of channels) {
     const name=String(c?.channelname || c?.name || '').trim();
     const flat=name.toLowerCase().replace(/[\s_-]+/g, '');
+    if (flat === 'skyf1sd') {
+      if (!skyHd) { const entry=makeEntry('embdlol','Sky Sports F1',`https://embdlol.st/embed/${encodeURIComponent(c.id)}`,'en','SD',{quality:'SD'}); if (entry) result.push(entry); }
+      continue;
+    }
     const alias=aliases[flat];
     if ((!alias && !/^f1(?:[\s_-]|[a-z0-9])/i.test(name)) || isLowQuality(name) || /(?:360|480|540)p|\b(?:replay|recording)\b/i.test(name) || !/^[a-zA-Z0-9_-]{1,100}$/.test(String(c?.id || ''))) continue;
     const other = /spanish|italian|german|(?:esp|ita|deu|skyit|skyde)$/i.test(name);
-    const entry=makeEntry('embdlol', alias?.[0] || name, `https://embdlol.st/embed/${encodeURIComponent(c.id)}`, alias?.[1] || (other ? 'other' : 'en'), 'EMB');
+    const entry=makeEntry('embdlol', alias?.[0] || name, `https://embdlol.st/embed/${encodeURIComponent(c.id)}`, alias?.[1] || (other ? 'other' : 'en'), 'EMB', c === skyHd && skySd ? {sdUrl:`https://embdlol.st/embed/${encodeURIComponent(skySd.id)}`} : {});
     if(entry)result.push(entry);
   }
   return result;
