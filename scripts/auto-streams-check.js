@@ -110,6 +110,9 @@ const { filterDisabledAutoStreams, createAutoResolver, parseWeelo, parseRacingLa
   const currentLive = parseEmb({channels:liveNames.map((channelname,i)=>({channelname,id:`live-${i}`}))});
   assert.deepEqual(currentLive.map(e=>e.label), ['Sky Sports F1','Sky F1 · DE','DAZN F1','F1 UHD','Apple TV','Fox Sports 506']);
   assert.deepEqual(currentLive.map(e=>e.url), liveNames.map((_,i)=>`https://embdlol.st/embed/live-${i}`));
+  const renamed = parseEmb({channels:['506F1','UHDF1','ATVF1','F1DE','SkyF1SD'].map((channelname,i)=>({channelname,id:`renamed-${i}`}))});
+  assert.deepEqual(renamed.map(x=>x.label), ['Fox Sports 506','F1 UHD','Apple TV','Sky F1 · DE']);
+  assert.deepEqual(renamed.map(x=>x.tab), ['en','en','en','other']);
   assert.equal(parseEmb({channels:[{channelname:'SkyF1SD',id:'sd'}]}).length,0);
   const skyEvents = parseEmb({channels:[{channelname:'skyeventit',id:'event-a'},{channelname:'skyeventit2',id:'event-b'}]});
   assert.deepEqual(skyEvents.map(x=>x.label), ['Sky Event IT','Sky Event IT 2']);
